@@ -1137,7 +1137,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; -webkit-user
 
 /* Slash command completion */
 .slash-wrap { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.slash-wrap > textarea { flex: 1; width: 100%; }
+.slash-wrap > textarea { flex: none; width: 100%; }
 .slash-list {
   position: absolute; left: 0; right: 0; z-index: 15; max-height: 300px; overflow: auto; padding: 4px;
   border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--border-strong); box-shadow: var(--shadow);
