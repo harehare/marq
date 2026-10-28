@@ -14,7 +14,7 @@ type Props = {
   onPinned?: (text: string) => void;
 };
 
-/** An mq code block in the preview: shows the query and evaluates it right below (SPEC §6). */
+/** An mq code block in the preview: shows the query and evaluates it right below. */
 export function MqBlock({ vault, notePath, noteText, query, meta, line, onPinned }: Props) {
   const [state, setState] = useState<{ results?: FileResult[]; error?: string; ms?: number; loading?: boolean }>({});
   const [runs, setRuns] = useState(0);
@@ -46,7 +46,7 @@ export function MqBlock({ vault, notePath, noteText, query, meta, line, onPinned
 
   const count = state.results?.reduce((n, r) => n + r.items.length, 0) ?? 0;
 
-  // Pinned output is plain Markdown in the file, so it also shows up outside marq (SPEC §6).
+  // Pinned output is plain Markdown in the file, so it also shows up outside marq.
   const pin = async () => {
     if (!state.results) return;
     const output = state.results

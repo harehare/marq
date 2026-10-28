@@ -1,4 +1,4 @@
-//! A crew's task list: a Markdown file with one section per status (SPEC §21).
+//! A crew's task list: a Markdown file with one section per status.
 //!
 //! ```markdown
 //! ## Doing

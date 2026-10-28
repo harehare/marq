@@ -51,7 +51,7 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   Grep: Search, Glob: Search, WebFetch: Globe, WebSearch: Globe,
 };
 
-/** Folds stream-json events into display items, attaching each tool result to its call (SPEC §5). */
+/** Folds stream-json events into display items, attaching each tool result to its call. */
 function toItems(events: ClaudeEvent[]): Item[] {
   const items: Item[] = [];
   const byId = new Map<string, Extract<Item, { kind: "tool" }>>();
@@ -213,7 +213,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [events.length, approvals.length]);
 
   const meta = events.find((e) => e.type === "marq_meta");
-  // A turn is running from a prompt until its result (SPEC §8).
+  // A turn is running from a prompt until its result.
   const last = [...events].reverse().find((e) => ["marq_user", "result", "marq_exit"].includes(e.type));
   const running = last?.type === "marq_user";
   const status = approvals.length

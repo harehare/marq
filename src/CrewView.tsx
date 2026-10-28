@@ -28,7 +28,7 @@ const ROLE_COLORS = ["var(--run)", "var(--info)", "var(--accent)", "var(--ok)", 
 const time = (at: string) => at.slice(11, 16);
 const toList = (to: string | string[]) => (Array.isArray(to) ? to : [to]);
 
-/** One project worked on by several sessions that message each other by role (SPEC §21). */
+/** One project worked on by several sessions that message each other by role. */
 export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExcerpt, onOpenCrew }: Props) {
   const [st, setSt] = useState<CrewState | null>(null);
   const [error, setError] = useState<string | null>(null);

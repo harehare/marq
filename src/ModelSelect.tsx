@@ -10,7 +10,7 @@ const CLAUDE_MODELS = [
   { value: "haiku", label: "Claude Haiku" },
 ];
 
-/** Claude aliases plus the models the local Ollama has pulled (SPEC §8). */
+/** Claude aliases plus the models the local Ollama has pulled. */
 export function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   // null: loading; string: error.
   const [ollama, setOllama] = useState<string[] | string | null>(null);

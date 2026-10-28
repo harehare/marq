@@ -46,7 +46,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initia
   const [model, setModel] = useState(() => stored(MODEL_KEY, ""));
   const [carry, setCarry] = useState(false);
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
-  // One session that may hand large work to a crew, or a crew from the start (SPEC §21).
+  // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

@@ -1,4 +1,4 @@
-//! Vault file access and in-place edits of frontmatter and markers (SPEC §3, §4).
+//! Vault file access and in-place edits of frontmatter and markers.
 
 use std::path::{Path, PathBuf};
 
@@ -168,7 +168,7 @@ pub struct SavedDoc {
     pub created: bool,
 }
 
-/// Saves a document written by Claude (SPEC §14). A new one goes to `folder` (default `docs`).
+/// Saves a document written by Claude. A new one goes to `folder` (default `docs`).
 /// `path` updates an existing doc, but only one with `type: doc`, so hand-written notes are never
 /// overwritten.
 pub fn write_doc(
@@ -277,7 +277,7 @@ pub fn strip_pinned(text: &str) -> String {
 }
 
 /// Writes `output` right after the fenced block that opens at `line` (0-based), between
-/// `<!-- mq:output -->` markers, replacing an existing pinned output (SPEC §6).
+/// `<!-- mq:output -->` markers, replacing an existing pinned output.
 pub fn pin_output(text: &str, line: usize, output: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     let open = lines.get(line)?.trim_start();
@@ -310,7 +310,7 @@ pub fn pin_output(text: &str, line: usize, output: &str) -> Option<String> {
     Some(out.join("\n") + "\n")
 }
 
-/// One `context:` entry of a request (SPEC §3).
+/// One `context:` entry of a request.
 #[derive(Debug, PartialEq)]
 pub enum ContextItem {
     Note(String),

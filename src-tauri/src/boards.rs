@@ -1,4 +1,4 @@
-//! Boards: kanban lists in `boards/<name>.md` (`type: board`), editable as Markdown (SPEC §23).
+//! Boards: kanban lists in `boards/<name>.md` (`type: board`), editable as Markdown.
 //!
 //! ```markdown
 //! ## Doing

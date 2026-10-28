@@ -1,4 +1,4 @@
-//! Talks to `sidecar/main.ts`, which runs sessions with the Claude Agent SDK (SPEC §8, §13).
+//! Talks to `sidecar/main.ts`, which runs sessions with the Claude Agent SDK.
 //!
 //! One Node process serves every session. Commands go to its stdin as JSON lines and events
 //! come back on stdout. The sidecar keeps a session's process alive between turns, so follow-ups,
@@ -47,7 +47,7 @@ pub struct Runner {
     tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     /// Sessions whose Claude process is alive in the sidecar.
     alive: Mutex<HashSet<String>>,
-    /// Sessions in a turn: from a prompt until its result. Crew mail waits for these (SPEC §21).
+    /// Sessions in a turn: from a prompt until its result. Crew mail waits for these.
     busy: Mutex<HashSet<String>>,
     /// Vault of each session seen in this app run, for writing its log.
     vaults: Mutex<HashMap<String, PathBuf>>,
@@ -260,7 +260,7 @@ impl Runner {
         clean_title(value.as_str().unwrap_or("")).ok_or_else(|| Error::Other("no title".into()))
     }
 
-    /// Whether `url` can be shown in an iframe (SPEC §25).
+    /// Whether `url` can be shown in an iframe.
     pub async fn probe_url(&self, app: &AppHandle, url: &str) -> Result<Value> {
         let req_id = vault::new_id();
         let (tx, rx) = oneshot::channel();
@@ -476,7 +476,7 @@ fn changed(app: &AppHandle, path: &Path) {
     let _ = app.emit("vault://changed", json!({"path": path}));
 }
 
-/// Vault tools for Claude (SPEC §9).
+/// Vault tools for Claude.
 fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) -> Result<Value> {
     let s = |k: &str| p[k].as_str().unwrap_or("").to_string();
     match method {

@@ -1,4 +1,4 @@
-//! Folders, moves and renames in the vault, keeping relative Markdown links working (SPEC §20).
+//! Folders, moves and renames in the vault, keeping relative Markdown links working.
 //!
 //! Marq's own links (anchors, sessions, requests) use ids, so they survive moves. Links people
 //! write, such as `[plan](../docs/plan.md)`, are relative paths and are rewritten here.

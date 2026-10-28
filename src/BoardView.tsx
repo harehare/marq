@@ -14,7 +14,7 @@ type Props = {
   onStartTask: (prompt: string) => void;
 };
 
-/** A kanban board stored as Markdown (SPEC §23). */
+/** A kanban board stored as Markdown. */
 export function BoardView({ vault, path, onOpenMarkdown, onStartTask }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);

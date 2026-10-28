@@ -21,7 +21,7 @@ async function normalize(input: string): Promise<string> {
 /** Local files go through the asset protocol, since the webview cannot load file:// in a frame. */
 const frameSrc = (url: string) => (url.startsWith("file://") ? convertFileSrc(decodeURI(url.slice(7))) : url);
 
-/** A browser tab: an iframe with an address bar, for dev servers and local HTML (SPEC §25). */
+/** A browser tab: an iframe with an address bar, for dev servers and local HTML. */
 export function BrowserView({ url: initial, nonce, onTitle }: { url: string; nonce?: number; onTitle: (t: string) => void }) {
   // Pages opened in this tab; links followed inside the frame are not tracked (it is another origin).
   const [nav, setNav] = useState<{ list: string[]; at: number }>({ list: [], at: -1 });

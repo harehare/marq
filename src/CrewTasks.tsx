@@ -14,7 +14,7 @@ type Props = {
   onOpenNote: (path: string) => void;
 };
 
-/** The crew's shared task list (SPEC §21). The file is the source of truth; this edits it as the user. */
+/** The crew's shared task list. The file is the source of truth; this edits it as the user. */
 export function CrewTasks({ vault, st, color, onError, onChanged, onOpenNote }: Props) {
   const [title, setTitle] = useState("");
   const [owner, setOwner] = useState("");

@@ -1,5 +1,5 @@
 // marq sidecar: runs Claude sessions with the Agent SDK and talks to the Tauri app over stdio.
-// Each line on stdin is a command from the app, each line on stdout is an event (SPEC §8).
+// Each line on stdin is a command from the app, each line on stdout is an event.
 import { createInterface } from "node:readline";
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKMessage, SDKUserMessage, PermissionMode, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
@@ -9,7 +9,7 @@ type Command =
   | {
       op: "start"; id: string; cwd: string; prompt: string; resume: boolean; permissionMode?: string; model?: string | null;
       claudePath?: string; system?: string;
-      /** A crew member gets the crew tools and read access to the other members' directories (SPEC §21). */
+      /** A crew member gets the crew tools and read access to the other members' directories. */
       crew?: boolean; additionalDirectories?: string[];
     }
   | { op: "send"; id: string; text: string }
@@ -34,7 +34,7 @@ function ollamaUrl() {
 
 const BASE_ENV = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marq/0.1" };
 
-/** Model and env for a session's `model`; `ollama:<name>` routes everything to Ollama (SPEC §8). */
+/** Model and env for a session's `model`; `ollama:<name>` routes everything to Ollama. */
 function backend(model?: string | null): { model?: string; env: Record<string, string | undefined> } {
   if (!model?.startsWith("ollama:")) return { model: model || undefined, env: BASE_ENV };
   const name = model.slice("ollama:".length);
@@ -176,7 +176,7 @@ function startCrew(sessionId: string) {
     { title: z.string(), goal: z.string() }, async (a) => text(await rpc("start_crew", { ...a, session: sessionId })));
 }
 
-/** Kanban boards in the vault (SPEC §23). `board` is a name, title or path; empty for the only board. */
+/** Kanban boards in the vault. `board` is a name, title or path; empty for the only board. */
 function boardTools(sessionId: string) {
   const board = z.string().optional().describe("Board name, title or path; omit when there is only one");
   return [

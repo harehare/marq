@@ -1,4 +1,4 @@
-//! App settings in `~/.marq/config.toml` (SPEC §22).
+//! App settings in `~/.marq/config.toml`.
 
 use std::path::PathBuf;
 

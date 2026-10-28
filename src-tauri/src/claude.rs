@@ -1,4 +1,4 @@
-//! Session logs: `sessions/.raw/<id>.jsonl` and the Markdown rendered from it (SPEC §5, §8).
+//! Session logs: `sessions/.raw/<id>.jsonl` and the Markdown rendered from it.
 //!
 //! Besides the Agent SDK messages, the raw log holds marq lines so the Markdown can be rebuilt
 //! from it alone: `marq_meta` (first line), `marq_user` (each prompt), `marq_approval` and `marq_exit`.
@@ -31,7 +31,7 @@ pub struct SessionMeta {
     /// Set when the session works in its own git worktree.
     #[serde(default)]
     pub worktree: Option<git::Worktree>,
-    /// Set when the session is a member of a crew (SPEC §21).
+    /// Set when the session is a member of a crew.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crew: Option<crate::crew::CrewRef>,
 }

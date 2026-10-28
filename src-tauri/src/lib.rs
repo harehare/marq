@@ -174,7 +174,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
     let model = opts.model.or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
     let use_worktree = opts.worktree.unwrap_or_else(|| vault::fm_get(&text, "worktree").as_deref() != Some("false"));
 
-    // A project that is a git repo gets its own worktree, unless the note says `worktree: false` (SPEC §12).
+    // A project that is a git repo gets its own worktree, unless the note says `worktree: false`.
     let worktree = match &project {
         Some(proj) if use_worktree => match git::repo_root(&vault::expand_home(proj)) {
             Some(repo) => {
@@ -482,7 +482,7 @@ fn save_query(app: AppHandle, vault: String, name: String, query: String, glob: 
     Ok(p.to_string_lossy().into_owned())
 }
 
-// ---- boards (SPEC §23) ----
+// ---- boards ----
 
 /// Applies `f` to the board at `path` and tells the views it changed.
 fn on_board<T>(app: &AppHandle, vault: &str, path: &str, f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
@@ -702,7 +702,7 @@ async fn list_sessions(app: AppHandle, vault: String, origin: Option<String>) ->
     .await
 }
 
-/// Deletes a session (SPEC §5). Files go to the Trash; the worktree and branch only when asked.
+/// Deletes a session. Files go to the Trash; the worktree and branch only when asked.
 #[tauri::command]
 async fn delete_session(app: AppHandle, vault: String, session_id: String, remove_worktree: bool, delete_branch: bool) -> Result<()> {
     blocking(move || remove_session(&app, &vault, &session_id, remove_worktree, delete_branch)).await
@@ -765,7 +765,7 @@ async fn create_folder(app: AppHandle, vault: String, path: String) -> Result<St
     .await
 }
 
-/// Moves or renames a note or folder and rewrites relative links (SPEC §20).
+/// Moves or renames a note or folder and rewrites relative links.
 #[tauri::command]
 async fn move_path(app: AppHandle, vault: String, from: String, to: String) -> Result<organize::MoveResult> {
     blocking(move || {
@@ -792,7 +792,7 @@ async fn delete_note(vault: String, path: String) -> Result<()> {
     blocking(move || vault::move_to_trash(&vault::resolve(Path::new(&vault), &path)?)).await
 }
 
-/// The crew view's data: the note, its members and the message timeline (SPEC §21).
+/// The crew view's data: the note, its members and the message timeline.
 #[tauri::command]
 async fn crew_state(app: AppHandle, vault: String, crew_id: String) -> Result<crew::CrewState> {
     blocking(move || crew::state(&app, Path::new(&vault), &crew_id)).await

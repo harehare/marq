@@ -1,4 +1,4 @@
-//! mq evaluation for the query view and mq code blocks (SPEC §6, §7).
+//! mq evaluation for the query view and mq code blocks.
 
 use std::path::Path;
 
@@ -51,7 +51,7 @@ fn eval_one(
     }
     let input = mq_lang::parse_markdown_input(&crate::vault::strip_pinned(content)).map_err(|e| Error::Mq(e.to_string()))?;
     let values = engine.eval(query, input.into_iter()).map_err(|e| Error::Mq(format!("{e:?}")))?;
-    // Non-aggregated `select` yields None for non-matching nodes, so drop empty results (SPEC §7).
+    // Non-aggregated `select` yields None for non-matching nodes, so drop empty results.
     Ok(values
         .into_iter()
         .filter(|v| !v.is_none())

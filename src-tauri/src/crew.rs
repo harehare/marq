@@ -1,4 +1,4 @@
-//! Crews: several sessions working on one project together, addressed by role (SPEC §21).
+//! Crews: several sessions working on one project together, addressed by role.
 //!
 //! A crew is a note with `type: crew`. Its members are ordinary sessions, and they talk through
 //! mailboxes kept in `sessions/.crews/<crew id>.jsonl`

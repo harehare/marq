@@ -744,7 +744,7 @@ export default function App() {
     });
   };
 
-  // ---- keyboard (SPEC §22) ----
+  // ---- keyboard ----
   const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYS);
   const [mode, setMode] = useState<Mode>("normal");
   const [showPalette, setShowPalette] = useState(false);

@@ -21,7 +21,7 @@ export type SessionInfo = {
   /** `done` or `pr` once reviewed. */
   review: string | null;
   pr_url: string | null;
-  /** Set for crew members (SPEC §21). */
+  /** Set for crew members. */
   crew?: { id: string; role: string };
 };
 export type Worktree = { repo: string; path: string; branch: string; base: string; base_branch: string };
@@ -82,7 +82,7 @@ export type CrewState = {
   tasks_path: string;
   docs: CrewDoc[];
 };
-// Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit (SPEC §8).
+// Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit.
 export type ClaudeEvent = { type: string; [k: string]: any };
 
 export const api = {
