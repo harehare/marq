@@ -33,6 +33,9 @@ type Item =
   | { kind: "doc"; path: string; title: string; created: boolean }
   | { kind: "crew"; path: string; title: string };
 
+/** Tallest the message box grows to before it scrolls, in pixels. */
+const COMPOSER_MAX = 420;
+
 function toolArg(input: any): string {
   for (const k of ["file_path", "command", "pattern", "path", "url", "query", "description"]) {
     if (typeof input?.[k] === "string") return input[k];
@@ -158,7 +161,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const [side, setSide] = useState<"changes" | "note" | null>(null);
   const [sideOpen, setSideOpen] = useState(!compact);
   const sideWidth = usePaneSize("sessionSide", 480, 300, 2000);
-  const composerHeight = usePaneSize("composer", 52, 36, 420);
+  const composerHeight = usePaneSize("composer", 52, 36, COMPOSER_MAX);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [summarizing, setSummarizing] = useState(false);
   // Review state lives in the session list, not in the streamed events.
@@ -243,7 +246,16 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   };
   const model = events.find((e) => e.type === "system" && e.subtype === "init")?.model;
   const worktree: Worktree | undefined = meta?.worktree ?? undefined;
-  const panel = side ?? (worktree ? "changes" : "note");
+  // A session without a worktree ran in its project; show that checkout's uncommitted changes.
+  const [checkout, setCheckout] = useState<Worktree | null>(null);
+  const hasMeta = !!meta;
+  const hasWorktree = !!meta?.worktree;
+  useEffect(() => {
+    setCheckout(null);
+    if (hasMeta && !hasWorktree) api.sessionCheckout(vault, sessionId).then(setCheckout, () => {});
+  }, [vault, sessionId, hasMeta, hasWorktree]);
+  const diffable = worktree ?? checkout ?? undefined;
+  const panel = side ?? (diffable ? "changes" : "note");
 
   const summarize = async () => {
     setSummarizing(true);
@@ -270,6 +282,13 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   };
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Grows with the text; the dragged height is the minimum, and past the cap the box scrolls.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(COMPOSER_MAX, Math.max(composerHeight.size, el.scrollHeight))}px`;
+  }, [input, composerHeight.size]);
   /** Appends to the message box and focuses it. */
   const compose = (text: string) => {
     setInput((v) => (v.trim() ? `${v.trimEnd()}\n\n${text}` : text));
@@ -419,7 +438,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             onChange={setInput}
             vault={vault}
             sessionId={sessionId}
-            style={{ height: composerHeight.size }}
             placeholder={running ? "Queue a follow-up for after this turn…  (⌘↵)" : "Follow up… / for skills and commands  (⌘↵ to send)"}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send();
@@ -435,14 +453,15 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       {sideOpen && (
         <aside className="session-side" style={{ width: sideWidth.size }}>
           <div className="side-switch">
-            {worktree && (
+            {diffable && (
               <button className={panel === "changes" ? "on" : ""} onClick={() => setSide("changes")}>Changes</button>
             )}
             <button className={panel === "note" ? "on" : ""} onClick={() => setSide("note")}>Note</button>
           </div>
           <div className="side-content">
-            {panel === "changes" && worktree ? (
-              <ChangesPanel vault={vault} sessionId={sessionId} worktree={worktree} title={meta?.title ?? ""} running={running}
+            {panel === "changes" && diffable ? (
+              <ChangesPanel key={sessionId} vault={vault} sessionId={sessionId} worktree={diffable} checkout={!worktree}
+                title={meta?.title ?? ""} running={running}
                 onCompose={compose} onSend={sendText} />
             ) : (
               <OriginNotePanel vault={vault} sessionId={sessionId} onOpenNote={onOpenOrigin} onOpenSession={onOpenSession} />

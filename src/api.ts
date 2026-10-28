@@ -128,6 +128,7 @@ export const api = {
   listCommands: (vault: string, opts: { cwd?: string; sessionId?: string }) =>
     invoke<SlashCommand[]>("list_commands", { vault, ...opts }),
   summarizeSession: (vault: string, sessionId: string) => invoke<string>("summarize_session", { vault, sessionId }),
+  sessionCheckout: (vault: string, sessionId: string) => invoke<Worktree | null>("session_checkout", { vault, sessionId }),
   sessionChanges: (vault: string, sessionId: string) => invoke<Changes>("session_changes", { vault, sessionId }),
   sessionFileDiff: (vault: string, sessionId: string, file: string) =>
     invoke<string>("session_file_diff", { vault, sessionId, file }),

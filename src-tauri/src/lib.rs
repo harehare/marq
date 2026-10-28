@@ -402,14 +402,34 @@ fn worktree_of(vault: &str, session_id: &str) -> Result<git::Worktree> {
         .ok_or_else(|| error::Error::Other("this session has no worktree".into()))
 }
 
+/// What to diff for a session: its worktree, or else the checkout it ran in.
+fn diff_target(vault: &str, session_id: &str) -> Result<git::Worktree> {
+    if let Some(wt) = claude::current_worktree(Path::new(vault), session_id)? {
+        return Ok(wt);
+    }
+    let meta = claude::meta(Path::new(vault), session_id)?;
+    git::checkout(&vault::expand_home(&meta.cwd))
+        .ok_or_else(|| error::Error::Other(format!("{} is not a git repository with a commit", meta.cwd)))
+}
+
+/// The checkout a session without a worktree ran in, if it is a git repository.
+#[tauri::command]
+async fn session_checkout(vault: String, session_id: String) -> Result<Option<git::Worktree>> {
+    blocking(move || {
+        let meta = claude::meta(Path::new(&vault), &session_id)?;
+        Ok(git::checkout(&vault::expand_home(&meta.cwd)))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn session_changes(vault: String, session_id: String) -> Result<git::Changes> {
-    blocking(move || git::changes(&worktree_of(&vault, &session_id)?)).await
+    blocking(move || git::changes(&diff_target(&vault, &session_id)?)).await
 }
 
 #[tauri::command]
 async fn session_file_diff(vault: String, session_id: String, file: String) -> Result<String> {
-    blocking(move || git::file_diff(&worktree_of(&vault, &session_id)?, &file)).await
+    blocking(move || git::file_diff(&diff_target(&vault, &session_id)?, &file)).await
 }
 
 #[tauri::command]
@@ -1023,6 +1043,7 @@ pub fn run() {
             new_task,
             save_task,
             new_task_compare,
+            session_checkout,
             session_changes,
             session_file_diff,
             session_commit,

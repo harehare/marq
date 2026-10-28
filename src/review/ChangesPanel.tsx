@@ -13,6 +13,8 @@ import { composing } from "../keys";
 
 type Props = {
   vault: string; sessionId: string; worktree: Worktree; title: string; running: boolean;
+  /** The project's own checkout rather than a worktree: uncommitted changes only, nothing to rename, commit or remove. */
+  checkout?: boolean;
   /** Puts text into the session's message box. */
   onCompose: (text: string) => void;
   /** Sends text to the session right away. */
@@ -40,7 +42,7 @@ type Action = "commit" | "push" | "pr" | "remove" | "rename";
 
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
 
-export function ChangesPanel({ vault, sessionId, worktree: initial, title, running, onCompose, onSend }: Props) {
+export function ChangesPanel({ vault, sessionId, worktree: initial, title, running, checkout = false, onCompose, onSend }: Props) {
   // Review comments, kept until sent.
   const [comments, setComments] = useState<DiffComment[]>(() => {
     try {
@@ -162,7 +164,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
 
   const composeDiff = async (files: string[]) => {
     const blocks = await Promise.all(files.map(async (f) => diffBlock(f, open[f] ?? (await api.sessionFileDiff(vault, sessionId, f)))));
-    onCompose(`${files.length > 1 ? "These changes" : "This change"} (against ${worktree.base_branch}):\n\n${blocks.join("\n\n")}\n\n`);
+    onCompose(`${files.length > 1 ? "These changes" : "This change"} (${checkout ? "uncommitted" : `against ${worktree.base_branch}`}):\n\n${blocks.join("\n\n")}\n\n`);
   };
 
   const sendReview = async () => {
@@ -184,7 +186,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
         <div className="branch">
           <GitBranch size={13} />
           {editingBranch === null ? (
-            <button className="branch-name" title="Rename the branch" onClick={() => setEditingBranch(worktree.branch)}>
+            <button className="branch-name" title="Rename the branch" disabled={checkout} onClick={() => setEditingBranch(worktree.branch)}>
               <span className="ellipsis">{worktree.branch}</span> <Pencil size={11} />
             </button>
           ) : (
@@ -208,7 +210,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
               }}
             />
           )}
-          <span className="muted">← {worktree.base_branch}</span>
+          {checkout ? <span className="muted">uncommitted</span> : <span className="muted">← {worktree.base_branch}</span>}
         </div>
         <div className="diffstat">
           <span className="add">+{changes?.additions ?? 0}</span> <span className="del">−{changes?.deletions ?? 0}</span>
@@ -225,7 +227,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
         </button>
         <button className="icon" onClick={() => api.openIn(worktree.path, "vscode")} title="Open in VS Code"><Code2 size={14} /></button>
         <span className="spacer" />
-        <button className="icon danger" onClick={remove} disabled={running || busy} title="Remove worktree"><Trash2 size={14} /></button>
+        {!checkout && <button className="icon danger" onClick={remove} disabled={running || busy} title="Remove worktree"><Trash2 size={14} /></button>}
       </div>
 
       {notice && (
@@ -237,7 +239,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
       )}
 
       <div className="files">
-        {changes?.files.length === 0 && <div className="muted small pad">No changes in the worktree yet.</div>}
+        {changes?.files.length === 0 && <div className="muted small pad">{checkout ? "No uncommitted changes." : "No changes in the worktree yet."}</div>}
         {changes?.files.map((f) => (
           <div key={f.path} className={`file ${isOpen(f.path) ? "open" : ""}`}>
             <div className="file-row">
@@ -288,7 +290,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
         </div>
       )}
 
-      <div className="review-actions">
+      {!checkout && <div className="review-actions">
         <Resizer axis="y" sign={-1} pane={commitHeight} />
         <textarea className="commit-message" value={message} onChange={(e) => setMessage(e.target.value)}
           placeholder="Commit message (first line is the subject)" style={{ height: commitHeight.size }} />
@@ -317,7 +319,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
             {icon("pr", GitPullRequest)} {pending?.kind === "pr" ? "Creating PR…" : "Create PR"}
           </button>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

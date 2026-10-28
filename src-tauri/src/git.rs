@@ -61,6 +61,21 @@ pub fn repo_root(dir: &Path) -> Option<PathBuf> {
     git(dir, &["rev-parse", "--show-toplevel"]).ok().map(|s| PathBuf::from(s.trim()))
 }
 
+/// The checkout at `dir` as a pseudo-worktree for a session that ran in its project: the repo root,
+/// diffed against `HEAD`, so only uncommitted changes show. None outside a repo or before the first commit.
+pub fn checkout(dir: &Path) -> Option<Worktree> {
+    let root = repo_root(dir)?;
+    git(&root, &["rev-parse", "--verify", "--quiet", "HEAD"]).ok()?;
+    let branch = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?.trim().to_string();
+    Some(Worktree {
+        repo: root.to_string_lossy().into_owned(),
+        path: root.to_string_lossy().into_owned(),
+        branch: branch.clone(),
+        base: "HEAD".into(),
+        base_branch: branch,
+    })
+}
+
 /// Checks a branch name with git's own rules and returns it normalized.
 pub fn check_branch_name(repo: &Path, name: &str) -> Result<String> {
     let out = shell::command("git").arg("-C").arg(repo).args(["check-ref-format", "--branch", name.trim()]).output()?;
