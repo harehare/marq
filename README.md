@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo.svg" width="128" height="128" alt="Marq"/>
+  <img src="assets/logo.svg" width="72" height="72" alt="Marq"/>
 
 <h1>Marq</h1>
 
