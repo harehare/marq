@@ -12,6 +12,8 @@
 
 use serde::Serialize;
 
+use crate::boards;
+
 pub const STATUSES: [&str; 5] = ["todo", "doing", "review", "blocked", "done"];
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -35,58 +37,49 @@ fn heading(status: &str) -> String {
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
+/// Reads a task list. Items are parsed as board cards (see `boards`), so the two formats cannot drift
+/// apart; only the lists named after a status count, and anything before the first one is kept as the head.
 pub fn parse(text: &str) -> TaskList {
-    let mut list = TaskList::default();
-    let mut status: Option<String> = None;
-    let mut in_head = true;
+    let mut head = String::new();
+    let mut body = String::new();
     for line in text.lines() {
-        if let Some(h) = line.strip_prefix("## ") {
-            let h = h.trim().to_lowercase();
-            if STATUSES.contains(&h.as_str()) {
-                in_head = false;
-                status = Some(h);
-                continue;
-            }
-        }
-        if in_head {
-            list.head.push_str(line);
-            list.head.push('\n');
-            continue;
-        }
-        let Some(st) = &status else { continue };
-        if let Some(item) = line.strip_prefix("- [ ] ").or_else(|| line.strip_prefix("- [x] ")) {
-            let Some(rest) = item.strip_prefix("**") else { continue };
-            let Some((id, rest)) = rest.split_once("**") else { continue };
-            let rest = rest.trim();
-            let (title, owner) = match rest.rsplit_once(" — @") {
-                Some((t, o)) if !o.contains(' ') => (t.trim(), Some(o.trim().to_string())),
-                _ => (rest, None),
-            };
-            list.tasks.push(Task { id: id.trim().into(), title: title.into(), status: st.clone(), owner, notes: vec![] });
-        } else if let Some(note) = line.strip_prefix("  - ")
-            && let Some(t) = list.tasks.last_mut()
-        {
-            t.notes.push(note.trim().into());
-        }
+        let is_status = line.strip_prefix("## ").is_some_and(|h| STATUSES.contains(&h.trim().to_lowercase().as_str()));
+        let dest = if body.is_empty() && !is_status { &mut head } else { &mut body };
+        dest.push_str(line);
+        dest.push('\n');
     }
-    list
+    let tasks = boards::parse(&body)
+        .lists
+        .into_iter()
+        .map(|l| (l.name.to_lowercase(), l.cards))
+        .filter(|(status, _)| STATUSES.contains(&status.as_str()))
+        .flat_map(|(status, cards)| {
+            cards.into_iter().map(move |c| Task { id: c.id, title: c.title, status: status.clone(), owner: c.owner, notes: c.notes })
+        })
+        .collect();
+    TaskList { head, tasks }
 }
 
 pub fn render(list: &TaskList) -> String {
-    let mut out = list.head.trim_end().to_string();
-    for st in STATUSES {
-        out.push_str(&format!("\n\n## {}\n", heading(st)));
-        for t in list.tasks.iter().filter(|t| t.status == st) {
-            let check = if st == "done" { "x" } else { " " };
-            let owner = t.owner.as_ref().map(|o| format!(" — @{o}")).unwrap_or_default();
-            out.push_str(&format!("\n- [{check}] **{}** {}{owner}", t.id, t.title.replace('\n', " ")));
-            for n in &t.notes {
-                out.push_str(&format!("\n  - {}", n.replace('\n', " ")));
-            }
-        }
-    }
-    out.push('\n');
-    out
+    let lists = STATUSES
+        .iter()
+        .map(|st| boards::List {
+            name: heading(st),
+            cards: list
+                .tasks
+                .iter()
+                .filter(|t| t.status == *st)
+                .map(|t| boards::Card {
+                    id: t.id.clone(),
+                    title: t.title.replace('\n', " "),
+                    done: *st == "done",
+                    owner: t.owner.clone(),
+                    notes: t.notes.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    boards::render(&boards::Board { head: list.head.clone(), lists })
 }
 
 /// A new list's file.
@@ -132,5 +125,13 @@ mod tests {
     fn a_hand_moved_item_takes_its_section_status() {
         let list = parse("# T\n\n## Review\n\n- [ ] **T1** A — @impl\n");
         assert_eq!(list.tasks[0].status, "review");
+    }
+
+    #[test]
+    fn text_before_the_first_status_is_kept() {
+        let text = "# T\n\n## Background\n\nWhy.\n\n## Todo\n\n- [ ] **T1** A\n";
+        let list = parse(text);
+        assert_eq!(list.tasks.len(), 1);
+        assert!(render(&list).contains("## Background\n\nWhy.\n\n## Todo\n\n- [ ] **T1** A\n"));
     }
 }

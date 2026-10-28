@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
-  GitBranch, GitCommitHorizontal, GitPullRequest, RefreshCw, FolderOpen, SquareTerminal, Terminal as TerminalIcon, Code2, Trash2,
+  GitBranch, GitCommitHorizontal, GitPullRequest, RefreshCw, FolderOpen, Terminal as TerminalIcon, Code2, Trash2,
   ChevronRight, AlertCircle, CheckCircle2, Pencil, ArrowUp, Check, Loader2, MessageSquareText, Send, TextCursorInput,
 } from "lucide-react";
 import { api, Changes, Worktree } from "../api";
@@ -223,7 +223,6 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
           onClick={() => window.dispatchEvent(new CustomEvent("marq:terminal", { detail: { cwd: worktree.path, title: worktree.branch } }))}>
           <TerminalIcon size={14} />
         </button>
-        <button className="icon" onClick={() => api.openIn(worktree.path, "terminal")} title="Open in Terminal.app"><SquareTerminal size={14} /></button>
         <button className="icon" onClick={() => api.openIn(worktree.path, "vscode")} title="Open in VS Code"><Code2 size={14} /></button>
         <span className="spacer" />
         <button className="icon danger" onClick={remove} disabled={running || busy} title="Remove worktree"><Trash2 size={14} /></button>
