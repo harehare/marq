@@ -31,6 +31,8 @@ import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { PALETTES, useTheme } from "./theme";
 import { Settings, setSettings } from "./settings";
 import "./App.css";
+import { notify } from "./notify";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Tab =
   | { key: string; kind: "note"; path: string; title: string; jump?: { line: number; nonce: number }; fresh?: boolean }
@@ -372,6 +374,47 @@ export default function App() {
   // Only requests nobody has started. Started ones show up as sessions instead.
   const inbox = useMemo(() => files.filter((f) => f.kind === "request" && f.status === "todo"), [files]);
   const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
+  // ---- notifications and unread results ----
+  const [unread, setUnread] = useState<Set<string>>(new Set());
+  const watch = useRef({ sessions, active });
+  watch.current = { sessions, active };
+  useEffect(() => {
+    // A session counts as seen while its tab is open in a focused window.
+    const attention = (id: string, body: string, markUnread: boolean) => {
+      if (document.hasFocus() && watch.current.active === `session:${id}`) return;
+      if (markUnread) setUnread((u) => new Set(u).add(id));
+      void notify(watch.current.sessions.find((x) => x.id === id)?.title ?? "Marq", body);
+    };
+    const uns = [
+      listen<{ session_id: string }>("claude://turn", (e) => {
+        // Crew members take many short turns, and the crew view shows them.
+        if (!watch.current.sessions.find((x) => x.id === e.payload.session_id)?.crew) attention(e.payload.session_id, "Finished", true);
+      }),
+      listen<{ session_id: string; status: string }>("claude://exit", (e) => {
+        if (e.payload.status === "error") attention(e.payload.session_id, "Stopped with an error", true);
+      }),
+      listen<{ session_id: string; tool_name?: string; answered?: boolean }>("claude://approval", (e) => {
+        if (!e.payload.answered) attention(e.payload.session_id, `Needs your approval${e.payload.tool_name ? `: ${e.payload.tool_name}` : ""}`, false);
+      }),
+    ];
+    return () => uns.forEach((u) => u.then((f) => f()));
+  }, []);
+  useEffect(() => {
+    const clear = () => {
+      if (!document.hasFocus() || !active?.startsWith("session:")) return;
+      const id = active.slice("session:".length);
+      setUnread((u) => (u.has(id) ? new Set([...u].filter((x) => x !== id)) : u));
+    };
+    clear();
+    window.addEventListener("focus", clear);
+    return () => window.removeEventListener("focus", clear);
+  }, [active]);
+  // The Dock badge counts what is waiting for you.
+  useEffect(() => {
+    const n = unread.size + sessions.filter((s) => s.status === "waiting").length;
+    getCurrentWindow().setBadgeCount(n || undefined).catch(() => {});
+  }, [unread, sessions]);
+
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   const boards = useMemo(() => files.filter((f) => f.kind === "board"), [files]);
   const [newBoard, setNewBoard] = useState(false);
@@ -965,7 +1008,7 @@ export default function App() {
             <Collapsible key={g.key} title={g.label} count={g.items.length}
               icon={g.key === "running" ? <span className="dot running" /> : g.key === "waiting" ? <span className="dot waiting" /> : undefined}>
               {g.items.map((s) => (
-                <a key={s.id} className={`session-row ${current?.kind === "session" && current.id === s.id ? "on" : ""}`}
+                <a key={s.id} className={`session-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
                   onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
                   title={[s.title, s.worktree?.branch, s.origin_path].filter(Boolean).join("\n")}>
                   <span className={`dot ${s.status}`} />

@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 export type Settings = {
   appearance?: { font?: string; mono_font?: string; font_size?: number; editor_font_size?: number; palette?: string; mode?: string };
   editor?: { default_mode?: "preview" | "edit" | "split" };
+  notifications?: { enabled?: boolean };
   terminal?: { font_size?: number; cursor?: "block" | "bar" | "underline" };
 };
 

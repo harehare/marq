@@ -691,6 +691,8 @@ kbd {
 .session-row { display: flex; align-items: flex-start; gap: 9px; padding: 6px 8px; border-radius: 6px; }
 .session-row .dot { align-self: flex-start; margin-top: 6px; }
 .session-row:hover { background: var(--bg-hover); }
+.session-row.unread .session-row-title { font-weight: 600; }
+.session-row.unread::after { content: ""; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--accent); flex: none; }
 .session-row.on { background: var(--accent-soft); }
 .session-row-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 

@@ -26,6 +26,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # font_size = 13
 # cursor = "block"                # block | bar | underline
 
+[notifications]
+# enabled = true                  # notify when a session finishes, stops with an error or needs an approval
+
 [ollama]
 # url = "http://127.0.0.1:11434"   # default: $OLLAMA_HOST, then this
 

@@ -974,6 +974,7 @@ pub fn run() {
             session_file_diff,
             session_commit,
             session_create_pr,
+        .plugin(tauri_plugin_notification::init())
             session_push,
             session_push_cwd,
             set_session_review,
