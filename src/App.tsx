@@ -961,7 +961,7 @@ export default function App() {
     return (
       <div className="welcome">
         <div className="welcome-card">
-          <div className="logo"><LogoMark size={30} /></div>
+          <div className="logo"><LogoMark size={44} /></div>
           <h1>Marq</h1>
           <p>Mark up your notes, query them with mq: every note can start a Claude session, and every session comes back as a note.</p>
           <ul className="welcome-points">
@@ -982,7 +982,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar" style={{ width: sidebar.size }}>
         <div className="vault" title={`${vault}\nClick to switch vaults`} onClick={vaultMenu}>
-          <div className="logo small"><LogoMark size={15} /></div>
+          <div className="logo small"><LogoMark size={18} /></div>
           <span className="ellipsis">{vault.split("/").pop()}</span>
           <ChevronsUpDown size={12} className="vault-switch" />
           <button className="theme-btn" title="Theme" onClick={themeMenu}><Palette size={14} /></button>

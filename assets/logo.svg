@@ -1,8 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="90 93 336 336">
+  <style>
+    .a { stop-color: #1fa0d6 } .b { stop-color: #17a3a3 }
+    @media (prefers-color-scheme: dark) { .a { stop-color: #85d4ff } .b { stop-color: #56d4d4 } }
+  </style>
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#243247"/><stop offset="1" stop-color="#1a2435"/></linearGradient>
-    <linearGradient id="m" x1="0" y1="96" x2="0" y2="416" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#85d4ff"/><stop offset="1" stop-color="#56d4d4"/></linearGradient>
+    <linearGradient id="m" x1="0" y1="96" x2="0" y2="416" gradientUnits="userSpaceOnUse"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#g)"/>
   <path d="M122 330 V130 L232 246 L342 130 V392 M290 340 L342 392 L394 340" fill="none" stroke="url(#m)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

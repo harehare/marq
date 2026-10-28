@@ -505,12 +505,9 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .banner { display: flex; align-items: flex-start; gap: 8px; padding: 8px 14px; font-size: 12px; cursor: pointer; }
 .banner pre { margin: 0; }
 .banner.error { background: var(--err-soft); color: var(--err); }
-/* Brand colors, independent of the palette. */
-.logo {
-  display: grid; place-items: center; width: 52px; height: 52px; border-radius: 14px;
-  background: linear-gradient(#243247, #1a2435); color: #7cd2f0;
-}
-.logo.small { width: 24px; height: 24px; border-radius: 7px; }
+/* Brand color, independent of the palette: a mid cyan that reads on light and dark. */
+.logo { display: grid; place-items: center; width: 52px; height: 52px; color: #27a9d8; }
+.logo.small { width: 24px; height: 24px; }
 
 /* Welcome */
 .welcome { display: grid; place-items: center; height: 100%; background: var(--bg-sunken); }
