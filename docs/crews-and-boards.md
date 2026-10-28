@@ -1,0 +1,108 @@
+# Crews and boards
+
+> [!NOTE]
+> Crews use Claude only. They do not run on Ollama models.
+
+## Crews
+
+A crew is several sessions working on one project as a team. Each member has a role, and members message each other by role. The crew opens in one tab that shows the message timeline, the members, and any member's session beside them.
+
+### Starting a crew
+
+- **New task** with **Team**: the prompt becomes the Goal, and the crew is kicked off at once.
+- From a session: an ordinary session can suggest a crew for a large task that needs several kinds of work in parallel. You approve it. The crew works on the session's repository, and the session shows a card for it.
+- **+** next to Crews in the sidebar writes a template for you to fill in. Then press **Kick off**.
+
+A new crew has only a `lead`. The lead designs the team first (you approve each member), discusses the plan with everyone, records decisions in the crew note, and then splits the work into a shared task list. Listing more members in the note skips the first step.
+
+### The crew note
+
+A crew is a note with `type: crew` in `crews/`:
+
+```yaml
+---
+type: crew
+title: Improve mq LSP
+project: ~/dev/git/mq       # where members work
+max_hops: 20                # see Hops below
+members:
+  - role: lead
+    worktree: false         # work in the project directory
+  - role: impl
+    permission_mode: acceptEdits
+  - role: reviewer
+    worktree: false
+---
+# Improve mq LSP
+
+## Goal
+
+...
+
+## Roles
+
+### lead
+...
+### impl
+...
+```
+
+- `members` lists roles in order. **Kick off** sends the Goal to the first one. `user` and `all` are reserved.
+- `### <role>` under `## Roles` is that member's instructions. They go into the member's system prompt with the Goal and the roster.
+- A member gets its own worktree on `marq/<role>-<short id>` when the project is a git repository, unless `worktree: false`. Members can read each other's directories.
+- The note is read whenever a message is sent or a member starts, so edits apply from then on.
+
+### Messages
+
+A member is an ordinary session, listed and reviewed like any other. Members send messages with `crew_send` to a role, to `user`, to `all`, or to several roles at once. A message is delivered only between turns: if the member is in the middle of a turn it waits, and when the turn ends everything waiting arrives together. A member never waits for an answer inside a turn; replies come as new messages.
+
+A message to several members starts a discussion. Members speak once per round and only with something new, and whoever started it (usually the lead) closes it with `crew_decide`, which appends to `## Decisions` in the crew note. You write to a member from the crew view's composer, and members write to you with `to: "user"`.
+
+### Hops
+
+Every message from you has hop 0. A message a member sends has the hop of the last batch it received plus one. A message to a member with a hop over `max_hops` (default 20) is **held**: it is logged but not delivered, and the timeline shows it with **Let it through**. This keeps members from messaging each other forever without you.
+
+### Task list and documents
+
+The crew's folder `crews/<name>/` holds the task list and the members' documents.
+
+`crews/<name>/tasks.md` has a section per status (Todo, Doing, Review, Blocked, Done) and a checklist item per task, with notes as nested items:
+
+```markdown
+## Doing
+
+- [ ] **T1** Show types on hover — @impl
+  - impl: branch marq/impl-1a2b3c
+```
+
+Moving an item to another section by hand changes its status. Members take a task by setting it to `doing`, which makes them its owner; if another member is already doing it, that fails, so members working in parallel never pick the same task. Documents members write are saved in the crew's folder and linked from `## Documents` in the crew note.
+
+### The crew view
+
+- **Left**: members with status, unread mail and branch. Click one to show its session on the right, with approvals; double-click to open it in its own tab.
+- **Center**: the timeline of every message, with `ask` and `reply` badges, `queued` until delivered, and held messages. The composer sends to one member or to all.
+- **Header**: the project, **Kick off** and **Edit crew note**. A banner names members waiting for an approval.
+- **Tasks** shows the task list by status, where you can add tasks and change status or owner. **Docs** lists the crew's documents.
+
+Not yet: a budget limit, routing rules (for example, every impl result goes to reviewer), and restarting failed members.
+
+## Boards
+
+A board is a Markdown note, `boards/<name>.md` with `type: board`. Each `## ` heading is a list, and each checklist item a card:
+
+```markdown
+## Todo
+
+- [ ] **T1** Write docs — @me
+  - start with the README
+
+## Done
+
+- [x] **T2** Add logo
+```
+
+Editing the Markdown is editing the board: moving an item under another heading moves the card, items written without `**T<n>**` get an id on the next save, and moving a card into a list named Done checks it. New boards start with Todo, Doing and Done.
+
+The board tab shows the lists as columns (**Board**) or stacked (**List**). Drag cards between and within lists; lists can be added, renamed, moved and removed when empty. A card can start a session whose prompt names the card. **Markdown** opens the note itself.
+
+Agents read and change boards with `list_boards`, `read_board`, `board_add_card`, `board_update_card` and `board_add_list`. See [Vault tools for agents](tools.md).

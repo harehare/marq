@@ -1,19 +1,66 @@
-<p align="center">
-  <img src="assets/logo.svg" width="96" alt="Marq">
-</p>
+<div align="center">
+  <img src="assets/logo.svg" width="128" height="128" alt="Marq"/>
 
-# Marq
+<h1>Marq</h1>
 
-A desktop app for a Markdown knowledge base. Run Claude from any part of a note, link each run to its session, and query your notes with [mq](https://github.com/harehare/mq).
+**A desktop app for a Markdown knowledge base, with coding agents built in.**
 
-Your Markdown files are the source of truth. The SQLite index is rebuilt from them, and session logs are written back as Markdown so they become part of the knowledge base.
+</div>
 
-## Requirements
+Marq keeps notes, tasks, agent sessions and their results as plain Markdown files in one folder. Run an agent from any heading, query everything with [mq](https://github.com/harehare/mq), and hand the parts you pick to an agent.
+
+> [!WARNING]
+> Marq is under active development. Features, file formats and keybindings may change without notice.
+>
+> - Only **Claude** and **Ollama** are supported as agents for now.
+> - Sessions run from source with `pnpm tauri dev`. Release builds do not bundle the Node sidecar yet.
+> - Developed and used on macOS.
+
+## Features
+
+- **Everything is Markdown.** Notes, requests, session logs, crews, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only keeps the parts between its own markers up to date.
+- **Query with mq.** `mq` code blocks run in the preview and show their output right below. The same queries power the inbox, the learnings across sessions, and the Query tab.
+- **Pick what the agent sees.** Extract a section with mq, select text in a note or a session, or attach `context:` queries to a request, then send exactly that to an agent.
+- **Run an agent from a note.** Hover a heading and choose **Ask Claude**. The session is linked to the heading, and the result comes back as a card under the section.
+- **Parallel tasks in git worktrees.** Each task gets its own worktree and branch, with a diff, review comments, commit, push and PR in the **Changes** panel.
+- **Crews and boards.** Several sessions work on one project as a team by role and share a task list. Kanban boards are Markdown too.
+- **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed.
+- **Claude and Ollama.** Use your own `claude` login, or a local model served by Ollama.
+
+## Markdown in, Markdown out
+
+A request is a note. Its body is the prompt, and `context:` attaches pieces of other notes picked with mq:
+
+```markdown
+---
+type: request
+status: todo
+project: ~/dev/git/mq
+context:
+  - query: 'import "section" | nodes | section::find("Design") | section::body()'
+    from: notes/design.md
+---
+# Show types on hover
+
+Implement what the design note says.
+```
+
+When the session finishes, Marq writes the result back under `## Result`, and the full transcript to `sessions/`, also Markdown. Because sessions are Markdown, mq can query them as well:
+
+```sh
+# Learnings from every session
+mq -A 'import "section" | section::find("Learnings") | section::body()' sessions/*.md
+
+# Every command Claude ran
+mq 'select(.code.lang == "tool:Bash") | .code.value' sessions/*.md
+```
+
+## Quick start
+
+Requirements:
 
 - Rust (stable), Node.js and pnpm
-- The `claude` CLI, logged in. Sessions run through the Claude Agent SDK in a Node sidecar (`sidecar/`), using your own `claude` and its login.
-
-## Develop
+- The `claude` CLI, logged in. Sessions run through the Claude Agent SDK in a Node sidecar (`sidecar/`), using your own `claude` and its login. For Ollama, see [Agents and models](docs/agents.md).
 
 ```sh
 pnpm install     # also installs sidecar/ dependencies
@@ -21,59 +68,27 @@ pnpm tauri dev
 pnpm check       # type checks, clippy and Rust tests
 ```
 
-## Usage
+Open a folder as the vault (any folder of Markdown files works), then open a note, hover a heading and choose **Ask Claude**, or press ⌘N for a new task.
 
-Open a folder as the vault. Any folder of Markdown files works.
+## Documentation
 
-### Notes
+| Page | Contents |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Install, open a vault, your first session, the sidebar |
+| [Vault and file formats](docs/vault.md) | Folder layout, frontmatter, anchors, result blocks, session files |
+| [Sessions](docs/sessions.md) | Ask Claude, tasks and requests, worktrees and review, approvals, resume, sending text |
+| [mq queries](docs/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
+| [Crews and boards](docs/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
+| [Agents and models](docs/agents.md) | Claude, Ollama, permission modes, how sessions run |
+| [Vault tools for agents](docs/tools.md) | The MCP tools agents use to read and organize the vault |
+| [Settings and keys](docs/settings.md) | `~/.marq/config.toml`, keybindings, shell environment |
 
-- Notes open in **Preview**. Switch to **Edit** or **Split** from the toolbar, or double-click a block in the preview to edit that line.
-- Local images in notes are shown in the preview.
-- Create folders from the Notes header or a folder's right-click menu. The header also expands or collapses every folder, and ⌥-click on a folder opens or closes it with all its subfolders. Folder state is kept across launches.
-- Rename or move notes and folders from their menu, or drag them onto a folder. Relative links between notes are updated.
+## Compatibility
 
-### Ask Claude
+| Agent | Status |
+| --- | --- |
+| Claude (through your `claude` CLI) | Supported |
+| Ollama (`ollama:<model>`) | Supported, except for crews |
+| Other agents | Not supported |
 
-- Hover a heading in the preview and choose **Ask Claude**, or press ⌘↵ in the editor. Marq adds an anchor under the heading, starts a session and opens it in a tab. When it finishes, the result shows up as a card under the section.
-- Anchors in the preview show their sessions, and the note's right panel lists them too. **Origin note** in a session jumps back.
-- Select text in a note or a session and choose **Send to session** (⌘⇧↵ in the editor) to hand it to another session with an instruction, or to start a new task with it.
-
-### Tasks and requests
-
-- **New task** (⌘N) starts Claude on a repository. Leave the title empty and Claude names the task. The task is saved as a request note, and a git repo gets its own worktree and branch, so several tasks can run at once. Tick **Include my uncommitted changes** to start from your working tree instead of HEAD.
-- The session's **Changes** panel shows the diff, and lets you commit, create a PR, or open the worktree in Finder, Terminal or VS Code.
-- **Request** in the sidebar creates a note whose whole body is the prompt. Set `project:` to the repository Claude should work in, and optionally `permission_mode: acceptEdits`.
-- The sidebar **Inbox** lists requests that have not been started. Right-click a request to mark it done, drop it, or move it back to todo.
-
-### Sessions
-
-- With the **Ask** or **Accept edits** permission modes, tool calls that need permission show an approval card in the session (Allow, Always allow, Deny with a note). Sessions waiting on you are listed under **Needs you**.
-- You can send follow-ups while Claude is working; they run after the current turn. **Stop** interrupts the turn.
-- A session that stopped part-way (interrupted or error) shows a **Resume** button, also in the sidebar's right-click menu. It continues the conversation, or starts it again from the first prompt if Claude never started.
-- Type `/` at the start of a line in the session composer or the New task prompt to complete skills and slash commands (↑↓, Enter or Tab, Esc). The list comes from Claude Code for the session's directory, or the task's project.
-- **Summarize** writes Summary and Learnings into the session note from a fork of the conversation.
-
-### Queries
-
-- ```` ```mq ```` blocks run automatically in the preview, and the output appears right below the block. Add `input=./daily/*.md` to the fence to run the query over other files, or `aggregate=false` to turn off `-A`.
-- **Pin** on an mq block saves its output into the note.
-- **Query** in the sidebar opens a query tab with presets (inbox, learnings, Bash commands).
-
-### Crews
-
-Crews run several sessions on one project as a team.
-
-1. Choose **Team** in New task, let a session suggest it for a large task (you approve it), or use **+** next to Crews in the sidebar.
-2. A lead forms the team (e.g. impl, reviewer, tester; you approve each member), discusses the plan with everyone and records decisions in the crew note.
-3. The lead splits the work into a shared task list (`crews/<name>/tasks.md`). Members take tasks from it and update it as they work in parallel.
-4. Designs and reports they write are saved in the crew's folder and linked from the crew note.
-
-The crew tab shows the whole conversation, each member's status, and any member's session beside it. Messages wait until the recipient finishes its turn, and after `max_hops` member-to-member messages the crew pauses for you to let the next one through.
-
-### Claude's tools
-
-Claude can reach back into the vault through the marq MCP tools:
-
-- Add learnings, and look up your notes with `search_notes`, `query_notes` and `read_note`.
-- Coordinate with other sessions through `list_sessions`, `read_session` and `send_to_session` (each send is approved by you).
-- Organize your notes: list, create folders and move notes (moves and deletions ask for your approval).
+mq queries use [mq-lang](https://github.com/harehare/mq) 0.9.3, embedded in the app.

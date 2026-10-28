@@ -1,0 +1,58 @@
+# Sessions
+
+A session is one agent conversation. It is linked to the note, heading or request it started from, and its log is saved as Markdown (see [Vault and file formats](vault.md)). You can run several at once.
+
+## Ask Claude
+
+Hover a heading in the preview and choose **Ask Claude**, press ⌘↵ in the editor, or select text in the preview. The Ask dialog takes:
+
+- An intent: **Do it**, **Review**, **Plan** (plan mode) or **Explain**. The last three make no file changes.
+- An optional instruction, added to the prompt.
+
+A selection is sent instead of the whole section, with its line numbers; the anchor goes on the selection's section. Otherwise the prompt is the section text wrapped in `<note path="...">`. Hold ⌥ to open the dialog with project, worktree and model, which override the note's frontmatter for that run only.
+
+Anchors in the preview show their sessions, and the note's right panel lists them too. **Origin note** in a session jumps back.
+
+## Tasks and requests
+
+**New task** (⌘N) starts an agent on a repository.
+
+- Leave the title empty and a small model names the task from its prompt, in the prompt's language. If that takes over 15 seconds, the first line of the prompt is the title.
+- The task is saved as a request note in `requests/` first, so every task stays in the vault.
+- Choose **Team** to run it as a [crew](crews-and-boards.md) from the start.
+
+**Request** in the sidebar creates a request note you write yourself. Set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started are listed in **Inbox**. Right-click one to mark it done, drop it, or move it back to todo.
+
+## Worktrees and review
+
+When the project is inside a git repository, each session gets its own worktree at `~/.marq/worktrees/<repo>/<short id>` on a new branch `marq/<short id>`, created from HEAD. Set `worktree: false` in the note to work in the project directory, or `branch:` to name the branch.
+
+- Tick **Include my uncommitted changes** (`carry_changes: true`) to copy your uncommitted diff and untracked files into the new worktree.
+- The **Changes** panel diffs against the base commit, so it covers commits made in the worktree, uncommitted edits and untracked files.
+- From the panel you can commit everything, push (`git push -u origin <branch>`), push and create a pull request with `gh` (the message's first line is the title, the rest the body), rename the branch, open the worktree in Finder, Terminal or VS Code, and remove the worktree. Removing keeps the branch.
+- **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).
+- **Mark as done** moves a session out of **Needs review**. A created PR shows a badge in the sidebar.
+
+## Approvals
+
+With the **Ask** or **Accept edits** permission modes, a tool call that needs permission shows a card in the session with the tool and its input: **Allow**, **Always allow** (that tool for the rest of the process) or **Deny**, which can carry a note that the agent receives as the reason. Sessions waiting on you are listed under **Needs you**. Stopping a session denies its pending requests.
+
+## Follow-ups, stop and resume
+
+- You can send follow-ups while the agent is working; they run after the current turn. **Stop** interrupts the turn.
+- A session that stopped part-way (interrupted or error) shows a **Resume** button, also in the sidebar's right-click menu. It continues the conversation, or starts again from the first prompt if the agent never started.
+- An idle session process is closed after 10 minutes and resumed on your next message.
+
+## Slash commands and skills
+
+Type `/` at the start of a line in the session composer or the New task prompt to complete skills and slash commands (↑↓, Enter or Tab, Esc). The list comes from Claude Code for the session's directory, with your skills, commands and plugins before the built-ins.
+
+## Sending text between notes and sessions
+
+Select text in a note or a session and choose **Send to session** (⌘⇧↵ in the editor). Pick a session, add an optional instruction, and Marq sends the instruction followed by the excerpt with its source and line numbers. A stopped session is resumed. **New task with this** opens the New task dialog with the same text.
+
+Agents can also coordinate with each other through `list_sessions`, `read_session` and `send_to_session`; every send needs your approval. See [Vault tools for agents](tools.md).
+
+## Summarize
+
+**Summarize** writes `## Summary` and `## Learnings` into the session note from a fork of the conversation, without changing the session itself. Agents can also add learnings themselves with `append_learning`.
