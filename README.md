@@ -102,20 +102,3 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | Other agents | Not supported |
 
 mq queries use [mq-lang](https://github.com/harehare/mq) 0.9.3, embedded in the app.
-
-## Roadmap
-
-Marq aims to be usable as an agent IDE in the way tools like [Orca](https://github.com/stablyai/orca) are, on top of a Markdown knowledge base. Nothing here is promised or scheduled.
-
-| Area | Idea |
-| --- | --- |
-| Compare agents | Compare across different agents, and merge the best result from the compare view (models of Claude and Ollama can be compared today) |
-| More agents | CLI agents such as Codex and OpenCode, besides Claude and Ollama |
-| GitHub | List PRs and issues, and start a task and worktree from one |
-| Prompt input | Attach images and files to a prompt |
-| Browser | Pick an element in the browser tab and send its HTML, CSS and a screenshot to an agent |
-| Terminal | Splits, and scrollback that persists across restarts |
-| Remote | Run agents on another machine over SSH |
-| Automation | A command line interface to start and query sessions |
-| Notifications | Open the session when its notification is clicked |
-| Usage | Show cost and rate limits across sessions (cost per session is already recorded) |
