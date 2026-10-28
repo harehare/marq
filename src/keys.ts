@@ -21,7 +21,6 @@ export const DEFAULT_KEYS: Keymap = {
     "search.open": ["Cmd+Shift+F"],
     "task.new": ["Cmd+N"],
     "note.new": ["Cmd+Shift+N"],
-    "daily.open": ["Cmd+Shift+D"],
     "query.open": ["Cmd+Shift+Q"],
     "terminal.new": ["Cmd+T"],
     "browser.new": ["Cmd+Shift+B"],

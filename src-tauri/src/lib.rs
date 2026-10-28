@@ -320,6 +320,12 @@ async fn new_task(app: AppHandle, vault: String, mut task: NewTask) -> Result<St
 }
 
 fn create_task(app: AppHandle, vault: &str, task: NewTask) -> Result<Started> {
+    let rel = write_request(vault, task)?;
+    start_from_note(app, vault, &rel, 0, RunOptions::default())
+}
+
+/// Writes the task as a request note (`status: todo`) and returns its path relative to the vault.
+fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let NewTask { title, prompt, project, permission_mode, model, carry_changes, worktree, .. } = task;
     let v = Path::new(vault);
     let rel = vault::unique_path(v, "requests", &title);
@@ -342,7 +348,52 @@ fn create_task(app: AppHandle, vault: &str, task: NewTask) -> Result<Started> {
         prompt.trim()
     );
     std::fs::write(v.join(&rel), content)?;
-    start_from_note(app, vault, &rel, 0, RunOptions::default())
+    Ok(rel)
+}
+
+#[derive(Serialize)]
+struct StartedCompare {
+    /// The request note all the sessions share, relative to the vault.
+    request: String,
+    sessions: Vec<Started>,
+}
+
+/// Runs one request on several models at once, each session in its own worktree, to compare the results.
+#[tauri::command]
+async fn new_task_compare(app: AppHandle, vault: String, mut task: NewTask, models: Vec<String>) -> Result<StartedCompare> {
+    if !(2..=4).contains(&models.len()) {
+        return Err(error::Error::Other("compare needs 2 to 4 models".into()));
+    }
+    let in_repo = task.worktree && git::repo_root(&vault::expand_home(&task.project)).is_some();
+    if !in_repo {
+        return Err(error::Error::Other(
+            "comparing needs a git repository and a new worktree, so the runs do not overwrite each other".into(),
+        ));
+    }
+    if task.auto_title {
+        task.title = auto_title(&app, &task.prompt, task.title, None).await;
+    }
+    // Each session gets its model from the options below, not from the note.
+    task.model = None;
+    blocking(move || {
+        let request = write_request(&vault, task)?;
+        let mut sessions = vec![];
+        for model in models {
+            let opts = RunOptions { model: Some(model), ..Default::default() };
+            sessions.push(start_from_note(app.clone(), &vault, &request, 0, opts)?);
+        }
+        Ok(StartedCompare { request, sessions })
+    })
+    .await
+}
+
+/// Saves the new-task dialog as a request note without running it. It waits in the Inbox.
+#[tauri::command]
+async fn save_task(app: AppHandle, vault: String, mut task: NewTask) -> Result<String> {
+    if task.auto_title {
+        task.title = auto_title(&app, &task.prompt, task.title, task.model.as_deref()).await;
+    }
+    blocking(move || write_request(&vault, task)).await
 }
 
 /// The session's worktree, with the branch that is checked out now.
@@ -432,7 +483,7 @@ async fn session_remove_worktree(vault: String, session_id: String) -> Result<()
     blocking(move || git::remove(&worktree_of(&vault, &session_id)?)).await
 }
 
-/// Opens a path in Finder, Terminal or VS Code, or reveals a file in Finder.
+/// Opens a path in Finder or VS Code, or reveals a file in Finder.
 #[tauri::command]
 async fn open_in(path: String, app: String) -> Result<()> {
     blocking(move || open_with(&path, &app)).await
@@ -441,7 +492,6 @@ async fn open_in(path: String, app: String) -> Result<()> {
 fn open_with(path: &str, app: &str) -> Result<()> {
     let mut cmd = std::process::Command::new("open");
     match app {
-        "terminal" => cmd.args(["-a", "Terminal"]),
         "vscode" => cmd.args(["-a", "Visual Studio Code"]),
         "reveal" => cmd.arg("-R"),
         _ => &mut cmd,
@@ -924,6 +974,7 @@ pub fn run() {
     tauri::Builder::default()
         .menu(app_menu)
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Runner::default())
         .manage(terminal::Terminals::default())
@@ -970,11 +1021,12 @@ pub fn run() {
             list_sessions,
             session_origin,
             new_task,
+            save_task,
+            new_task_compare,
             session_changes,
             session_file_diff,
             session_commit,
             session_create_pr,
-        .plugin(tauri_plugin_notification::init())
             session_push,
             session_push_cwd,
             set_session_review,

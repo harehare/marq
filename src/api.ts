@@ -21,6 +21,8 @@ export type SessionInfo = {
   /** `done` or `pr` once reviewed. */
   review: string | null;
   pr_url: string | null;
+  /** A Claude alias or `ollama:<name>`; empty for the default. */
+  model?: string | null;
   /** Set for crew members. */
   crew?: { id: string; role: string };
 };
@@ -111,6 +113,15 @@ export const api = {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   }) =>
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
+  /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
+  saveTask: (vault: string, task: {
+    title: string; prompt: string; project: string; permissionMode?: string; model?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
+  }) => invoke<string>("save_task", { vault, task }),
+  /** One request on 2 to 4 models, each in its own worktree. */
+  newTaskCompare: (vault: string, task: {
+    title: string; prompt: string; project: string; permissionMode?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
+  }, models: string[]) =>
+    invoke<{ request: string; sessions: { session_id: string; title: string }[] }>("new_task_compare", { vault, task, models }),
   answerApproval: (requestId: string, allow: boolean, always: boolean, message?: string) =>
     invoke<void>("answer_approval", { requestId, allow, always, message }),
   listApprovals: (sessionId?: string) => invoke<Approval[]>("list_approvals", { sessionId }),
@@ -133,7 +144,7 @@ export const api = {
   sessionRenameBranch: (vault: string, sessionId: string, branch: string) =>
     invoke<Worktree>("session_rename_branch", { vault, sessionId, branch }),
   sessionRemoveWorktree: (vault: string, sessionId: string) => invoke<void>("session_remove_worktree", { vault, sessionId }),
-  openIn: (path: string, app: "finder" | "terminal" | "vscode" | "reveal") => invoke<void>("open_in", { path, app }),
+  openIn: (path: string, app: "finder" | "vscode" | "reveal") => invoke<void>("open_in", { path, app }),
   deleteSession: (vault: string, sessionId: string, removeWorktree: boolean, deleteBranch: boolean) =>
     invoke<void>("delete_session", { vault, sessionId, removeWorktree, deleteBranch }),
   deleteNote: (vault: string, path: string) => invoke<void>("delete_note", { vault, path }),

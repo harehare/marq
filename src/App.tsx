@@ -2,8 +2,8 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "r
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
-  CalendarDays, Inbox, FilePlus2, ListPlus, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
-  ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest,
+  Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
+  ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Globe,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
@@ -22,6 +22,7 @@ import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
 import { DEFAULT_KEYS, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { CompareView } from "./review/CompareView";
 import { LogoMark } from "./Logo";
 import { Resizer, usePaneSize } from "./Resizer";
 import { Excerpt, SendToSessionDialog } from "./SendToSessionDialog";
@@ -30,14 +31,16 @@ import { ContextMenu, MenuItem, MenuState } from "./ContextMenu";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { PALETTES, useTheme } from "./theme";
 import { Settings, setSettings } from "./settings";
-import "./App.css";
 import { notify } from "./notify";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import "./App.css";
 
 type Tab =
   | { key: string; kind: "note"; path: string; title: string; jump?: { line: number; nonce: number }; fresh?: boolean }
   | { key: string; kind: "session"; id: string; title: string }
   | { key: string; kind: "query"; title: string }
+  /** The runs of one request on several models, side by side. */
+  | { key: string; kind: "compare"; ids: string[]; title: string }
   /** `crew` is the crew note's vault-relative path when the tab was opened. */
   | { key: string; kind: "crew"; crew: string; title: string }
   | { key: string; kind: "board"; path: string; title: string }
@@ -311,7 +314,7 @@ export default function App() {
   const [taskPrompt, setTaskPrompt] = useState("");
   const [sending, setSending] = useState<{ excerpt: Excerpt; exclude?: string } | null>(null);
   const sidebar = usePaneSize("sidebar", 300, 200, 600);
-  const [naming, setNaming] = useState<{ kind: "note" | "request" | "crew"; initial: string } | null>(null);
+  const [naming, setNaming] = useState<{ kind: "note" | "crew"; initial: string } | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   // New folder, rename and move share one name dialog.
   const [pathDialog, setPathDialog] = useState<{ mode: "folder" | "rename" | "move"; from?: string; initial: string } | null>(null);
@@ -371,9 +374,6 @@ export default function App() {
     };
   }, [refresh]);
 
-  // Only requests nobody has started. Started ones show up as sessions instead.
-  const inbox = useMemo(() => files.filter((f) => f.kind === "request" && f.status === "todo"), [files]);
-  const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
   // ---- notifications and unread results ----
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const watch = useRef({ sessions, active });
@@ -415,6 +415,9 @@ export default function App() {
     getCurrentWindow().setBadgeCount(n || undefined).catch(() => {});
   }, [unread, sessions]);
 
+  // Only requests nobody has started. Started ones show up as sessions instead.
+  const inbox = useMemo(() => files.filter((f) => f.kind === "request" && f.status === "todo"), [files]);
+  const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   const boards = useMemo(() => files.filter((f) => f.kind === "board"), [files]);
   const [newBoard, setNewBoard] = useState(false);
@@ -605,6 +608,11 @@ export default function App() {
     refresh();
   };
 
+  const openCompare = (ids: string[], title: string) => {
+    openTab({ key: `compare:${ids.slice().sort().join(",")}`, kind: "compare", ids, title: `Compare: ${title}` });
+    refresh();
+  };
+
   const openCrewAt = (rel: string, title: string) => openTab({ key: `crew:${rel}`, kind: "crew", crew: rel, title });
   const openCrew = (f: FileEntry) => openCrewAt(f.rel, fileLabel(f));
 
@@ -616,32 +624,21 @@ export default function App() {
     });
   };
 
-  const today = () => new Date().toISOString().slice(0, 10);
-
-  const create = async (rel: string, kind: "note" | "request" | "daily" | "crew") => {
+  const create = async (rel: string, kind: "note" | "crew") => {
     const path = await api.createNote(vault!, rel, kind);
     openNote(path, undefined, true);
     refreshFiles();
   };
 
-  const openDaily = async () => {
-    if (!vault) return;
-    const rel = `daily/${today()}.md`;
-    // An existing daily note is simply opened.
-    if (files.some((f) => f.rel === rel)) openNote(`${vault}/${rel}`);
-    else await create(rel, "daily").catch(() => openNote(`${vault}/${rel}`));
-  };
-
-  const createNamed = async (kind: "note" | "request" | "crew", name: string) => {
+  const createNamed = async (kind: "note" | "crew", name: string) => {
     const slug = name.replace(/\.md$/, "").replace(/[\s/]+/g, "-");
-    const rel =
-      kind === "request"
-        ? `requests/${today()}-${slug}.md`
-        : kind === "crew"
-          ? `crews/${slug}.md`
-          : name.endsWith(".md") ? name : `${name}.md`;
+    const rel = kind === "crew" ? `crews/${slug}.md` : name.endsWith(".md") ? name : `${name}.md`;
     await create(rel.replace(/^\/+/, ""), kind);
   };
+
+  /** Runs of the same request that have their own worktree, to compare. */
+  const siblings = (s: SessionInfo) =>
+    s.worktree && s.origin ? sessions.filter((x) => x.origin === s.origin && x.worktree && !x.crew) : [];
 
   const sessionMenu = (e: React.MouseEvent, s: SessionInfo) => {
     e.preventDefault();
@@ -659,6 +656,9 @@ export default function App() {
             if (o) openNote(o.path, o.line);
           },
         },
+        ...(siblings(s).length > 1
+          ? [{ label: "Compare runs", icon: GitCompare, onClick: () => openCompare(siblings(s).map((x) => x.id), s.title) }]
+          : []),
         ...(s.worktree
           ? [{ label: "Reveal worktree in Finder", icon: FolderOpen, onClick: () => api.openIn(s.worktree!.path, "finder") }]
           : []),
@@ -854,7 +854,6 @@ export default function App() {
     "search.open": { label: "Search notes", run: () => openSearch("") },
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },
-    "daily.open": { label: "Today's note", run: () => void openDaily() },
     "board.new": { label: "New board", run: () => setNewBoard(true) },
     "query.open": { label: "mq query", run: () => openTab({ key: "query", kind: "query", title: "mq query" }) },
     "browser.new": { label: "New browser tab", run: () => openBrowser() },
@@ -995,9 +994,7 @@ export default function App() {
           <Plus size={15} /> New task <kbd>⌘N</kbd>
         </button>
         <div className="quick">
-          <button onClick={openDaily} title="Today's note"><CalendarDays size={14} /> Today</button>
           <button onClick={() => setNaming({ kind: "note", initial: "notes/" })} title="New note"><FilePlus2 size={14} /> Note</button>
-          <button onClick={() => setNaming({ kind: "request", initial: "" })} title="New request note"><ListPlus size={14} /> Request</button>
           <button onClick={() => openTab({ key: "query", kind: "query", title: "mq query" })} title="mq query">
             <Braces size={14} /> Query
           </button>
@@ -1120,7 +1117,7 @@ export default function App() {
             <div key={t.key} className={`tab ${t.key === active ? "on" : ""}`} onClick={() => setActive(t.key)}
               onAuxClick={(e) => e.button === 1 && closeTab(t.key)}
               onDoubleClick={() => t.kind === "terminal" && setRenaming(t.key)}>
-              {t.kind === "session" ? <MessageSquare size={15} /> : t.kind === "query" ? <Braces size={15} />
+              {t.kind === "session" ? <MessageSquare size={15} /> : t.kind === "compare" ? <GitCompare size={15} /> : t.kind === "query" ? <Braces size={15} />
                 : t.kind === "crew" ? <Users size={15} /> : t.kind === "terminal" ? <SquareTerminal size={15} />
                 : t.kind === "board" ? <Columns3 size={15} /> : t.kind === "search" ? <Search size={15} />
                 : t.kind === "browser" ? <Globe size={15} /> : <FileText size={15} />}
@@ -1135,6 +1132,7 @@ export default function App() {
             <div key={t.key} className="pane-inner" tabIndex={-1} hidden={t.key !== active}>
               {t.kind === "note" && <NoteEditor vault={vault} path={t.path} jump={t.jump} fresh={t.fresh} onOpenSession={openSession}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} />}
+              {t.kind === "compare" && <CompareView vault={vault} ids={t.ids} sessions={sessions} onOpenSession={openSession} onChanged={refresh} />}
               {t.kind === "session" && <SessionView vault={vault} sessionId={t.id} onOpenOrigin={openNote} onOpenSession={openSession}
                 onOpenCrew={openCrewAt}
                 onSendExcerpt={(excerpt) => setSending({ excerpt, exclude: t.id })} />}
@@ -1157,7 +1155,6 @@ export default function App() {
               <p>Start a task, or open a note from the sidebar.</p>
               <div className="row">
                 <button className="primary" onClick={() => setShowNewTask(true)}><Plus size={14} /> New task</button>
-                <button onClick={openDaily}><CalendarDays size={14} /> Today</button>
               </div>
             </div>
           )}
@@ -1204,15 +1201,13 @@ export default function App() {
       )}
       {naming && (
         <NameDialog
-          title={naming.kind === "request" ? "New request" : naming.kind === "crew" ? "New crew" : "New note"}
-          label={naming.kind === "request" ? "What is the request about? (a short name)" : naming.kind === "crew" ? "What will the crew work on? (a short name)" : "Path, relative to the vault"}
+          title={naming.kind === "crew" ? "New crew" : "New note"}
+          label={naming.kind === "crew" ? "What will the crew work on? (a short name)" : "Path, relative to the vault"}
           initial={naming.initial}
-          placeholder={naming.kind === "request" ? "e.g. fix-login-timeout" : naming.kind === "crew" ? "e.g. checkout-redesign" : "e.g. notes/meeting-2026-10"}
-          hint={naming.kind === "request"
-            ? `Saved as requests/${today()}-<name>.md. Use New task to write the prompt and start right away.`
-            : naming.kind === "crew"
-              ? "Saved as crews/<name>.md with a lead, an implementer and a reviewer. Next, set the project and the goal in the note, then open the crew from the sidebar."
-              : "Folders are created as needed. .md is added if you leave it out."}
+          placeholder={naming.kind === "crew" ? "e.g. checkout-redesign" : "e.g. notes/meeting-2026-10"}
+          hint={naming.kind === "crew"
+            ? "Saved as crews/<name>.md with a lead, an implementer and a reviewer. Next, set the project and the goal in the note, then open the crew from the sidebar."
+            : "Folders are created as needed. .md is added if you leave it out."}
           submit="Create"
           onSubmit={(v) => createNamed(naming.kind, v)}
           onClose={() => setNaming(null)}
@@ -1232,7 +1227,9 @@ export default function App() {
         <NewTaskDialog vault={vault} initialPrompt={taskPrompt}
           onClose={() => { setShowNewTask(false); setTaskPrompt(""); }}
           onStarted={(id, title) => { refresh(); openSession(id, title); }}
-          onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); }} />
+          onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); }}
+          onSaved={(rel) => { refresh(); openNote(`${vault}/${rel}`); }}
+          onStartedCompare={(ids, title) => openCompare(ids, title)} />
       )}
       {showQuickOpen && (
         <QuickOpen files={files} recent={recentFiles} onClose={() => setShowQuickOpen(false)}

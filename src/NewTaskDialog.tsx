@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { FolderGit2, FolderSearch, Loader2, Sparkles, Users, X } from "lucide-react";
+import { FolderGit2, FolderSearch, GitCompare, Loader2, Sparkles, Users, X } from "lucide-react";
 import { api } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
 import { ModelSelect } from "./ModelSelect";
@@ -12,6 +12,10 @@ type Props = {
   onStarted: (sessionId: string, title: string) => void;
   /** A task started as a crew (Team). */
   onStartedCrew: (rel: string, title: string) => void;
+  /** A task saved as a request note without running it. */
+  onSaved: (rel: string) => void;
+  /** A task run on several models; the session ids to compare. */
+  onStartedCompare: (ids: string[], title: string) => void;
   initialPrompt?: string;
 };
 
@@ -37,7 +41,7 @@ function stored(key: string, fallback: string) {
 }
 
 /** Starts a task. It is saved as a request note first, so the task stays in the knowledge base. */
-export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initialPrompt = "" }: Props) {
+export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSaved, onStartedCompare, initialPrompt = "" }: Props) {
   const [prompt, setPrompt] = useState(initialPrompt);
   const [title, setTitle] = useState("");
   const [projects, setProjects] = useState<string[]>([]);
@@ -45,6 +49,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initia
   const [mode, setMode] = useState(() => stored(MODE_KEY, "auto"));
   const [model, setModel] = useState(() => stored(MODEL_KEY, ""));
   const [carry, setCarry] = useState(false);
+  // More models to run the same task on, to compare the results.
+  const [extra, setExtra] = useState<string[]>([]);
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
   // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
@@ -70,6 +76,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initia
     if (typeof dir === "string") setProject(dir);
   };
 
+  const comparing = worktree && !team && extra.length > 0;
   const derivedTitle = title.trim() || prompt.trim().split("\n")[0].slice(0, 60);
 
   const start = async () => {
@@ -90,10 +97,37 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initia
         onClose();
         return;
       }
+      if (comparing) {
+        const r = await api.newTaskCompare(
+          vault,
+          { title: derivedTitle, prompt, project, permissionMode: mode, carryChanges: carry, worktree, autoTitle: !title.trim() },
+          [model, ...extra],
+        );
+        onStartedCompare(r.sessions.map((x) => x.session_id), r.sessions[0]?.title ?? derivedTitle);
+        onClose();
+        return;
+      }
       const started = await api.newTask(vault, {
         title: derivedTitle, prompt, project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
       });
       onStarted(started.session_id, started.title);
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+      setStage(null);
+    }
+  };
+
+  const save = async () => {
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setStage("Saving the request…");
+    try {
+      const rel = await api.saveTask(vault, {
+        title: derivedTitle, prompt, project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
+      });
+      onSaved(rel);
       onClose();
     } catch (e) {
       setError(String(e));
@@ -164,6 +198,18 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initia
 
         <label className="field-label">Model</label>
         <ModelSelect value={model} onChange={setModel} />
+        {worktree && extra.map((m, i) => (
+          <div key={i} className="compare-row">
+            <ModelSelect value={m} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? v : x)))} />
+            <button className="icon" onClick={() => setExtra(extra.filter((_, j) => j !== i))} title="Remove"><X size={13} /></button>
+          </div>
+        ))}
+        {worktree && extra.length < 3 && (
+          <button className="compare-add" onClick={() => setExtra([...extra, model])}>
+            <GitCompare size={13} /> Compare with another model
+          </button>
+        )}
+        {comparing && <p className="muted small">Runs the same task once per model, each in its own worktree. You compare the results side by side and keep one.</p>}
 
         <label className="field-label">Permissions</label>
         <div className="modes" title={MODES.find((m) => m.value === mode)?.hint}>
@@ -182,8 +228,13 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initia
           ) : (
             <span className="muted small">{team ? "Saved as a crew note in crews/" : "Saved as a request note in requests/"}</span>
           )}
+          {!team && !comparing && (
+            <button onClick={save} disabled={!prompt.trim() || busy} title="Save as a request note in the Inbox and start it later">
+              Save for later
+            </button>
+          )}
           <button className="primary" onClick={start} disabled={!prompt.trim() || busy}>
-            <Sparkles size={14} /> Start ⌘↵
+            <Sparkles size={14} /> {comparing ? `Start ${extra.length + 1} runs` : "Start"} ⌘↵
           </button>
         </div>
       </div>

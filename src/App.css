@@ -1276,3 +1276,17 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; -webkit-user
 .crew-member-row:hover { background: var(--bg-hover); }
 .crew-member-row.on { background: var(--bg-hover); color: var(--fg-strong); }
 .crew-member-row .small { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; max-width: 55%; }
+
+/* Compare runs */
+.compare { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.compare-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px 4px; }
+.compare-notice { cursor: pointer; font-size: 12px; }
+.compare-notice.error { color: var(--err); }
+.compare-cols { flex: 1; display: flex; gap: 12px; padding: 8px 12px 12px; overflow: auto; min-height: 0; }
+.compare-col { flex: 1 1 0; min-width: 300px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-sunken); overflow: hidden; }
+.compare-col header { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.compare-title { display: flex; align-items: center; gap: 8px; }
+.compare-col .files { overflow: auto; min-height: 0; }
+.compare-row { display: flex; align-items: center; gap: 6px; }
+.compare-row > :first-child { flex: 1; }
+.compare-add { align-self: flex-start; }
