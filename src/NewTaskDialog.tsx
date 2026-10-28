@@ -1,0 +1,192 @@
+import { useEffect, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
+import { FolderGit2, FolderSearch, Loader2, Sparkles, Users, X } from "lucide-react";
+import { api } from "./api";
+import { SlashTextarea } from "./SlashTextarea";
+import { ModelSelect } from "./ModelSelect";
+
+type Props = {
+  vault: string;
+  onClose: () => void;
+  onStarted: (sessionId: string, title: string) => void;
+  /** A task started as a crew (Team). */
+  onStartedCrew: (rel: string, title: string) => void;
+  initialPrompt?: string;
+};
+
+const MODES = [
+  { value: "auto", label: "Auto", hint: "A classifier reviews each action instead of you" },
+  { value: "default", label: "Ask", hint: "Edits and commands wait for your approval in the session" },
+  { value: "acceptEdits", label: "Accept edits", hint: "File edits run without asking; commands still ask" },
+  { value: "plan", label: "Plan only", hint: "Claude plans but does not change files" },
+];
+
+const PROJECT_KEY = "marq.lastProject";
+const MODEL_KEY = "marq.lastModel";
+const MODE_KEY = "marq.lastMode";
+const TEAM_KEY = "marq.lastTeam";
+const WORKTREE_KEY = "marq.lastWorktree";
+
+function stored(key: string, fallback: string) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Starts a task. It is saved as a request note first, so the task stays in the knowledge base. */
+export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, initialPrompt = "" }: Props) {
+  const [prompt, setPrompt] = useState(initialPrompt);
+  const [title, setTitle] = useState("");
+  const [projects, setProjects] = useState<string[]>([]);
+  const [project, setProject] = useState(() => stored(PROJECT_KEY, ""));
+  const [mode, setMode] = useState(() => stored(MODE_KEY, "auto"));
+  const [model, setModel] = useState(() => stored(MODEL_KEY, ""));
+  const [carry, setCarry] = useState(false);
+  const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
+  // One session that may hand large work to a crew, or a crew from the start (SPEC §21).
+  const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const un = listen<string>("task://progress", (e) => setStage(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  useEffect(() => {
+    api.recentProjects(vault).then(setProjects);
+    promptRef.current?.focus();
+  }, [vault]);
+
+  const browse = async () => {
+    const dir = await open({ directory: true });
+    if (typeof dir === "string") setProject(dir);
+  };
+
+  const derivedTitle = title.trim() || prompt.trim().split("\n")[0].slice(0, 60);
+
+  const start = async () => {
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setStage("Saving the request…");
+    try {
+      try {
+        localStorage.setItem(PROJECT_KEY, project);
+        localStorage.setItem(MODE_KEY, mode);
+        localStorage.setItem(MODEL_KEY, model);
+        localStorage.setItem(TEAM_KEY, String(team));
+        localStorage.setItem(WORKTREE_KEY, String(worktree));
+      } catch {}
+      if (team) {
+        const c = await api.newCrew(vault, { title: derivedTitle, prompt, project, autoTitle: !title.trim() });
+        onStartedCrew(c.rel, c.title);
+        onClose();
+        return;
+      }
+      const started = await api.newTask(vault, {
+        title: derivedTitle, prompt, project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
+      });
+      onStarted(started.session_id, started.title);
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+      setStage(null);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" onKeyDown={(e) => e.key === "Escape" && onClose()}>
+        <div className="modal-head">
+          <h3><Sparkles size={16} /> New task</h3>
+          <button className="icon" onClick={onClose}><X size={15} /></button>
+        </div>
+        <SlashTextarea
+          ref={promptRef}
+          className="task-prompt"
+          value={prompt}
+          onChange={setPrompt}
+          vault={vault}
+          cwd={project.trim() || undefined}
+          placement="below"
+          placeholder="Describe the task for Claude…  Type / for skills and commands"
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") start();
+          }}
+        />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (empty: Claude names it)" />
+        <label className="field-label">Project</label>
+        <div className="project-row">
+          <FolderGit2 size={14} className="muted" />
+          <input list="marq-projects" value={project} onChange={(e) => setProject(e.target.value)}
+            placeholder="~/dev/git/your-repo (empty: run in the vault)" />
+          <datalist id="marq-projects">{projects.map((p) => <option key={p} value={p} />)}</datalist>
+          <button onClick={browse}><FolderSearch size={14} /> Browse</button>
+        </div>
+        <label className="field-label">Who works on it</label>
+        <div className="modes">
+          <button className={`mode ${!team ? "on" : ""}`} onClick={() => setTeam(false)}>
+            <Sparkles size={13} /> One session
+          </button>
+          <button className={`mode ${team ? "on" : ""}`} onClick={() => setTeam(true)}>
+            <Users size={13} /> Team
+          </button>
+        </div>
+        <p className="muted small">
+          {team
+            ? "Starts a crew: a lead forms the team (e.g. impl, reviewer, tester), they agree on a plan, and build, review and test together. Saved in crews/."
+            : "One Claude session. If the task turns out to be large, it can suggest handing it to a crew, and you approve it."}
+        </p>
+        {!team && <>
+        <label className="check">
+          <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} />
+          Work in a new worktree
+        </label>
+        <p className="muted small">
+          {worktree
+            ? "A git repository gets its own worktree and branch from HEAD, so tasks can run in parallel. Rename the branch later from the Changes panel."
+            : "Claude works directly in the project, on whatever is checked out. Tasks in the same project can get in each other's way."}
+        </p>
+        {worktree && (
+          <label className="check">
+            <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />
+            Include my uncommitted changes and untracked files
+          </label>
+        )}
+
+        <label className="field-label">Model</label>
+        <ModelSelect value={model} onChange={setModel} />
+
+        <label className="field-label">Permissions</label>
+        <div className="modes" title={MODES.find((m) => m.value === mode)?.hint}>
+          {MODES.map((m) => (
+            <button key={m.value} className={`mode ${mode === m.value ? "on" : ""}`} onClick={() => setMode(m.value)} title={m.hint}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted small">{MODES.find((m) => m.value === mode)?.hint}</p>
+        </>}
+        {error && <div className="banner error">{error}</div>}
+        <div className="modal-foot">
+          {busy && stage ? (
+            <span className="stage small"><Loader2 size={13} className="spin" /> {stage}</span>
+          ) : (
+            <span className="muted small">{team ? "Saved as a crew note in crews/" : "Saved as a request note in requests/"}</span>
+          )}
+          <button className="primary" onClick={start} disabled={!prompt.trim() || busy}>
+            <Sparkles size={14} /> Start ⌘↵
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
