@@ -1052,7 +1052,7 @@ button.icon.danger { color: var(--err); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; }
 .modal-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
 .modal-head h3 svg { color: var(--accent); }
-.task-prompt { min-height: 130px; resize: vertical; font-size: 14px; line-height: 1.6; }
+.task-prompt { min-height: 130px; resize: none; font-size: 14px; line-height: 1.6; }
 .field-label { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 4px; }
 .project-row { display: flex; align-items: center; gap: 8px; }
 .project-row input { flex: 1; font-family: var(--font-mono); font-size: 12px; }

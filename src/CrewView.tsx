@@ -11,6 +11,7 @@ import { SessionView } from "./SessionView";
 import { CrewTasks } from "./CrewTasks";
 import type { Excerpt } from "./SendToSessionDialog";
 import { composing } from "./keys";
+import { useAutoGrow } from "./useAutoGrow";
 
 type Props = {
   vault: string;
@@ -40,6 +41,8 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
   const sessionWidth = usePaneSize("crewSession", 560, 320, 1400);
   const membersWidth = usePaneSize("crewMembers", 220, 160, 400);
   const bottom = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(inputRef, input, 240);
   // Once loaded, the crew is addressed by id, so the tab keeps working if the note moves.
   const key = st?.id || crewKey;
 
@@ -272,6 +275,7 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
                 {st.members.length > 1 && <option value="all">to all</option>}
               </select>
               <textarea
+                ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={`Message ${to || "a member"}…  (⌘↵ to send)`}

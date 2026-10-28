@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { FolderGit2, FolderSearch, GitCompare, Loader2, Sparkles, Users, X } from "lucide-react";
 import { api } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
+import { useAutoGrow } from "./useAutoGrow";
 import { ModelSelect } from "./ModelSelect";
 
 type Props = {
@@ -58,6 +59,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(promptRef, prompt, 420);
 
   useEffect(() => {
     const un = listen<string>("task://progress", (e) => setStage(e.payload));
