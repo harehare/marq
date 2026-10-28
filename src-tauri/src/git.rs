@@ -1,4 +1,4 @@
-//! Per-session git worktrees and their changes (SPEC §12).
+//! Per-session git worktrees and their changes.
 
 use std::path::{Path, PathBuf};
 use crate::shell;
@@ -208,25 +208,56 @@ fn carry_changes(repo: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Counts per file from `git diff --numstat -z`. A rename is `add\tdel\t\0old\0new\0`; binary files count as 0.
+fn parse_numstat(out: &str) -> Vec<(u32, u32)> {
+    let mut rows = vec![];
+    let mut tokens = out.split('\0');
+    while let Some(t) = tokens.next() {
+        if t.is_empty() {
+            continue;
+        }
+        let mut f = t.splitn(3, '\t');
+        let add = f.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        let del = f.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        if f.next() == Some("") {
+            // Rename or copy: the old and new paths follow as separate entries.
+            tokens.next();
+            tokens.next();
+        }
+        rows.push((add, del));
+    }
+    rows
+}
+
+/// Status letter and (new) path per file from `git diff --name-status -z`.
+fn parse_name_status(out: &str) -> Vec<(String, String)> {
+    let mut rows = vec![];
+    let mut tokens = out.split('\0');
+    while let Some(status) = tokens.next() {
+        let Some(letter) = status.chars().next() else { continue };
+        if matches!(letter, 'R' | 'C') {
+            tokens.next();
+        }
+        rows.push((letter.to_string(), tokens.next().unwrap_or_default().to_string()));
+    }
+    rows
+}
+
 /// Committed and uncommitted changes since `base`, including untracked files.
 pub fn changes(wt: &Worktree) -> Result<Changes> {
     let dir = Path::new(&wt.path);
     if !dir.exists() {
         return Ok(Changes::default());
     }
+    // `-z` keeps non-ASCII and special-character paths literal; otherwise git quotes them
+    // (`"\346\227\245.md"`), and that string matches nothing when passed back to `file_diff`.
     let mut files: Vec<FileChange> = vec![];
-    let numstat = git(dir, &["diff", "--numstat", "-M", &wt.base])?;
-    let names = git(dir, &["diff", "--name-status", "-M", &wt.base])?;
-    for (n, s) in numstat.lines().zip(names.lines()) {
-        let mut nf = n.split('\t');
-        let add = nf.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        let del = nf.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        let mut sf = s.split('\t');
-        let status = sf.next().unwrap_or("M").chars().next().unwrap_or('M').to_string();
-        let path = sf.next_back().unwrap_or_default().to_string();
+    let numstat = parse_numstat(&git(dir, &["diff", "--numstat", "-z", "-M", &wt.base])?);
+    let names = parse_name_status(&git(dir, &["diff", "--name-status", "-z", "-M", &wt.base])?);
+    for ((add, del), (status, path)) in numstat.into_iter().zip(names) {
         files.push(FileChange { path, status, additions: add, deletions: del });
     }
-    for path in git(dir, &["ls-files", "--others", "--exclude-standard"])?.lines() {
+    for path in git(dir, &["ls-files", "--others", "--exclude-standard", "-z"])?.split('\0').filter(|p| !p.is_empty()) {
         let lines = std::fs::read_to_string(dir.join(path)).map(|t| t.lines().count() as u32).unwrap_or(0);
         files.push(FileChange { path: path.to_string(), status: "?".into(), additions: lines, deletions: 0 });
     }
@@ -398,6 +429,43 @@ mod tests {
         remove(&wt).unwrap();
         delete_branch(&wt).unwrap();
         assert!(git(r, &["rev-parse", "--verify", "marq/x"]).is_err());
+    }
+
+    #[test]
+    fn non_ascii_paths_and_renames() {
+        let repo = tempfile::tempdir().unwrap();
+        let r = repo.path();
+        sh(r, &["init", "-q", "-b", "main"]);
+        sh(r, &["config", "user.email", "t@example.com"]);
+        sh(r, &["config", "user.name", "t"]);
+        std::fs::write(r.join("old.txt"), "a\nb\nc\nd\n").unwrap();
+        std::fs::write(r.join("keep.txt"), "k\n").unwrap();
+        sh(r, &["add", "."]);
+        sh(r, &["commit", "-qm", "init"]);
+        let base = git(r, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let wt = Worktree {
+            repo: r.to_string_lossy().into(),
+            path: r.to_string_lossy().into(),
+            branch: "main".into(),
+            base,
+            base_branch: "main".into(),
+        };
+
+        std::fs::write(r.join("日本語.md"), "one\ntwo\n").unwrap();
+        std::fs::write(r.join("empty.txt"), "").unwrap();
+        std::fs::rename(r.join("old.txt"), r.join("新しい.txt")).unwrap();
+        std::fs::write(r.join("keep.txt"), "k\nk2\n").unwrap();
+        sh(r, &["add", "-A"]);
+        std::fs::write(r.join("未追跡.md"), "x\n").unwrap();
+
+        let c = changes(&wt).unwrap();
+        let find = |p: &str| c.files.iter().find(|f| f.path == p).unwrap_or_else(|| panic!("{p} missing in {:?}", c.files));
+        assert_eq!(find("日本語.md").additions, 2);
+        assert_eq!(find("新しい.txt").status, "R");
+        assert_eq!(find("keep.txt").additions, 1);
+        assert_eq!(find("未追跡.md").additions, 1);
+        assert!(file_diff(&wt, "日本語.md").unwrap().contains("+two"));
+        assert!(file_diff(&wt, "未追跡.md").unwrap().contains("+x"));
     }
 
     #[test]

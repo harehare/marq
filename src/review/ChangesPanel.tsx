@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -68,21 +68,32 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   const busy = pending !== null;
   const commitHeight = usePaneSize("commitMessage", 60, 34, 360);
 
+  // Read through a ref so `refresh` stays stable; otherwise expanding a diff re-subscribes
+  // the event listeners below, and an event arriving in that gap is lost.
+  const openRef = useRef(open);
+  openRef.current = open;
+  // Refreshes can overlap (one per tool result); only the latest may apply its result.
+  const generation = useRef(0);
+
   const refresh = useCallback(async () => {
+    const mine = ++generation.current;
     try {
       const c = await api.sessionChanges(vault, sessionId);
+      // Reload diffs that are expanded, since the files may have changed.
+      const expanded = Object.keys(openRef.current).filter((f) => openRef.current[f] !== null);
+      const entries = (
+        await Promise.all(expanded.map(async (f) => [f, await api.sessionFileDiff(vault, sessionId, f).catch(() => null)] as const))
+      ).filter((e): e is readonly [string, string] => e[1] !== null);
+      if (mine !== generation.current) return;
       setChanges(c);
       // Claude may rename the branch with git; show what is checked out.
       if (c.branch) setWorktree((w) => (w.branch === c.branch ? w : { ...w, branch: c.branch! }));
-      // Reload diffs that are expanded, since the files may have changed.
-      const entries = await Promise.all(
-        Object.keys(open).filter((f) => open[f] !== null).map(async (f) => [f, await api.sessionFileDiff(vault, sessionId, f)] as const),
-      );
-      if (entries.length) setOpen((o) => ({ ...o, ...Object.fromEntries(entries) }));
+      // Skip files collapsed in the meantime.
+      if (entries.length) setOpen((o) => ({ ...o, ...Object.fromEntries(entries.filter(([f]) => o[f] !== null)) }));
     } catch (e) {
-      setNotice({ ok: false, text: String(e) });
+      if (mine === generation.current) setNotice({ ok: false, text: String(e) });
     }
-  }, [vault, sessionId, open]);
+  }, [vault, sessionId]);
 
   useEffect(() => {
     refresh();
@@ -146,6 +157,8 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   };
 
   const uncommitted = changes?.dirty ?? false;
+  /** Expanded, even when its diff is empty (an empty file, say). */
+  const isOpen = (file: string) => open[file] !== undefined && open[file] !== null;
 
   const composeDiff = async (files: string[]) => {
     const blocks = await Promise.all(files.map(async (f) => diffBlock(f, open[f] ?? (await api.sessionFileDiff(vault, sessionId, f)))));
@@ -227,7 +240,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
       <div className="files">
         {changes?.files.length === 0 && <div className="muted small pad">No changes in the worktree yet.</div>}
         {changes?.files.map((f) => (
-          <div key={f.path} className={`file ${open[f.path] ? "open" : ""}`}>
+          <div key={f.path} className={`file ${isOpen(f.path) ? "open" : ""}`}>
             <div className="file-row">
               <button className="file-head" onClick={() => toggle(f.path)}>
                 <ChevronRight size={12} className="chev" />
@@ -242,7 +255,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
                 <TextCursorInput size={12} />
               </button>
             </div>
-            {open[f.path] && (
+            {isOpen(f.path) && (
               <DiffView file={f.path} diff={open[f.path]!} comments={comments.filter((c) => c.file === f.path)}
                 onComment={(c) => setComments((cs) => [...cs, { ...c, id: crypto.randomUUID() }])}
                 onRemoveComment={(id) => setComments((cs) => cs.filter((c) => c.id !== id))} />

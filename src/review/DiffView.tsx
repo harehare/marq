@@ -55,7 +55,7 @@ type Props = {
 export function DiffView({ file, diff, comments = [], onComment, onRemoveComment }: Props) {
   const lines = parse(diff);
   const [draft, setDraft] = useState<{ from: number; to: number; text: string } | null>(null);
-  if (!lines.length) return <div className="muted diff-empty">No textual changes (binary or mode change)</div>;
+  if (!lines.length) return <div className="muted diff-empty">No textual changes (empty file, binary or mode change)</div>;
 
   const pick = (i: number, extend: boolean) =>
     setDraft((d) => (d && extend ? { ...d, from: Math.min(d.from, i), to: Math.max(d.to, i) } : { from: i, to: i, text: d?.text ?? "" }));
