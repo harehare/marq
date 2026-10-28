@@ -51,7 +51,7 @@ With the **Ask** or **Accept edits** permission modes, a tool call that needs pe
 
 ## Follow-ups, stop and resume
 
-- You can send follow-ups while the agent is working; they run after the current turn. **Stop** interrupts the turn.
+- You can send follow-ups while the agent is working; they run after the current turn. **Stop**, or Esc in the message box, interrupts the turn.
 - A session that stopped part-way (interrupted or error) shows a **Resume** button, also in the sidebar's right-click menu. It continues the conversation, or starts again from the first prompt if the agent never started.
 - An idle session process is closed after 10 minutes and resumed on your next message.
 

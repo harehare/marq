@@ -438,9 +438,10 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             onChange={setInput}
             vault={vault}
             sessionId={sessionId}
-            placeholder={running ? "Queue a follow-up for after this turn…  (⌘↵)" : "Follow up… / for skills and commands  (⌘↵ to send)"}
+            placeholder={running ? "Queue a follow-up for after this turn…  (⌘↵, Esc to interrupt)" : "Follow up… / for skills and commands  (⌘↵ to send)"}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send();
+              else if (e.key === "Escape" && running) api.stopSession(sessionId).catch((err) => setError(String(err)));
             }}
           />
           <button className="send" onClick={send} disabled={!input.trim()} title="Send">
