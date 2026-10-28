@@ -3,11 +3,11 @@
 
 <h1>Marq</h1>
 
-**A desktop app for a Markdown knowledge base, with coding agents built in.**
+**A Markdown knowledge base and an IDE for coding agents, in one app.**
 
 </div>
 
-Marq keeps notes, tasks, agent sessions and their results as plain Markdown files in one folder. Run an agent from any heading, query everything with [mq](https://github.com/harehare/mq), and hand the parts you pick to an agent.
+Marq runs coding agents in parallel, each in its own git worktree, and keeps everything they do (prompts, sessions, results, tasks) as plain Markdown files next to your notes. Because it is all Markdown, you can query it with [mq](https://github.com/harehare/mq) and hand exactly the parts you pick to an agent.
 
 > [!WARNING]
 > Marq is under active development. Features, file formats and keybindings may change without notice.
@@ -18,14 +18,24 @@ Marq keeps notes, tasks, agent sessions and their results as plain Markdown file
 
 ## Features
 
-- **Everything is Markdown.** Notes, requests, session logs, crews, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only keeps the parts between its own markers up to date.
+### Agent IDE
+
+- **Parallel tasks in git worktrees.** Each task gets its own worktree and branch, so several agents can work on one repository at once.
+- **Review in the app.** The **Changes** panel shows the diff against the base commit. Comment on diff lines and send the review back to the agent, then commit, push and create a PR.
+- **Run an agent from a note.** Hover a heading and choose **Ask Claude**. The session is linked to the heading, and the result comes back as a card under the section.
+- **Crews.** Several sessions work on one project as a team by role, with a shared task list. Kanban boards are Markdown too.
+- **Compare models.** Run one task on 2 to 4 models, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
+- **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar.
+- **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed, and you can send follow-ups while an agent is working.
+- **Terminal and browser tabs** next to your sessions, for dev servers and previews.
+- **Claude and Ollama.** Use your own `claude` login, or a local model served by Ollama.
+
+### Knowledge base
+
+- **Everything is Markdown.** Notes, requests, session logs, crews, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only rewrites the parts between its own markers.
 - **Query with mq.** `mq` code blocks run in the preview and show their output right below. The same queries power the inbox, the learnings across sessions, and the Query tab.
 - **Pick what the agent sees.** Extract a section with mq, select text in a note or a session, or attach `context:` queries to a request, then send exactly that to an agent.
-- **Run an agent from a note.** Hover a heading and choose **Ask Claude**. The session is linked to the heading, and the result comes back as a card under the section.
-- **Parallel tasks in git worktrees.** Each task gets its own worktree and branch, with a diff, review comments, commit, push and PR in the **Changes** panel.
-- **Crews and boards.** Several sessions work on one project as a team by role and share a task list. Kanban boards are Markdown too.
-- **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed.
-- **Claude and Ollama.** Use your own `claude` login, or a local model served by Ollama.
+- **Sessions feed back into notes.** Summaries and learnings are written into the session note, and agents can search your notes and save documents to the vault.
 
 ## Markdown in, Markdown out
 
@@ -92,3 +102,20 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | Other agents | Not supported |
 
 mq queries use [mq-lang](https://github.com/harehare/mq) 0.9.3, embedded in the app.
+
+## Roadmap
+
+Marq aims to be usable as an agent IDE in the way tools like [Orca](https://github.com/stablyai/orca) are, on top of a Markdown knowledge base. Nothing here is promised or scheduled.
+
+| Area | Idea |
+| --- | --- |
+| Compare agents | Compare across different agents, and merge the best result from the compare view (models of Claude and Ollama can be compared today) |
+| More agents | CLI agents such as Codex and OpenCode, besides Claude and Ollama |
+| GitHub | List PRs and issues, and start a task and worktree from one |
+| Prompt input | Attach images and files to a prompt |
+| Browser | Pick an element in the browser tab and send its HTML, CSS and a screenshot to an agent |
+| Terminal | Splits, and scrollback that persists across restarts |
+| Remote | Run agents on another machine over SSH |
+| Automation | A command line interface to start and query sessions |
+| Notifications | Open the session when its notification is clicked |
+| Usage | Show cost and rate limits across sessions (cost per session is already recorded) |

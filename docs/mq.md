@@ -5,7 +5,7 @@
 ## mq code blocks
 
 ````markdown
-```mq input=./daily/*.md
+```mq input=./notes/*.md
 import "section" | nodes | section::find("Done") | section::body()
 ```
 ````

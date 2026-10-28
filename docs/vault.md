@@ -7,7 +7,6 @@ The Markdown files in the vault are the source of truth. There is no database to
 ```
 <vault>/
 ├─ notes/**.md
-├─ daily/YYYY-MM-DD.md
 ├─ requests/YYYY-MM-DD-<slug>.md      # tasks and requests
 ├─ sessions/YYYY-MM-DD-<short-id>.md  # derived from .raw, regenerable
 ├─ sessions/.raw/<id>.jsonl           # raw agent log (source of truth for a session)
@@ -30,7 +29,7 @@ Only `sessions/` and dot folders belong to Marq. Everything else can be edited o
 ```yaml
 ---
 id: 0192f0c4-...            # assigned the first time Marq links something to the file
-type: note                  # note | daily | request | session | crew | board | doc
+type: note                  # note | request | session | crew | board | doc
 title: ...                  # optional, defaults to the first heading or the filename
 created: 2026-10-27T10:12:00+09:00
 updated: 2026-10-27T11:40:00+09:00

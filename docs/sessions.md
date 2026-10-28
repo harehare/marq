@@ -21,7 +21,7 @@ Anchors in the preview show their sessions, and the note's right panel lists the
 - The task is saved as a request note in `requests/` first, so every task stays in the vault.
 - Choose **Team** to run it as a [crew](crews-and-boards.md) from the start.
 
-**Request** in the sidebar creates a request note you write yourself. Set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started are listed in **Inbox**. Right-click one to mark it done, drop it, or move it back to todo.
+**Save for later** in the New task dialog saves the task as a request note without running it. You can also write a request by hand: set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started are listed in **Inbox**. Right-click one to mark it done, drop it, or move it back to todo.
 
 ## Worktrees and review
 
@@ -29,9 +29,21 @@ When the project is inside a git repository, each session gets its own worktree 
 
 - Tick **Include my uncommitted changes** (`carry_changes: true`) to copy your uncommitted diff and untracked files into the new worktree.
 - The **Changes** panel diffs against the base commit, so it covers commits made in the worktree, uncommitted edits and untracked files.
-- From the panel you can commit everything, push (`git push -u origin <branch>`), push and create a pull request with `gh` (the message's first line is the title, the rest the body), rename the branch, open the worktree in Finder, Terminal or VS Code, and remove the worktree. Removing keeps the branch.
+- From the panel you can commit everything, push (`git push -u origin <branch>`), push and create a pull request with `gh` (the message's first line is the title, the rest the body), rename the branch, open a terminal tab in the worktree, open it in Finder or VS Code, and remove the worktree. Removing keeps the branch.
 - **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).
 - **Mark as done** moves a session out of **Needs review**. A created PR shows a badge in the sidebar.
+
+## Compare models
+
+In **New task**, choose **Compare with another model** under Model to add up to three more models. Marq saves one request note and starts one session per model, each in its own worktree, so the runs cannot overwrite each other. This needs a git repository and **Work in a new worktree**.
+
+A **Compare** tab opens with one column per run: the model, status, branch and changed files. Open a file to see its diff. When every run has finished, **Keep this one** removes the worktrees of the other runs (their branches and session logs are kept) and opens the one you kept, where you commit and create a PR as usual. For runs you started earlier, right-click one of them in the sidebar and choose **Compare runs**.
+
+## Notifications
+
+Marq shows a system notification, and a count on the Dock icon, when a session finishes a turn, stops with an error, or needs an approval. Nothing is shown for a session whose tab is open in the focused window. Sessions with a result you have not looked at are bold with a dot in the sidebar until you open them. Crew members do not notify on every turn (the crew view shows them), but an approval request from one does.
+
+Turn notifications off with `[notifications] enabled = false` in [`config.toml`](settings.md).
 
 ## Approvals
 

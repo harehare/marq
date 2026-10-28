@@ -20,6 +20,9 @@ args = ["-l"]
 font_size = 13
 cursor = "block"                # block | bar | underline
 
+[notifications]
+enabled = true                  # system notifications when a session finishes, stops or needs an approval
+
 [ollama]
 url = "http://127.0.0.1:11434"  # default: $OLLAMA_HOST, then this
 ```
