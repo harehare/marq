@@ -135,7 +135,8 @@ fn link_re() -> Regex {
     Regex::new(r"\]\((<)?([^)<>\s]+?\.md|[^)<>]+?\.md)(#[^)>]*)?(>)?\)").unwrap()
 }
 
-/// Rewrites relative links after the moves in `map` (old relative path -> new). Returns changed notes.
+/// Rewrites relative links, and `[[wikilinks]]` that name a moved note by path or file name, after
+/// the moves in `map` (old relative path -> new). Returns changed notes.
 fn relink(vault: &Path, map: &HashMap<String, String>) -> Result<Vec<String>> {
     if map.is_empty() {
         return Ok(vec![]);
@@ -168,8 +169,9 @@ fn relink(vault: &Path, map: &HashMap<String, String>) -> Result<Vec<String>> {
             let (open, close) = (c.get(1).map_or("", |m| m.as_str()), c.get(4).map_or("", |m| m.as_str()));
             format!("]({open}{rel}{}{close})", c.get(3).map_or("", |m| m.as_str()))
         });
+        let out = map.iter().fold(out.into_owned(), |t, (old, new)| crate::links::rename_wikilinks(&t, old, new));
         if out != text {
-            std::fs::write(&f.path, out.as_ref())?;
+            std::fs::write(&f.path, &out)?;
             changed.push(now);
         }
     }
@@ -205,7 +207,7 @@ fn relative(dir: &str, target: &str) -> String {
     out.join("/")
 }
 
-/// A tree of the vault for Claude: folders and notes with their titles and types.
+/// A tree of the vault for the agent: folders and notes with their titles and types.
 pub fn outline(vault: &Path, folder: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let prefix = folder.map(|f| f.trim_matches('/')).filter(|f| !f.is_empty());
     if prefix.is_some_and(|p| p.split('/').any(|x| x.starts_with('.') || x == "..")) {

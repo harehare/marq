@@ -28,11 +28,24 @@ impl Terminals {
             .map_err(|e| Error::Other(format!("could not open a terminal: {e}")))?;
         let (configured, args) = config::terminal_shell();
         let shell = configured.unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()));
-        let mut cmd = CommandBuilder::new(&shell);
-        match command {
-            Some(c) => cmd.args(["-l", "-i", "-c", c]),
-            None => cmd.args(args.unwrap_or_else(|| vec!["-l".into()])),
-        }
+        let mut cmd = match command {
+            // Commands are written for sh, which nu, fish and the like don't parse.
+            Some(c) => {
+                let sh = [Some(shell.clone()), std::env::var("SHELL").ok(), Some("/bin/zsh".into())]
+                    .into_iter()
+                    .flatten()
+                    .find(|s| posix(s) && std::path::Path::new(s).exists())
+                    .unwrap_or_else(|| "/bin/sh".into());
+                let mut cmd = CommandBuilder::new(sh);
+                cmd.args(["-l", "-i", "-c", c]);
+                cmd
+            }
+            None => {
+                let mut cmd = CommandBuilder::new(&shell);
+                cmd.args(args.unwrap_or_else(|| vec!["-l".into()]));
+                cmd
+            }
+        };
         cmd.cwd(vault::expand_home(cwd));
         cmd.env("PATH", shell::path());
         cmd.env("TERM", "xterm-256color");
@@ -88,5 +101,20 @@ impl Terminals {
         if let Some(mut t) = self.0.lock().unwrap().remove(id) {
             let _ = t.child.kill();
         }
+    }
+}
+
+/// Whether the shell runs sh syntax.
+fn posix(shell: &str) -> bool {
+    let name = shell.rsplit('/').next().unwrap_or(shell);
+    matches!(name, "sh" | "bash" | "zsh" | "dash" | "ksh")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tells_posix_shells() {
+        assert!(super::posix("/bin/zsh") && super::posix("/opt/homebrew/bin/bash") && super::posix("sh"));
+        assert!(!super::posix("/opt/homebrew/bin/nu") && !super::posix("/opt/homebrew/bin/fish"));
     }
 }

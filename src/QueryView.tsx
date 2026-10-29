@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   Play, Inbox, Lightbulb, Terminal, FileText, AlertCircle, ListTodo, Columns3, Heading, Link2, MessageSquareWarning, NotebookPen, Code2,
-  Save, Trash2, Bookmark,
+  Save, Trash2, Bookmark, Loader2,
 } from "lucide-react";
 import { api, FileEntry, FileResult, INBOX_QUERY } from "./api";
 import { Md } from "./markdown/Md";
@@ -46,15 +46,37 @@ export function QueryView({ vault, saved, onOpenNote }: Props) {
   const [current, setCurrent] = useState<string>(PRESETS[0].name);
   const [saving, setSaving] = useState<string | null>(null);
 
+  // When the running query started, and how long the last one took.
+  const [started, setStarted] = useState<number | null>(null);
+  const [took, setTook] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
+  // Only the latest run shows its results, when an earlier one finishes after it.
+  const runId = useRef(0);
+  useEffect(() => {
+    if (started === null) return;
+    const t = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(t);
+  }, [started]);
+
   const run = async (q: Query = { query, glob, aggregate }) => {
+    const id = ++runId.current;
+    const t0 = Date.now();
+    setStarted(t0);
+    setNow(t0);
+    setError(null);
     try {
-      setError(null);
-      setResults(await api.mqEval(vault, q.query, { glob: q.glob, aggregate: q.aggregate }));
+      const r = await api.mqEval(vault, q.query, { glob: q.glob, aggregate: q.aggregate });
+      if (id !== runId.current) return;
+      setResults(r);
     } catch (e) {
+      if (id !== runId.current) return;
       setError(String(e));
       setResults(null);
     }
+    setTook(Date.now() - t0);
+    setStarted(null);
   };
+  const running = started !== null;
 
   /** Loads a query into the form and runs it. */
   const pick = (name: string, q: Query) => {
@@ -135,12 +157,20 @@ export function QueryView({ vault, saved, onOpenNote }: Props) {
                   }} />
               </span>
             )}
-            <button className="primary" onClick={() => run()}><Play size={13} /> Run</button>
+            <button className="primary" onClick={() => run()} disabled={running}>
+              {running ? <Loader2 size={13} className="spin" /> : <Play size={13} />} {running ? "Running…" : "Run"}
+            </button>
           </div>
         </div>
         {error && <div className="banner error"><AlertCircle size={14} /><pre>{error}</pre></div>}
-        {results && <div className="muted small result-count">{count} results in {results.length} files</div>}
-        <div className="query-results">
+        {running ? (
+          <div className="muted small result-count query-running">
+            <Loader2 size={12} className="spin" /> Running the query on {glob || "every note"}… {((now - started) / 1000).toFixed(1)}s
+          </div>
+        ) : results && (
+          <div className="muted small result-count">{count} results in {results.length} files{took !== null && ` · ${(took / 1000).toFixed(1)}s`}</div>
+        )}
+        <div className={`query-results ${running ? "stale" : ""}`}>
           {results?.map((r, i) => (
             <div key={i} className="query-result">
               {r.file && <a className="query-file" onClick={() => onOpenNote(r.file!)}><FileText size={12} /> {r.file.replace(vault + "/", "")}</a>}

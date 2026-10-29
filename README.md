@@ -22,7 +22,7 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 
 - **Parallel tasks in git worktrees.** Each task gets its own worktree and branch, so several agents can work on one repository at once.
 - **Review in the app.** The **Changes** panel shows the diff against the base commit. Comment on diff lines and send the review back to the agent, then commit, push and create a PR.
-- **Run an agent from a note.** Hover a heading and choose **Ask Claude**. The session is linked to the heading, and the result comes back as a card under the section.
+- **Run an agent from a note.** Hover a heading and choose **Ask**. The session is linked to the heading, and the result comes back as a card under the section.
 - **Crews.** Several sessions work on one project as a team by role, with a shared task list. Kanban boards are Markdown too.
 - **Compare models.** Run one task on 2 to 4 models, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
 - **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar.
@@ -61,7 +61,7 @@ When the session finishes, Marq writes the result back under `## Result`, and th
 # Learnings from every session
 mq -A 'import "section" | section::find("Learnings") | section::body()' sessions/*.md
 
-# Every command Claude ran
+# Every command the agent ran
 mq 'select(.code.lang == "tool:Bash") | .code.value' sessions/*.md
 ```
 
@@ -78,7 +78,7 @@ pnpm tauri dev
 pnpm check       # type checks, clippy and Rust tests
 ```
 
-Open a folder as the vault (any folder of Markdown files works), then open a note, hover a heading and choose **Ask Claude**, or press ⌘N for a new task.
+Open a folder as the vault (any folder of Markdown files works), then open a note, hover a heading and choose **Ask**, or press ⌘N for a new task.
 
 ## Documentation
 
@@ -86,7 +86,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Install, open a vault, your first session, the sidebar |
 | [Vault and file formats](docs/vault.md) | Folder layout, frontmatter, anchors, result blocks, session files |
-| [Sessions](docs/sessions.md) | Ask Claude, tasks and requests, worktrees and review, approvals, resume, sending text |
+| [Sessions](docs/sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume, sending text |
 | [mq queries](docs/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
 | [Crews and boards](docs/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
 | [Agents and models](docs/agents.md) | Claude, Ollama, permission modes, how sessions run |

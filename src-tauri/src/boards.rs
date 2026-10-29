@@ -45,6 +45,79 @@ pub struct Board {
     #[serde(skip)]
     pub head: String,
     pub lists: Vec<List>,
+    /// Set when the board has a queue list; read from the `queue*` frontmatter keys.
+    pub queue: Option<Queue>,
+}
+
+/// A list that marq works through while it runs: each card put there starts a session, moves to
+/// `doing`, and moves on to `review` when the session's turn ends.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Queue {
+    pub list: String,
+    pub doing: String,
+    pub review: String,
+    /// Sessions from this queue running at once.
+    pub max: usize,
+    pub project: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    pub worktree: bool,
+}
+
+/// Frontmatter key for each queue field.
+const QUEUE_KEYS: [&str; 8] =
+    ["queue", "queue_doing", "queue_review", "queue_max", "queue_project", "queue_model", "queue_permission_mode", "queue_worktree"];
+
+fn queue_of(head: &str) -> Option<Queue> {
+    let get = |k: &str| vault::fm_get(head, k).filter(|v| !v.is_empty());
+    Some(Queue {
+        list: get("queue")?,
+        doing: get("queue_doing").unwrap_or_else(|| "Doing".into()),
+        review: get("queue_review").unwrap_or_else(|| "Review".into()),
+        max: get("queue_max").and_then(|v| v.parse().ok()).unwrap_or(1).max(1),
+        project: get("queue_project").unwrap_or_default(),
+        model: get("queue_model"),
+        permission_mode: get("queue_permission_mode"),
+        worktree: get("queue_worktree").as_deref() != Some("false"),
+    })
+}
+
+/// Sets the board's queue, or removes it. Lists it names that do not exist yet are added.
+pub fn set_queue(path: &Path, queue: Option<Queue>) -> Result<()> {
+    edit(path, |b| {
+        let q = |s: &str| serde_json::to_string(s.trim()).unwrap();
+        let mut head = b.head.clone();
+        for k in QUEUE_KEYS {
+            head = vault::fm_remove(&head, k);
+        }
+        if let Some(queue) = &queue {
+            if queue.list.trim().is_empty() {
+                return Err(Error::Other("the queue needs a list".into()));
+            }
+            let values = [
+                q(&queue.list),
+                q(&queue.doing),
+                q(&queue.review),
+                queue.max.max(1).to_string(),
+                q(&queue.project),
+                q(queue.model.as_deref().unwrap_or_default()),
+                q(queue.permission_mode.as_deref().unwrap_or_default()),
+                queue.worktree.to_string(),
+            ];
+            for (k, v) in QUEUE_KEYS.iter().zip(values) {
+                head = vault::fm_set(&head, k, &v);
+            }
+            for name in [&queue.list, &queue.doing, &queue.review] {
+                if b.list_index(name).is_err() {
+                    b.lists.push(List { name: name.trim().to_string(), cards: vec![] });
+                }
+            }
+        }
+        b.head = head;
+        Ok(())
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -58,6 +131,8 @@ pub struct Change {
     pub done: Option<bool>,
     /// Appended as a nested item.
     pub note: Option<String>,
+    /// Index of a nested item to remove; applied before `note`.
+    pub remove_note: Option<usize>,
 }
 
 fn parse_card(item: &str, done: bool) -> Card {
@@ -95,6 +170,7 @@ pub fn parse(text: &str) -> Board {
             c.notes.push(note.trim().into());
         }
     }
+    b.queue = queue_of(&b.head);
     // Ids for items written by hand.
     let mut next = b.max_id();
     for c in b.lists.iter_mut().flat_map(|l| l.cards.iter_mut()).filter(|c| c.id.is_empty()) {
@@ -184,6 +260,7 @@ pub fn create(vault: &Path, name: &str) -> Result<PathBuf> {
             vault::now()
         ),
         lists: DEFAULT_LISTS.iter().map(|n| List { name: n.to_string(), cards: vec![] }).collect(),
+        queue: None,
     };
     std::fs::write(&path, render(&b))?;
     Ok(path)
@@ -266,6 +343,9 @@ pub fn update(path: &Path, id: &str, change: Change) -> Result<Card> {
         }
         if let Some(t) = change.title.as_deref().map(|t| t.trim().replace('\n', " ")).filter(|t| !t.is_empty()) {
             c.title = t;
+        }
+        if let Some(i) = change.remove_note.filter(|&i| i < c.notes.len()) {
+            c.notes.remove(i);
         }
         if let Some(n) = change.note.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             c.notes.push(n.to_string());
@@ -366,6 +446,11 @@ mod tests {
         assert!(update(&p, "T1", Change { list: Some("later".into()), ..Default::default() }).is_err());
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(text.contains("type: board") && text.contains("## Review\n\n## Done\n\n- [x] **T1** Write docs — @me\n  - start with SPEC"));
+        let t = update(&p, "T1", Change { note: Some("[Spec](../notes/spec.md)".into()), ..Default::default() }).unwrap();
+        assert_eq!(t.notes, ["start with SPEC", "[Spec](../notes/spec.md)"]);
+        let t = update(&p, "T1", Change { remove_note: Some(0), ..Default::default() }).unwrap();
+        assert_eq!(t.notes, ["[Spec](../notes/spec.md)"]);
+        assert_eq!(read(&p).unwrap().lists[3].cards[0].notes, t.notes);
         assert!(remove_list(&p, "Done").is_err());
         rename_list(&p, "Review", "In review").unwrap();
         move_list_to(&p, "In review", 0).unwrap();

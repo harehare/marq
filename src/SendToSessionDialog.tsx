@@ -3,7 +3,15 @@ import { GitBranch, Plus, Search, Send, X } from "lucide-react";
 import { api, SessionInfo } from "./api";
 
 /** Text picked somewhere in Marq, with where it came from. */
-export type Excerpt = { text: string; source: string; lines?: [number, number] };
+export type Excerpt = {
+  text: string;
+  source: string;
+  lines?: [number, number];
+  /** The session the text came from, which can get the answer back. */
+  from?: { id: string; title: string };
+  /** What to ask, filled in beforehand. */
+  instruction?: string;
+};
 
 type Props = {
   vault: string;
@@ -28,7 +36,8 @@ export function SendToSessionDialog({ vault, excerpt, exclude, onSent, onNewTask
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [filter, setFilter] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
-  const [instruction, setInstruction] = useState("");
+  const [instruction, setInstruction] = useState(excerpt.instruction ?? "");
+  const [reply, setReply] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -56,7 +65,8 @@ export function SendToSessionDialog({ vault, excerpt, exclude, onSent, onNewTask
     if (!target) return;
     setBusy(true);
     try {
-      await api.sendMessage(vault, target.id, message);
+      if (excerpt.from) await api.forwardMessage(vault, excerpt.from.id, target.id, message, reply);
+      else await api.sendMessage(vault, target.id, message);
       onSent(target.id, target.title);
       onClose();
     } catch (e) {
@@ -107,6 +117,12 @@ export function SendToSessionDialog({ vault, excerpt, exclude, onSent, onNewTask
             </button>
           ))}
         </div>
+        {excerpt.from && (
+          <label className="check">
+            <input type="checkbox" checked={reply} onChange={(e) => setReply(e.target.checked)} />
+            Send its answer back to “{excerpt.from.title}”
+          </label>
+        )}
         {error && <div className="banner error">{error}</div>}
         <div className="modal-foot">
           <button onClick={() => { onNewTask(message); onClose(); }}><Plus size={14} /> New task with this</button>

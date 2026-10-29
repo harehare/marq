@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpen, ChevronRight, FolderGit2, ListChecks, SearchCheck, Sparkles, Wand2, X } from "lucide-react";
 import { api } from "./api";
 import { ModelSelect } from "./ModelSelect";
 import { composing } from "./keys";
+import { useAutoGrow } from "./useAutoGrow";
 
 export type Intent = "do" | "review" | "plan" | "explain";
 
@@ -17,7 +18,7 @@ export type AskOptions = {
 };
 
 const INTENTS: { key: Intent; label: string; icon: typeof Wand2; hint: string }[] = [
-  { key: "do", label: "Do it", icon: Wand2, hint: "Claude does what the section says" },
+  { key: "do", label: "Do it", icon: Wand2, hint: "The agent does what the section says" },
   { key: "review", label: "Review", icon: SearchCheck, hint: "Problems, risks and suggestions; no file changes" },
   { key: "plan", label: "Plan", icon: ListChecks, hint: "A step-by-step plan in plan mode; no file changes" },
   { key: "explain", label: "Explain", icon: BookOpen, hint: "Investigate and answer; no file changes" },
@@ -31,7 +32,7 @@ const fm = (text: string, key: string) => {
   return v.startsWith('"') ? (JSON.parse(v) as string) : v;
 };
 
-/** Ask Claude about a section or a selection: what to do, a short instruction, and (⌥) run options. */
+/** Ask the agent about a section or a selection: what to do, a short instruction, and (⌥) run options. */
 export function AskDialog({ vault, note, excerpt, showOptions = false, onRun, onClose }: {
   vault: string;
   note: string;
@@ -55,6 +56,8 @@ export function AskDialog({ vault, note, excerpt, showOptions = false, onRun, on
   const [projects, setProjects] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(inputRef, instruction, 320);
   useEffect(() => {
     if (options) api.recentProjects(vault).then(setProjects);
   }, [vault, options]);
@@ -85,7 +88,7 @@ export function AskDialog({ vault, note, excerpt, showOptions = false, onRun, on
         }
       }}>
         <div className="modal-head">
-          <h3><Sparkles size={16} /> Ask Claude {excerpt ? `about lines ${excerpt.from + 1}-${excerpt.to + 1}` : "about this section"}</h3>
+          <h3><Sparkles size={16} /> Ask {excerpt ? `about lines ${excerpt.from + 1}-${excerpt.to + 1}` : "about this section"}</h3>
           <button className="icon" onClick={onClose}><X size={15} /></button>
         </div>
         {excerpt && <blockquote className="ask-excerpt">{excerpt.text.length > 400 ? `${excerpt.text.slice(0, 400)}…` : excerpt.text}</blockquote>}
@@ -97,11 +100,10 @@ export function AskDialog({ vault, note, excerpt, showOptions = false, onRun, on
           ))}
         </div>
         <p className="muted small">{INTENTS.find((i) => i.key === intent)?.hint}</p>
-        <textarea autoFocus className="ask-input" value={instruction} onChange={(e) => setInstruction(e.target.value)}
-          placeholder="Anything to add? e.g. focus on error handling  (optional, ↵ to start, ⇧↵ for a new line)"
+        <textarea ref={inputRef} autoFocus className="ask-input" value={instruction} onChange={(e) => setInstruction(e.target.value)}
+          placeholder="Anything to add? e.g. focus on error handling  (optional, ⌘↵ to start)"
           onKeyDown={(e) => {
-            if (composing(e)) return;
-            if (e.key === "Enter" && !e.shiftKey) {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !composing(e)) {
               e.preventDefault();
               run();
             }
@@ -128,7 +130,7 @@ export function AskDialog({ vault, note, excerpt, showOptions = false, onRun, on
         {error && <div className="banner error">{error}</div>}
         <div className="modal-foot">
           <span className="spacer" />
-          <button className="primary" onClick={run} disabled={busy}><Sparkles size={14} /> Start ↵</button>
+          <button className="primary" onClick={run} disabled={busy}><Sparkles size={14} /> Start ⌘↵</button>
         </div>
       </div>
     </div>

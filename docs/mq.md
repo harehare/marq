@@ -50,7 +50,7 @@ mq -A 'import "section" | section::find("Learnings") | section::body()' sessions
 mq 'select(.code.lang == "tool:Bash") | .code.value' sessions/*.md
 
 # Anchors in a note
-mq 'select(.html) | to_text() | capture("claude:anchor id=\"(?<id>[^\"]+)\"")' note.md
+mq 'select(.html) | to_text() | capture("marq:anchor id=\"(?<id>[^\"]+)\"")' note.md
 ```
 
 A few things worth knowing:
@@ -73,5 +73,5 @@ Since everything is Markdown, you choose the context instead of pasting whole fi
   ```
 
 - **A selection.** Select text in a note or a session, and choose **Send to session** (see [Sessions](sessions.md)).
-- **A section.** **Ask Claude** on a heading sends that section.
+- **A section.** **Ask** on a heading sends that section.
 - **From the agent's side.** Agents can run read-only queries over the vault with `query_notes`. See [Vault tools for agents](tools.md).

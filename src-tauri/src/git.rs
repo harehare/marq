@@ -127,7 +127,7 @@ pub fn create(repo: &Path, session_id: &str, branch: &str, carry: bool) -> Resul
     })
 }
 
-/// The worktree with the branch that is checked out in it now. Claude (or the user in a terminal)
+/// The worktree with the branch that is checked out in it now. The agent (or the user in a terminal)
 /// may have renamed or switched it, so the recorded name cannot be trusted.
 pub fn sync_branch(wt: &Worktree) -> Result<Worktree> {
     let dir = Path::new(&wt.path);
@@ -553,10 +553,10 @@ mod tests {
             base: String::new(),
             base_branch: "main".into(),
         };
-        // Renamed outside Marq, e.g. by Claude running git in the worktree.
-        git(&wt_path, &["branch", "-m", "marq/by-claude"]).unwrap();
-        assert_eq!(sync_branch(&wt).unwrap().branch, "marq/by-claude");
-        assert_eq!(head_branch(&wt).as_deref(), Some("marq/by-claude"));
+        // Renamed outside Marq, e.g. by the agent running git in the worktree.
+        git(&wt_path, &["branch", "-m", "marq/by-agent"]).unwrap();
+        assert_eq!(sync_branch(&wt).unwrap().branch, "marq/by-agent");
+        assert_eq!(head_branch(&wt).as_deref(), Some("marq/by-agent"));
         assert!(state_stamp(&wt).is_some());
         let base = git(&wt_path, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
         std::fs::write(wt_path.join("new.txt"), "a\nb\n").unwrap();

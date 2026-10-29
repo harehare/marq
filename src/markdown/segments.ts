@@ -1,5 +1,5 @@
 // Splits a note into renderable segments while keeping original line numbers (0-based),
-// so preview actions (run Claude from a heading, jump to edit) map back to the source.
+// so preview actions (ask from a heading, jump to edit) map back to the source.
 
 export type Segment =
   | { kind: "md"; text: string; line: number }
@@ -12,17 +12,25 @@ export function parseFrontmatter(text: string): Frontmatter {
   const lines = text.split("\n");
   const end = lines.indexOf("---", 1);
   if (end < 0) return { fields: [], lines: 0 };
-  const fields = lines
-    .slice(1, end)
-    .map((l) => l.match(/^([\w-]+):\s*(.*)$/))
-    .filter((m): m is RegExpMatchArray => !!m)
-    .map((m) => [m[1], m[2].replace(/^["']|["']$/g, "")] as [string, string]);
+  const fields: [string, string][] = [];
+  for (const l of lines.slice(1, end)) {
+    const m = l.match(/^([\w-]+):\s*(.*)$/);
+    // `  - item` under an empty key is a YAML block list; it is shown like `[a, b]`.
+    const item = l.match(/^\s+-\s+(.*)$/);
+    if (m) fields.push([m[1], m[2].replace(/^["']|["']$/g, "")]);
+    else if (item && fields.length) {
+      const last = fields[fields.length - 1];
+      const v = item[1].replace(/^["']|["']$/g, "");
+      last[1] = last[1] ? `${last[1].replace(/\]$/, "")}, ${v}]` : `[${v}]`;
+    }
+  }
   return { fields, lines: end + 1 };
 }
 
-const RESULT_OPEN = /^<!-- claude:result session="([^"]+)" -->$/;
-const RESULT_CLOSE = /^<!-- \/claude:result -->$/;
-const ANCHOR = /^<!-- claude:anchor id="([^"]+)" -->$/;
+// `claude:` markers are from notes written before they were renamed to `marq:`.
+const RESULT_OPEN = /^<!-- (?:marq|claude):result session="([^"]+)" -->$/;
+const RESULT_CLOSE = /^<!-- \/(?:marq|claude):result -->$/;
+const ANCHOR = /^<!-- (?:marq|claude):anchor id="([^"]+)" -->$/;
 const PIN_OPEN = "<!-- mq:output -->";
 const PIN_CLOSE = "<!-- /mq:output -->";
 

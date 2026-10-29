@@ -41,7 +41,7 @@ export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: 
   }, [load, statuses]);
 
   useEffect(() => {
-    const uns = ["claude://turn", "claude://exit"].map((ev) =>
+    const uns = ["session://turn", "session://exit"].map((ev) =>
       listen<{ session_id: string }>(ev, (e) => ids.includes(e.payload.session_id) && load()),
     );
     return () => uns.forEach((u) => u.then((f) => f()));

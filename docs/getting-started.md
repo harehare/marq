@@ -27,8 +27,8 @@ Open a folder as the vault. Any folder of Markdown files works; there is nothing
 
 ## Your first session
 
-1. Open a note. Notes open in **Preview**; switch to **Edit** or **Split** from the toolbar, or double-click a block in the preview to edit that line.
-2. Hover a heading and choose **Ask Claude**, or press ⌘↵ in the editor. Pick an intent (Do it, Review, Plan or Explain), add an instruction if you like, and press ↵.
+1. Open a note. Notes open in **Preview**; switch to **Edit** or **Split** from the toolbar, press **⌘E** to switch between preview and editing where you are reading, or ⌘-click a block in the preview to edit that line. A note opened from search, a link or a session stays in Preview and scrolls to the line; only new notes open in the editor.
+2. Hover a heading and choose **Ask**, or press ⌘↵ in the editor. Pick an intent (Do it, Review, Plan or Explain), add an instruction if you like, and press ↵.
 3. Marq adds an anchor under the heading, starts a session and opens it in a tab. When the session finishes, the result shows up as a card under the section.
 
 To work on a repository instead, press ⌘N for **New task**. See [Sessions](sessions.md).

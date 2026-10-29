@@ -2,17 +2,32 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror, { EditorView, ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { listen } from "@tauri-apps/api/event";
-import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send } from "lucide-react";
+import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check } from "lucide-react";
 import { api, SessionInfo } from "./api";
 import { Preview } from "./markdown/Preview";
 import { editorHighlight, editorTheme } from "./editorTheme";
 import { Resizer, usePaneSize } from "./Resizer";
-import { getSettings } from "./settings";
+import { CONTENT_WIDTHS, getSettings, setSettings, useSettings } from "./settings";
 import { AskDialog, AskOptions } from "./AskDialog";
 import { SelectionPopover } from "./SelectionPopover";
 import type { Excerpt } from "./SendToSessionDialog";
+import { EditorState } from "@codemirror/state";
+import { NoteLinksPanel } from "./NoteLinks";
+import { wikiCompletion } from "./wikilinks";
+
+// `[[` completes note names, through the autocompletion basicSetup already has.
+const wikiCompletions = EditorState.languageData.of(() => [{ autocomplete: wikiCompletion }]);
 
 type Mode = "edit" | "split" | "preview";
+
+// Marq's own marker comments (anchors, result blocks, pinned mq output); the text between them stays.
+const MARKER = /^<!-- \/?(?:(?:marq|claude):(?:anchor|result)|mq:output)\b[^>]*-->$/;
+
+/** The note as Markdown to paste elsewhere: no frontmatter and no marker comments. */
+function forCopy(text: string) {
+  const body = text.startsWith("---\n") && text.indexOf("\n---", 3) > 0 ? text.slice(text.indexOf("\n---", 3) + 4) : text;
+  return body.split("\n").filter((l) => !MARKER.test(l.trim())).join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
 
 type Props = {
   vault: string;
@@ -21,7 +36,10 @@ type Props = {
   /** Just created: open in the editor, cursor at the end. */
   fresh?: boolean;
   onOpenSession: (id: string, title: string) => void;
+  onOpenFile: (path: string) => void;
   onSendExcerpt: (excerpt: Excerpt) => void;
+  /** Breadcrumbs before the file name, for a note shown inside another view; they replace its folders. */
+  parents?: { label: string; onClick: () => void }[];
 };
 
 /** `[editor] default_mode`, preview unless set. */
@@ -29,7 +47,7 @@ function initialMode(): Mode {
   return getSettings().editor?.default_mode ?? "preview";
 }
 
-export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExcerpt }: Props) {
+export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile, onSendExcerpt, parents }: Props) {
   const previewRef = useRef<HTMLDivElement>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [text, setText] = useState<string | null>(null);
@@ -39,6 +57,16 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
     return fresh && m === "preview" ? "edit" : m;
   });
   const [showLinks, setShowLinks] = useState(true);
+  const [copied, setCopied] = useState(false);
+  // ⌥-click copies the file as it is, frontmatter included.
+  const copy = (raw: boolean) => {
+    if (text === null) return;
+    navigator.clipboard.writeText(raw ? text : forCopy(text)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }, (e) => setError(String(e)));
+  };
+  const width = useSettings().appearance?.content_width ?? "wide";
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pendingJump, setPendingJump] = useState<number | null>(null);
@@ -49,11 +77,22 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
   const linksWidth = usePaneSize("noteLinks", 240, 180, 480);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
+  const textRef = useRef<string | null>(null);
+  textRef.current = text;
+  // The text on disk as of the last load or save, to tell our own writes from others'.
+  const saved = useRef<string | null>(null);
+  // Changed on disk while there were unsaved edits: autosave stops until a manual save.
+  const conflict = useRef(false);
 
-  const load = useCallback(async () => {
-    setText(await api.readNote(vault, path));
+  /** Text that is now on disk. */
+  const loaded = useCallback((content: string) => {
+    saved.current = content;
+    conflict.current = false;
+    setText(content);
     setDirty(false);
-  }, [vault, path]);
+  }, []);
+
+  const load = useCallback(async () => loaded(await api.readNote(vault, path)), [vault, path, loaded]);
 
   useEffect(() => {
     load().catch((e) => setError(String(e)));
@@ -61,15 +100,19 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
 
   // Reload when marq writes a result back into this note, unless there are unsaved edits.
   useEffect(() => {
-    const un = listen<{ path: string }>("vault://changed", (e) => {
+    const un = listen<{ path: string }>("vault://changed", async (e) => {
       if (e.payload.path !== path) return;
-      if (dirtyRef.current) setError("This note was changed on disk. Saving will overwrite it.");
-      else load();
+      const disk = await api.readNote(vault, path).catch(() => null);
+      if (disk === null || disk === saved.current) return;
+      if (dirtyRef.current) {
+        conflict.current = true;
+        setError("This note was changed on disk. Autosave is paused; saving (⌘S) will overwrite it.");
+      } else loaded(disk);
     });
     return () => {
       un.then((f) => f());
     };
-  }, [path, load]);
+  }, [vault, path, loaded]);
 
   const refreshLinks = useCallback(async (content: string) => {
     const found = await api.noteAnchors(content);
@@ -84,7 +127,7 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
   }, [text, dirty, refreshLinks]);
 
   useEffect(() => {
-    const un = listen("claude://exit", () => text !== null && refreshLinks(text));
+    const un = listen("session://exit", () => text !== null && refreshLinks(text));
     return () => {
       un.then((f) => f());
     };
@@ -103,9 +146,21 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
     if (fresh && text !== null) setPendingJump(text.split("\n").length - 1);
   }, [fresh, text === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Jumps from other tabs, and from the preview into the editor once it is mounted.
+  // Jumps from other tabs (search results, links, session cards). In the preview they scroll it
+  // there and mark the spot, so a note opened to be read stays read-only; in the editor they move the cursor.
   useEffect(() => {
-    if (jump && text !== null) setPendingJump(jump.line);
+    if (!jump || text === null) return;
+    if (mode !== "preview") return setPendingJump(jump.line);
+    const t = setTimeout(() => {
+      const blocks = [...(previewRef.current?.querySelectorAll<HTMLElement>("[data-line]") ?? [])];
+      const at = blocks.filter((el) => Number(el.dataset.line) <= jump.line).pop() ?? blocks[0];
+      if (!at) return;
+      at.scrollIntoView({ block: "center" });
+      at.classList.remove("jumped");
+      void at.offsetWidth;
+      at.classList.add("jumped");
+    }, 50);
+    return () => clearTimeout(t);
   }, [jump?.nonce, text === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -116,11 +171,34 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
   }, [pendingJump, mode, text === null, goToLine]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = useCallback(async () => {
-    if (text === null) return;
-    await api.writeNote(vault, path, text);
-    setDirty(false);
+    const content = textRef.current;
+    if (content === null) return;
+    await api.writeNote(vault, path, content);
+    saved.current = content;
+    conflict.current = false;
+    // Typing during the write leaves the newer text unsaved.
+    if (textRef.current === content) setDirty(false);
     setError(null);
-  }, [vault, path, text]);
+  }, [vault, path]);
+
+  // `[editor] autosave`: shortly after typing stops, and when the note closes.
+  const autosave = getSettings().editor?.autosave !== false;
+  useEffect(() => {
+    if (!autosave || !dirty || conflict.current) return;
+    const t = setTimeout(() => save().catch((e) => setError(String(e))), 800);
+    return () => clearTimeout(t);
+  }, [autosave, dirty, text, save]);
+  useEffect(() => {
+    if (!autosave) return;
+    const flush = () => dirtyRef.current && !conflict.current && save().catch((e) => setError(String(e)));
+    window.addEventListener("blur", flush);
+    return () => window.removeEventListener("blur", flush);
+  }, [autosave, save]);
+  useEffect(() => () => {
+    if (getSettings().editor?.autosave !== false && dirtyRef.current && !conflict.current && textRef.current !== null) {
+      api.writeNote(vault, path, textRef.current).catch((e) => console.error(e));
+    }
+  }, [vault, path]);
 
   const cursorLine = () => {
     const view = ref.current?.view;
@@ -141,6 +219,20 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
   };
 
   /** Lines of a preview selection, from the source lines on the rendered blocks. */
+  // ⌘E (note.toggleEdit) on this note's tab: preview → edit at the first line in view, edit or split → preview.
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== path) return;
+      if (mode !== "preview") return setMode("preview");
+      const top = previewRef.current?.getBoundingClientRect().top ?? 0;
+      const first = [...(previewRef.current?.querySelectorAll("[data-line]") ?? [])].find((el) => el.getBoundingClientRect().bottom > top);
+      setMode("edit");
+      if (first) setPendingJump(Number(first.getAttribute("data-line")));
+    };
+    window.addEventListener("marq:note-toggle", on);
+    return () => window.removeEventListener("marq:note-toggle", on);
+  }, [path, mode]);
+
   const previewLines = (): [number, number] | undefined => {
     const sel = window.getSelection();
     const line = (n: Node | null | undefined) => {
@@ -154,31 +246,40 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
 
   // The Ask dialog: a section (line) or a selection, with run options shown for ⌥.
   const [ask, setAsk] = useState<{ line: number; options: boolean; excerpt?: AskOptions["excerpt"] } | null>(null);
-  const askClaude = (line: number, withOptions = false) => setAsk({ line, options: withOptions });
-  const runClaude = async (line: number, options: AskOptions) => {
+  const askAt = (line: number, withOptions = false) => setAsk({ line, options: withOptions });
+  const runAsk = async (line: number, options: AskOptions) => {
     if (dirty) await save();
     const started = await api.runFromNote(vault, path, line, options);
-    setText(started.content);
-    setDirty(false);
+    loaded(started.content);
     const first = options.excerpt?.text.trim().split("\n")[0] ?? started.content.split("\n")[line];
     onOpenSession(started.session_id, first?.replace(/^[#\-*\s]+/, "").slice(0, 60) || "session");
   };
 
   if (text === null) return <div className="pane-msg">{error ?? "Loading…"}</div>;
 
-  const crumbs = rel.split("/");
+  /** Normal → wide → full width, saved to config.toml. */
+  const nextWidth = () => {
+    const i = CONTENT_WIDTHS.findIndex((w) => w.value === width);
+    const next = CONTENT_WIDTHS[(i + 1) % CONTENT_WIDTHS.length].value;
+    const s = getSettings();
+    setSettings({ ...s, appearance: { ...s.appearance, content_width: next } });
+    api.writeConfig({ "appearance.content_width": next === "wide" ? null : next }).catch((e) => setError(String(e)));
+  };
+
+  const crumbs = parents ? rel.split("/").slice(-1) : rel.split("/");
 
   return (
     <div className="note">
       <div className="toolbar">
         <span className="crumbs">
+          {parents?.map((p, i) => <a key={`p${i}`} className="crumb link" onClick={p.onClick}>{p.label}</a>)}
           {crumbs.map((c, i) => (
             <span key={i} className={i === crumbs.length - 1 ? "crumb last" : "crumb"}>{c}</span>
           ))}
-          {dirty && <span className="dirty" title="Unsaved changes" />}
+          {dirty && <span className="dirty" title={autosave && !conflict.current ? "Saving soon" : "Unsaved changes"} />}
         </span>
         <div className="segmented">
-          <button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")} title="Edit"><PenLine size={14} /></button>
+          <button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")} title="Edit (⌘E toggles; ⌘-click in the preview edits there)"><PenLine size={14} /></button>
           <button className={mode === "split" ? "on" : ""} onClick={() => setMode("split")} title="Split"><Columns2 size={14} /></button>
           <button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")} title="Preview"><Eye size={14} /></button>
         </div>
@@ -188,15 +289,23 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
             <Send size={14} />
           </button>
         )}
-        <button className={`icon ${showLinks ? "on" : ""}`} onClick={() => setShowLinks(!showLinks)} title="Sessions panel">
+        <button className="icon" onClick={(e) => copy(e.altKey)}
+          title="Copy as Markdown, without the frontmatter (⌥-click: the file as it is)">
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+        </button>
+        <button className="icon" onClick={nextWidth}
+          title={`Width: ${CONTENT_WIDTHS.find((w) => w.value === width)?.label} (click to change; also in Settings)`}>
+          <MoveHorizontal size={14} />
+        </button>
+        <button className={`icon ${showLinks ? "on" : ""}`} onClick={() => setShowLinks(!showLinks)} title="Sessions and links panel">
           <PanelRight size={14} />
         </button>
         <button
           className="primary"
-          onClick={(e) => askClaude(mode === "preview" ? 0 : cursorLine(), e.altKey)}
+          onClick={(e) => askAt(mode === "preview" ? 0 : cursorLine(), e.altKey)}
           title="Whole note for a request, otherwise the section at the cursor (⌘↵)"
         >
-          <Sparkles size={14} /> Ask Claude
+          <Sparkles size={14} /> Ask
         </button>
       </div>
       {error && (
@@ -215,7 +324,7 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
               className="editor"
               theme={editorTheme}
               basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false }}
-              extensions={[markdown(), editorHighlight, EditorView.lineWrapping]}
+              extensions={[markdown(), editorHighlight, EditorView.lineWrapping, wikiCompletions]}
               onUpdate={(u) => u.selectionSet && setHasSelection(!u.state.selection.main.empty)}
               onChange={(v) => {
                 setText(v);
@@ -231,7 +340,7 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
                   sendEditorSelection();
                 } else if (mod && e.key === "Enter") {
                   e.preventDefault();
-                  askClaude(cursorLine(), e.altKey);
+                  askAt(cursorLine(), e.altKey);
                 }
               }}
             />
@@ -253,12 +362,12 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
               path={path}
               text={text}
               sessions={sessions}
-              onRunAt={askClaude}
+              onRunAt={askAt}
               onEditAt={(line) => setPendingJump(line)}
+              onOpenFile={onOpenFile}
               onOpenSession={onOpenSession}
               onPinned={(t) => {
-                setText(t);
-                setDirty(false);
+                loaded(t);
               }}
             />
           </div>
@@ -269,7 +378,7 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
           <aside className="links" style={{ width: linksWidth.size }}>
             <h4>Sessions</h4>
             {sessions.length === 0 && (
-              <p className="muted small">Hover a heading in the preview and choose Ask Claude to start one.</p>
+              <p className="muted small">Hover a heading in the preview and choose Ask to start one.</p>
             )}
             {sessions.map((s) => (
               <a key={s.id} className="session-card" onClick={() => onOpenSession(s.id, s.title)}>
@@ -277,12 +386,13 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onSendExce
                 <div className="muted small">{s.started.slice(0, 16).replace("T", " ")} · {s.status}</div>
               </a>
             ))}
+            <NoteLinksPanel vault={vault} path={path} onOpenFile={onOpenFile} />
           </aside>
         )}
       </div>
       {ask && text !== null && (
         <AskDialog vault={vault} note={text} excerpt={ask.excerpt} showOptions={ask.options}
-          onClose={() => setAsk(null)} onRun={(o) => runClaude(ask.line, o)} />
+          onClose={() => setAsk(null)} onRun={(o) => runAsk(ask.line, o)} />
       )}
     </div>
   );

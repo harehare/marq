@@ -1,0 +1,201 @@
+import { useEffect, useState } from "react";
+import { FileCog, Settings as SettingsIcon, X } from "lucide-react";
+import { api } from "./api";
+import { composing } from "./keys";
+
+type Field = {
+  /** `section.key` in config.toml. */
+  key: string;
+  label: string;
+  kind: "text" | "number" | "select" | "bool" | "list";
+  placeholder?: string;
+  options?: { value: string; label: string }[];
+  hint?: string;
+};
+
+const SECTIONS: { title: string; hint?: string; fields: Field[] }[] = [
+  {
+    title: "Appearance",
+    hint: "Palette and light/dark are picked in the 🎨 menu.",
+    fields: [
+      { key: "appearance.font", label: "UI font", kind: "text", placeholder: "System" },
+      { key: "appearance.mono_font", label: "Monospace font", kind: "text", placeholder: "ui-monospace", hint: "Editor and code; also the terminal unless it has its own" },
+      { key: "appearance.font_size", label: "UI font size", kind: "number", placeholder: "13" },
+      { key: "appearance.editor_font_size", label: "Editor font size", kind: "number", placeholder: "14" },
+      {
+        key: "appearance.content_width", label: "Content width", kind: "select", hint: "Notes and conversations",
+        options: [{ value: "", label: "Wide (default)" }, { value: "normal", label: "Normal" }, { value: "full", label: "Full width" }],
+      },
+    ],
+  },
+  {
+    title: "Editor",
+    fields: [
+      {
+        key: "editor.default_mode", label: "Open notes in", kind: "select", hint: "New notes always open in edit",
+        options: [{ value: "", label: "Preview (default)" }, { value: "edit", label: "Edit" }, { value: "split", label: "Split" }],
+      },
+      { key: "editor.autosave", label: "Save notes automatically", kind: "bool" },
+    ],
+  },
+  {
+    title: "Terminal",
+    hint: "Applies to terminals opened after saving.",
+    fields: [
+      { key: "terminal.shell", label: "Shell", kind: "text", placeholder: "$SHELL" },
+      { key: "terminal.args", label: "Arguments", kind: "list", placeholder: "-l", hint: "Separated by spaces" },
+      { key: "terminal.font", label: "Font", kind: "text", placeholder: "Monospace font" },
+      { key: "terminal.font_size", label: "Font size", kind: "number", placeholder: "13" },
+      { key: "terminal.ligatures", label: "Ligatures (-> != |> …) with fonts that have them", kind: "bool" },
+      {
+        key: "terminal.cursor", label: "Cursor", kind: "select",
+        options: [{ value: "", label: "Block (default)" }, { value: "bar", label: "Bar" }, { value: "underline", label: "Underline" }],
+      },
+    ],
+  },
+  {
+    title: "Notifications",
+    fields: [
+      { key: "notifications.enabled", label: "Notify when a session finishes, fails or needs an approval", kind: "bool" },
+    ],
+  },
+  {
+    title: "Ollama",
+    hint: "Applies after restarting Marq.",
+    fields: [{ key: "ollama.url", label: "URL", kind: "text", placeholder: "$OLLAMA_HOST or http://127.0.0.1:11434" }],
+  },
+];
+
+const FIELDS = SECTIONS.flatMap((s) => s.fields);
+
+type Values = Record<string, string | boolean>;
+
+/** A field's value in the form: strings for inputs, booleans for checkboxes. */
+function fromConfig(c: Record<string, unknown>, f: Field): string | boolean {
+  const [section, name] = f.key.split(".");
+  const v = (c[section] as Record<string, unknown> | undefined)?.[name];
+  if (f.kind === "bool") return v !== false;
+  if (Array.isArray(v)) return v.join(" ");
+  return v == null ? "" : String(v);
+}
+
+/** The form value as TOML-bound JSON; null removes the key so the default applies. */
+function toConfig(f: Field, v: string | boolean): unknown {
+  if (f.kind === "bool") return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (f.kind === "number") return Number(s);
+  if (f.kind === "list") return s.split(/\s+/);
+  return s;
+}
+
+/** Edits ~/.marq/config.toml. Key bindings stay in the file. */
+export function SettingsDialog({ onSaved, onOpenFile, onClose }: {
+  onSaved: () => void;
+  onOpenFile: () => void;
+  onClose: () => void;
+}) {
+  const [initial, setInitial] = useState<Values | null>(null);
+  const [values, setValues] = useState<Values>({});
+  const [shells, setShells] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.readConfig().then((c) => {
+      const v = Object.fromEntries(FIELDS.map((f) => [f.key, fromConfig(c, f)]));
+      setInitial(v);
+      setValues(v);
+    }, (e) => setError(String(e)));
+    api.shells().then(setShells, () => {});
+  }, []);
+
+  const invalid = FIELDS.find((f) => f.kind === "number" && String(values[f.key] ?? "").trim() && !(Number(values[f.key]) > 0));
+  const changed = initial ? FIELDS.filter((f) => values[f.key] !== initial[f.key]) : [];
+
+  const save = async () => {
+    if (busy || invalid || !changed.length) return;
+    setBusy(true);
+    try {
+      await api.writeConfig(Object.fromEntries(changed.map((f) => [f.key, toConfig(f, values[f.key])])));
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  const set = (key: string, v: string | boolean) => setValues((prev) => ({ ...prev, [key]: v }));
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal settings" onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+        if (e.key === "Enter" && e.metaKey && !composing(e)) save();
+      }}>
+        <div className="modal-head">
+          <h3><SettingsIcon size={15} /> Settings</h3>
+          <button className="icon" onClick={onClose}><X size={15} /></button>
+        </div>
+        {initial && (
+          <div className="settings-body">
+            {SECTIONS.map((s) => (
+              <section key={s.title} className="settings-section">
+                <div className="settings-section-head">
+                  <span className="field-label">{s.title}</span>
+                  {s.hint && <span className="muted small">{s.hint}</span>}
+                </div>
+                {s.fields.map((f) => {
+                  const v = values[f.key];
+                  if (f.kind === "bool") {
+                    return (
+                      <label key={f.key} className="check settings-check">
+                        <input type="checkbox" checked={v as boolean} onChange={(e) => set(f.key, e.target.checked)} />
+                        {f.label}
+                      </label>
+                    );
+                  }
+                  return (
+                    <label key={f.key} className="settings-row">
+                      <span>{f.label}</span>
+                      <span className="settings-input">
+                        {f.kind === "select" ? (
+                          <select className="model-select" value={v as string} onChange={(e) => set(f.key, e.target.value)}>
+                            {f.options!.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        ) : (
+                          <input
+                            value={v as string}
+                            placeholder={f.placeholder}
+                            inputMode={f.kind === "number" ? "numeric" : undefined}
+                            list={f.key === "terminal.shell" ? "settings-shells" : undefined}
+                            className={invalid === f ? "invalid" : undefined}
+                            spellCheck={false}
+                            onChange={(e) => set(f.key, e.target.value)}
+                          />
+                        )}
+                        {f.hint && <span className="muted small">{f.hint}</span>}
+                      </span>
+                    </label>
+                  );
+                })}
+              </section>
+            ))}
+            <datalist id="settings-shells">{shells.map((s) => <option key={s} value={s} />)}</datalist>
+          </div>
+        )}
+        {error && <div className="banner error">{error}</div>}
+        <div className="modal-foot">
+          <button onClick={onOpenFile} title="Key bindings and everything else are edited in the file">
+            <FileCog size={14} /> Edit config.toml
+          </button>
+          <span>
+            <button onClick={onClose}>Cancel</button>
+            <button className="primary" onClick={save} disabled={busy || !!invalid || !changed.length}>Save</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}

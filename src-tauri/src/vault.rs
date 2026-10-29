@@ -6,6 +6,7 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::thesaurus::{Query, Thesaurus};
 
 /// A Markdown file in the vault.
 #[derive(Debug, Serialize)]
@@ -17,6 +18,10 @@ pub struct FileEntry {
     pub title: Option<String>,
     pub kind: Option<String>,
     pub status: Option<String>,
+    /// From the frontmatter `tags:` (without `#`).
+    pub tags: Vec<String>,
+    /// Other names for the note, from `aliases:`; the thesaurus treats them like its title.
+    pub aliases: Vec<String>,
 }
 
 /// Lists Markdown files under `vault`, skipping dot directories (`.marq`, `.raw`, `.git`).
@@ -35,6 +40,8 @@ pub fn list_files(vault: &Path) -> Vec<FileEntry> {
                 title: fm_get(&text, "title").filter(|s| !s.is_empty()),
                 kind: fm_get(&text, "type"),
                 status: fm_get(&text, "status"),
+                tags: fm_list(&text, "tags"),
+                aliases: fm_list(&text, "aliases"),
             }
         })
         .collect();
@@ -92,6 +99,23 @@ pub fn fm_get(text: &str, key: &str) -> Option<String> {
     })
 }
 
+/// A list-valued key: `[a, b]`, a YAML block list, or a comma-separated string. `#` is dropped from tags.
+pub fn fm_list(text: &str, key: &str) -> Vec<String> {
+    use yaml_rust2::{Yaml, YamlLoader};
+    let Some(fm) = split_frontmatter(text).0 else { return vec![] };
+    // Cheap check first: most notes have neither key.
+    if !fm.lines().any(|l| l.strip_prefix(key).is_some_and(|r| r.starts_with(':'))) {
+        return vec![];
+    }
+    let Ok(docs) = YamlLoader::load_from_str(fm) else { return vec![] };
+    let items: Vec<String> = match docs.first().map(|d| &d[key]) {
+        Some(Yaml::Array(a)) => a.iter().filter_map(|y| y.as_str().map(str::to_string).or_else(|| y.as_i64().map(|n| n.to_string()))).collect(),
+        Some(Yaml::String(s)) => s.split(',').map(str::to_string).collect(),
+        _ => vec![],
+    };
+    items.iter().map(|t| t.trim().trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect()
+}
+
 /// Sets a top-level key, keeping every other line as written. Adds a frontmatter block if missing.
 pub fn fm_set(text: &str, key: &str, value: &str) -> String {
     let line = format!("{key}: {value}");
@@ -115,6 +139,17 @@ pub fn fm_set(text: &str, key: &str, value: &str) -> String {
             format!("---\n{}\n---\n{}", lines.join("\n"), body)
         }
         (None, body) => format!("---\n{line}\n---\n{body}"),
+    }
+}
+
+/// Removes a top-level key; the text is returned as is when it has none.
+pub fn fm_remove(text: &str, key: &str) -> String {
+    match split_frontmatter(text) {
+        (Some(fm), body) => {
+            let lines: Vec<&str> = fm.lines().filter(|l| !l.strip_prefix(key).is_some_and(|r| r.starts_with(':'))).collect();
+            format!("---\n{}\n---\n{}", lines.join("\n"), body)
+        }
+        (None, _) => text.to_string(),
     }
 }
 
@@ -160,7 +195,7 @@ pub fn unique_path(vault: &Path, dir: &str, title: &str) -> String {
     rel
 }
 
-/// Where a document from Claude went.
+/// Where a document from an agent went.
 #[derive(Debug, Serialize)]
 pub struct SavedDoc {
     pub rel: String,
@@ -168,20 +203,24 @@ pub struct SavedDoc {
     pub created: bool,
 }
 
-/// Saves a document written by Claude. A new one goes to `folder` (default `docs`).
+/// Saves a document written by an agent. A new one goes to `folder` (default `docs`).
 /// `path` updates an existing doc, but only one with `type: doc`, so hand-written notes are never
 /// overwritten.
-pub fn write_doc(
-    vault: &Path,
-    title: &str,
-    content: &str,
-    folder: Option<&str>,
-    path: Option<&str>,
-    session: &str,
-    origin: &str,
-) -> Result<SavedDoc> {
+/// What an agent's write_doc call asks for.
+pub struct DocWrite<'a> {
+    pub title: &'a str,
+    pub content: &'a str,
+    pub folder: Option<&'a str>,
+    pub path: Option<&'a str>,
+    pub tags: &'a [String],
+}
+
+pub fn write_doc(vault: &Path, doc: DocWrite, session: &str, origin: &str) -> Result<SavedDoc> {
+    let DocWrite { title, content, folder, path, tags } = doc;
+    let tags: Vec<String> = tags.iter().map(|t| t.trim().trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect();
+    let tag_list = format!("[{}]", tags.iter().map(|t| serde_json::to_string(t).unwrap()).collect::<Vec<_>>().join(", "));
     let body = content.trim();
-    // Drop frontmatter Claude may have added; marq writes its own.
+    // Drop frontmatter the agent may have added; marq writes its own.
     let body = split_frontmatter(&format!("{body}\n")).1.trim().to_string();
     let now = now();
     if let Some(p) = path.filter(|p| !p.is_empty()) {
@@ -189,11 +228,14 @@ pub fn write_doc(
         if full.exists() {
             let old = std::fs::read_to_string(&full)?;
             if fm_get(&old, "type").as_deref() != Some("doc") {
-                return Err(Error::Other(format!("{p} is not a document written by Claude, so it is left as is")));
+                return Err(Error::Other(format!("{p} is not a document written by an agent, so it is left as is")));
             }
             let fm = split_frontmatter(&old).0.unwrap_or_default();
             let t = fm_set(&format!("---\n{fm}\n---\n{body}\n"), "updated", &now);
-            let t = fm_set(&t, "title", &serde_json::to_string(title).unwrap());
+            let mut t = fm_set(&t, "title", &serde_json::to_string(title).unwrap());
+            if !tags.is_empty() {
+                t = fm_set(&t, "tags", &tag_list);
+            }
             std::fs::write(&full, fm_push(&t, "sessions", session))?;
             let rel = full.strip_prefix(vault.canonicalize()?).unwrap_or(&full).to_string_lossy().into_owned();
             return Ok(SavedDoc { rel, title: title.into(), created: false });
@@ -208,9 +250,10 @@ pub fn write_doc(
     std::fs::create_dir_all(full.parent().unwrap())?;
     let full = resolve(vault, &rel)?;
     let text = format!(
-        "---\nid: {}\ntype: doc\ntitle: {}\ncreated: {now}\nupdated: {now}\nsessions: [{session}]\norigin: {origin}\n---\n{body}\n",
+        "---\nid: {}\ntype: doc\ntitle: {}\n{}created: {now}\nupdated: {now}\nsessions: [{session}]\norigin: {origin}\n---\n{body}\n",
         new_id(),
         serde_json::to_string(title).unwrap(),
+        if tags.is_empty() { String::new() } else { format!("tags: {tag_list}\n") },
     );
     std::fs::write(&full, text)?;
     Ok(SavedDoc { rel, title: title.into(), created: true })
@@ -250,13 +293,19 @@ pub fn fm_push(text: &str, key: &str, item: &str) -> String {
     fm_set(text, key, &format!("[{}]", items.join(", ")))
 }
 
-/// Removes the result block written for `session`, with the blank line before it.
-pub fn remove_result(text: &str, session: &str) -> String {
-    let re = Regex::new(&format!(
-        r#"(?s)\n*<!-- claude:result session="{}" -->.*?<!-- /claude:result -->"#,
+/// The result block written for `session`. Blocks are `marq:result`; notes from before the rename
+/// still have `claude:result`, which are read and replaced the same way.
+fn result_re(session: &str) -> Regex {
+    Regex::new(&format!(
+        r#"(?s)<!-- (?:marq|claude):result session="{}" -->.*?<!-- /(?:marq|claude):result -->"#,
         regex::escape(session)
     ))
-    .unwrap();
+    .unwrap()
+}
+
+/// Removes the result block written for `session`, with the blank line before it.
+pub fn remove_result(text: &str, session: &str) -> String {
+    let re = Regex::new(&format!(r"\n*{}", result_re(session).as_str())).unwrap();
     re.replace(text, "").into_owned()
 }
 
@@ -390,7 +439,8 @@ pub fn section_at(text: &str, line: usize) -> Section {
 }
 
 fn anchor_re() -> Regex {
-    Regex::new(r#"<!-- claude:anchor id="([^"]+)" -->"#).unwrap()
+    // `claude:anchor` in notes from before the rename.
+    Regex::new(r#"<!-- (?:marq|claude):anchor id="([^"]+)" -->"#).unwrap()
 }
 
 /// Anchor markers in a note, with their 0-based line.
@@ -420,19 +470,15 @@ pub fn ensure_anchor(text: &str, section: &Section) -> (String, String) {
     // Under the heading, or at the top of the body when the section has none.
     let has_heading = lines.get(section.start).is_some_and(|l| heading_level(l).is_some());
     let at = (section.start + usize::from(has_heading)).min(out.len());
-    out.insert(at, format!("<!-- claude:anchor id=\"{id}\" -->"));
+    out.insert(at, format!("<!-- marq:anchor id=\"{id}\" -->"));
     (id, out.join("\n") + "\n")
 }
 
 /// Replaces the result block for `session`, or adds one: under `## Result` for requests,
 /// otherwise at the end of the section that holds `anchor`.
 pub fn write_result(text: &str, anchor: Option<&str>, session: &str, body: &str) -> String {
-    let block = format!("<!-- claude:result session=\"{session}\" -->\n{}\n<!-- /claude:result -->", body.trim());
-    let re = Regex::new(&format!(
-        r#"(?s)<!-- claude:result session="{}" -->.*?<!-- /claude:result -->"#,
-        regex::escape(session)
-    ))
-    .unwrap();
+    let block = format!("<!-- marq:result session=\"{session}\" -->\n{}\n<!-- /marq:result -->", body.trim());
+    let re = result_re(session);
     if re.is_match(text) {
         return re.replace(text, regex::NoExpand(&block)).into_owned();
     }
@@ -474,20 +520,34 @@ pub struct SearchHit {
 
 /// Full-text search over the vault's notes. `sessions/` only when asked, since logs are large.
 pub fn grep(vault: &Path, query: &str, include_sessions: bool, max_files: usize, per_file: usize) -> Vec<SearchHit> {
-    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    if words.is_empty() {
-        return vec![];
+    search(vault, query, include_sessions, max_files, per_file).0
+}
+
+/// Lines with every word of `query` (or a synonym from the thesaurus), in notes with its `tag:`s.
+/// Also returns the parsed query, to show what the words were expanded to.
+pub fn search(vault: &Path, query: &str, include_sessions: bool, max_files: usize, per_file: usize) -> (Vec<SearchHit>, Query) {
+    let files = list_files(vault);
+    let q = Query::parse(query, &Thesaurus::load(&files));
+    if q.words.is_empty() && q.tags.is_empty() {
+        return (vec![], q);
     }
     let mut out = vec![];
-    for f in list_files(vault) {
+    for f in files {
         if !include_sessions && f.rel.starts_with("sessions/") {
+            continue;
+        }
+        if !q.matches_tags(&f.tags) {
             continue;
         }
         let Ok(content) = std::fs::read_to_string(&f.path) else { continue };
         let (mut lines, mut more) = (vec![], 0);
-        for (i, line) in content.lines().enumerate() {
-            let l = line.to_lowercase();
-            if words.iter().all(|w| l.contains(w.as_str())) {
+        // Tags alone: the note matches as a whole; show its tags line.
+        if q.words.is_empty() {
+            let at = content.lines().position(|l| l.starts_with("tags:")).unwrap_or(0);
+            lines.push((at + 1, content.lines().nth(at).unwrap_or_default().trim().chars().take(240).collect()));
+        }
+        for (i, line) in content.lines().enumerate().filter(|_| !q.words.is_empty()) {
+            if q.matches_line(line) {
                 if lines.len() < per_file {
                     lines.push((i + 1, line.trim().chars().take(240).collect()));
                 } else {
@@ -502,7 +562,7 @@ pub fn grep(vault: &Path, query: &str, include_sessions: bool, max_files: usize,
             }
         }
     }
-    out
+    (out, q)
 }
 
 #[cfg(test)]
@@ -540,10 +600,10 @@ mod tests {
     fn anchor_without_heading_or_body() {
         let only_fm = "---\nid: n\n---\n";
         let (id, t) = ensure_anchor(only_fm, &section_at(only_fm, 0));
-        assert!(t.ends_with(&format!("---\n<!-- claude:anchor id=\"{id}\" -->\n")));
+        assert!(t.ends_with(&format!("---\n<!-- marq:anchor id=\"{id}\" -->\n")));
         let no_heading = "---\nid: n\n---\nplain text\nmore\n";
         let (id, t) = ensure_anchor(no_heading, &section_at(no_heading, 0));
-        assert!(t.contains(&format!("---\n<!-- claude:anchor id=\"{id}\" -->\nplain text")));
+        assert!(t.contains(&format!("---\n<!-- marq:anchor id=\"{id}\" -->\nplain text")));
         assert!(section_at("", 0).text.is_empty());
     }
 
@@ -551,21 +611,22 @@ mod tests {
     fn docs_go_to_the_vault() {
         let dir = tempfile::tempdir().unwrap();
         let v = dir.path();
-        let d = write_doc(v, "API 設計メモ", "---\nfoo: 1\n---\n# Plan\n\nbody", None, None, "s1", "o1").unwrap();
+        let d = write_doc(v, DocWrite { title: "API 設計メモ", content: "---\nfoo: 1\n---\n# Plan\n\nbody", folder: None, path: None, tags: &["#api".into()] }, "s1", "o1").unwrap();
         assert!(d.created && d.rel.starts_with("docs/") && d.rel.ends_with("-api-設計メモ.md"), "{}", d.rel);
         let t = std::fs::read_to_string(v.join(&d.rel)).unwrap();
         assert_eq!(fm_get(&t, "type").as_deref(), Some("doc"));
         assert!(t.contains("# Plan\n\nbody") && !t.contains("foo: 1"));
+        assert_eq!(fm_list(&t, "tags"), vec!["api"]);
 
-        let again = write_doc(v, "API 設計メモ", "# Plan v2", None, Some(&d.rel), "s2", "o1").unwrap();
+        let again = write_doc(v, DocWrite { title: "API 設計メモ", content: "# Plan v2", folder: None, path: Some(&d.rel), tags: &[] }, "s2", "o1").unwrap();
         assert!(!again.created && again.rel == d.rel);
         let t = std::fs::read_to_string(v.join(&d.rel)).unwrap();
         assert!(t.contains("# Plan v2") && t.contains("sessions: [s1, s2]"));
 
         std::fs::write(v.join("mine.md"), "---\ntype: note\n---\nhand written\n").unwrap();
-        assert!(write_doc(v, "x", "y", None, Some("mine.md"), "s", "o").is_err());
-        assert!(write_doc(v, "x", "y", None, Some("../outside.md"), "s", "o").is_err());
-        let other = write_doc(v, "Weekly", "z", Some("reports"), None, "s", "o").unwrap();
+        assert!(write_doc(v, DocWrite { title: "x", content: "y", folder: None, path: Some("mine.md"), tags: &[] }, "s", "o").is_err());
+        assert!(write_doc(v, DocWrite { title: "x", content: "y", folder: None, path: Some("../outside.md"), tags: &[] }, "s", "o").is_err());
+        let other = write_doc(v, DocWrite { title: "Weekly", content: "z", folder: Some("reports"), path: None, tags: &[] }, "s", "o").unwrap();
         assert!(other.rel.starts_with("reports/"));
     }
 
@@ -618,12 +679,48 @@ mod tests {
         assert_eq!(id, id2);
         let text = write_result(&text, Some(&id), "s1", "done");
         let c = text.find("## C").unwrap();
-        assert!(text.find("claude:result").unwrap() < c);
+        assert!(text.find("marq:result").unwrap() < c);
         let text = write_result(&text, Some(&id), "s1", "again");
         assert!(text.contains("again") && !text.contains("done\n"));
         let removed = remove_result(&text, "s1");
-        assert!(!removed.contains("claude:result") && removed.contains("```\n\n## C"));
+        assert!(!removed.contains("marq:result") && removed.contains("```\n\n## C"));
         let req = write_result("---\nid: r\n---\n## Request\nx\n", None, "s2", "ok");
-        assert!(req.contains("## Result\n\n<!-- claude:result session=\"s2\" -->\nok"));
+        assert!(req.contains("## Result\n\n<!-- marq:result session=\"s2\" -->\nok"));
+    }
+
+    #[test]
+    fn reads_markers_from_before_the_rename() {
+        let old = "# A\n<!-- claude:anchor id=\"a1\" -->\ntext\n\n<!-- claude:result session=\"s1\" -->\nold\n<!-- /claude:result -->\n";
+        assert_eq!(anchors(old)[0].id, "a1");
+        let new = write_result(old, Some("a1"), "s1", "new");
+        assert!(new.contains("<!-- marq:result session=\"s1\" -->\nnew\n<!-- /marq:result -->"));
+        assert!(!new.contains("claude:result"));
+        assert!(!remove_result(old, "s1").contains("result"));
+    }
+
+    #[test]
+    fn reads_list_keys_in_any_form() {
+        assert_eq!(fm_list("---\ntags: [a, \"#b\"]\n---\n", "tags"), vec!["a", "b"]);
+        assert_eq!(fm_list("---\ntags:\n  - a\n  - b\n---\n", "tags"), vec!["a", "b"]);
+        assert_eq!(fm_list("---\naliases: x, y\n---\n", "aliases"), vec!["x", "y"]);
+        assert!(fm_list("---\ntitle: t\n---\n", "tags").is_empty());
+    }
+
+    #[test]
+    fn search_uses_the_glossary_and_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path();
+        std::fs::write(v.join("glossary.md"), "---\ntype: glossary\n---\n## 認証\n- aliases: auth\n").unwrap();
+        std::fs::write(v.join("a.md"), "---\ntags: [security]\n---\n認証のバグを直す\n").unwrap();
+        std::fs::write(v.join("b.md"), "---\naliases: [db]\ntitle: Database\n---\nauth table in the database\n").unwrap();
+        let (hits, q) = search(v, "Auth", false, 10, 10);
+        // The glossary's own entry is a hit too, which shows what the term means.
+        assert_eq!(hits.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["a.md", "b.md", "glossary.md"]);
+        assert_eq!(q.expanded(), vec![vec!["auth".to_string(), "認証".into()]]);
+        // A note's aliases work like a glossary entry.
+        assert_eq!(search(v, "db table", false, 10, 10).0.len(), 1);
+        let (hits, _) = search(v, "tag:security", false, 10, 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].lines[0].1, "tags: [security]");
     }
 }

@@ -17,16 +17,26 @@ export function SearchView({ vault, initial, active, onOpen }: {
   const [q, setQ] = useState(initial);
   const [sessions, setSessions] = useState(false);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
+  // Words the glossary or notes' aliases widened, and what they also matched.
+  const [expanded, setExpanded] = useState<string[][]>([]);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const words = q.trim().split(/\s+/).filter(Boolean);
+  const words = [
+    ...q.trim().split(/\s+/).filter((w) => w && !w.startsWith("tag:") && !w.startsWith("#")),
+    ...expanded.flat(),
+  ];
 
   // Search as you type, after a short pause.
   useEffect(() => {
-    if (!q.trim()) return setHits(null);
+    if (!q.trim()) {
+      setExpanded([]);
+      return setHits(null);
+    }
     setBusy(true);
     const t = setTimeout(() => {
-      api.searchText(vault, q, sessions).then(setHits).finally(() => setBusy(false));
+      api.searchText(vault, q, sessions)
+        .then((r) => { setHits(r.hits); setExpanded(r.expanded); })
+        .finally(() => setBusy(false));
     }, 200);
     return () => clearTimeout(t);
   }, [vault, q, sessions]);
@@ -43,7 +53,7 @@ export function SearchView({ vault, initial, active, onOpen }: {
       <div className="query-inner">
         <div className="search-bar">
           <Search size={15} className="muted" />
-          <input ref={inputRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search notes (every word must appear on the line)"
+          <input ref={inputRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search notes: every word on the line, synonyms included; tag:name or #name for tags"
             onKeyDown={(e) => {
               if (composing(e) || e.key !== "Enter" || !hits?.[0]) return;
               onOpen(hits[0].path, hits[0].lines[0][0] - 1);
@@ -51,6 +61,14 @@ export function SearchView({ vault, initial, active, onOpen }: {
           {busy && <Loader2 size={14} className="spin muted" />}
           <label className="check"><input type="checkbox" checked={sessions} onChange={(e) => setSessions(e.target.checked)} /> Include sessions</label>
         </div>
+        {expanded.length > 0 && (
+          <div className="search-expanded small">
+            {expanded.map(([word, ...also]) => (
+              <span key={word}><b>{word}</b> also matches {also.map((a) => <span key={a} className="tag">{a}</span>)}</span>
+            ))}
+            <a className="muted" onClick={() => api.glossaryPath(vault).then((p) => onOpen(p, 0))}>Edit glossary</a>
+          </div>
+        )}
         {hits && <div className="muted small result-count">{total} lines in {hits.length} notes{hits.length >= 200 ? " (first 200 notes)" : ""}</div>}
         <div className="search-results">
           {hits?.map((h) => (

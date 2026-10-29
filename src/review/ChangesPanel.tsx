@@ -88,7 +88,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
       ).filter((e): e is readonly [string, string] => e[1] !== null);
       if (mine !== generation.current) return;
       setChanges(c);
-      // Claude may rename the branch with git; show what is checked out.
+      // The agent may rename the branch with git; show what is checked out.
       if (c.branch) setWorktree((w) => (w.branch === c.branch ? w : { ...w, branch: c.branch! }));
       // Skip files collapsed in the meantime.
       if (entries.length) setOpen((o) => ({ ...o, ...Object.fromEntries(entries.filter(([f]) => o[f] !== null)) }));
@@ -103,10 +103,10 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
 
   // Refresh after each file-editing tool result and when the turn ends.
   useEffect(() => {
-    const un1 = listen<{ session_id: string; event: any }>("claude://event", (e) => {
+    const un1 = listen<{ session_id: string; event: any }>("session://event", (e) => {
       if (e.payload.session_id === sessionId && (e.payload.event.type === "user" || e.payload.event.type === "result")) refresh();
     });
-    const un2 = listen<{ session_id: string }>("claude://exit", (e) => e.payload.session_id === sessionId && refresh());
+    const un2 = listen<{ session_id: string }>("session://exit", (e) => e.payload.session_id === sessionId && refresh());
     return () => {
       un1.then((f) => f());
       un2.then((f) => f());

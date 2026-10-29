@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::claude::{self, SessionMeta};
+use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::sidecar::{Runner, Turn};
 use crate::tasks::{self, Task, TaskList};
@@ -43,6 +43,8 @@ pub struct Member {
     pub permission_mode: Option<String>,
     /// Whether the member gets its own worktree when the project is a git repository.
     pub worktree: bool,
+    /// Its own model; the crew's `model` otherwise.
+    pub model: Option<String>,
     /// The `### <role>` section under `## Roles`.
     pub instructions: String,
 }
@@ -57,8 +59,17 @@ pub struct Crew {
     /// How many member-to-member messages may follow one message from the user before the
     /// next one is held for the user.
     pub max_hops: u64,
+    /// The model members use unless they set their own; Claude Code's default otherwise.
+    pub model: Option<String>,
     pub members: Vec<Member>,
     pub goal: String,
+}
+
+impl Crew {
+    /// The model `member` runs on: its own, the crew's, or None for Claude Code's default.
+    pub fn model_of(&self, member: &Member) -> Option<String> {
+        member.model.clone().or_else(|| self.model.clone())
+    }
 }
 
 /// Reads a crew note. `None` when it is not one.
@@ -86,6 +97,7 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
             (!role.is_empty() && role != USER).then(|| Member {
                 permission_mode: m["permission_mode"].as_str().map(str::to_string).filter(|s| !s.is_empty()),
                 worktree: m["worktree"].as_bool().unwrap_or(true),
+                model: m["model"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
                 instructions: section("Roles", Some(&role)),
                 role,
             })
@@ -101,8 +113,19 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
         // Read like a request's `project:`, as the raw text.
         project: vault::fm_get(text, "project").filter(|s| !s.is_empty()),
         max_hops: doc["max_hops"].as_i64().map(|n| n.max(1) as u64).unwrap_or(DEFAULT_MAX_HOPS),
+        model: doc["model"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
         members,
-        goal: section("Goal", None),
+        // With its `###` subsections.
+        goal: sections
+            .iter()
+            .filter(|s| s.h2.eq_ignore_ascii_case("Goal"))
+            .map(|s| match &s.h3 {
+                Some(h) => format!("### {h}\n{}", s.body),
+                None => s.body.clone(),
+            })
+            .collect::<String>()
+            .trim()
+            .to_string(),
     })
 }
 
@@ -164,7 +187,7 @@ fn events(vault: &Path, id: &str) -> Vec<Value> {
 fn log(app: &AppHandle, vault: &Path, crew: &str, line: Value) -> Result<()> {
     let path = raw_path(vault, crew);
     std::fs::create_dir_all(path.parent().unwrap())?;
-    claude::append(&path, &line)?;
+    session::append(&path, &line)?;
     let _ = app.emit("crew://changed", json!({"crew_id": crew}));
     Ok(())
 }
@@ -268,12 +291,18 @@ fn crew_dir(crew: &Crew) -> PathBuf {
     Path::new(&crew.path).with_extension("")
 }
 
-/// The crew's task list, found by its `crew:` id so it can be moved. Created on first use.
+/// The crew's task list, a board found by its `crew:` id so it can be moved. Created on first use.
 pub fn tasks_path(vault: &Path, crew: &Crew) -> Result<PathBuf> {
-    let found = vault::list_files(vault).into_iter().filter(|f| f.kind.as_deref() == Some("crew-tasks")).find(|f| {
-        std::fs::read_to_string(&f.path).is_ok_and(|t| vault::fm_get(&t, "crew").as_deref() == Some(crew.id.as_str()))
+    let kinds = [Some("board"), Some("crew-tasks")];
+    let found = vault::list_files(vault).into_iter().filter(|f| kinds.contains(&f.kind.as_deref())).find_map(|f| {
+        let text = std::fs::read_to_string(&f.path).ok()?;
+        (vault::fm_get(&text, "crew").as_deref() == Some(crew.id.as_str())).then_some((f, text))
     });
-    if let Some(f) = found {
+    if let Some((f, text)) = found {
+        // Lists from before task lists were boards become one, so the Tasks tab can show them as a board.
+        if f.kind.as_deref() == Some("crew-tasks") {
+            std::fs::write(&f.path, tasks::render(&tasks::parse(&vault::fm_set(&text, "type", "board"))))?;
+        }
         return Ok(PathBuf::from(f.path));
     }
     let path = crew_dir(crew).join("tasks.md");
@@ -537,7 +566,7 @@ pub fn release(app: &AppHandle, vault: &Path, crew_id: &str, msg_id: &str) -> Re
 
 /// Called when a member's turn ends: hands it whatever arrived while it was busy.
 pub fn on_turn_end(app: &AppHandle, vault: &Path, session_id: &str) -> Result<()> {
-    let Some(c) = claude::meta(vault, session_id)?.crew else { return Ok(()) };
+    let Some(c) = session::meta(vault, session_id)?.crew else { return Ok(()) };
     let _lock = MAIL.lock().unwrap();
     let crew = find(vault, &c.id)?;
     let _ = app.emit("crew://changed", json!({"crew_id": crew.id}));
@@ -553,7 +582,7 @@ pub fn on_turn_end(app: &AppHandle, vault: &Path, session_id: &str) -> Result<()
 fn deliver(app: &AppHandle, vault: &Path, crew: &Crew, role: &str) -> Result<()> {
     let runner = app.state::<Runner>();
     let events = events(vault, &crew.id);
-    let session = member_session(&events, role).and_then(|s| claude::meta(vault, &s).ok());
+    let session = member_session(&events, role).and_then(|s| session::meta(vault, &s).ok());
     if session.as_ref().is_some_and(|m| runner.is_busy(&m.id)) {
         return Ok(());
     }
@@ -569,12 +598,18 @@ fn deliver(app: &AppHandle, vault: &Path, crew: &Crew, role: &str) -> Result<()>
         .unwrap_or(0);
     let ids: Vec<&str> = msgs.iter().filter_map(|m| m["id"].as_str()).collect();
     let prompt = msgs.iter().map(|m| render_message(m)).collect::<Vec<_>>().join("\n\n");
+    let member = crew.members.iter().find(|m| m.role == role).ok_or_else(|| Error::Other(format!("no member {role}")))?;
     let (meta, turn) = match session {
-        Some(meta) => (meta, Turn::Resume),
-        None => {
-            let member = crew.members.iter().find(|m| m.role == role).ok_or_else(|| Error::Other(format!("no member {role}")))?;
-            (new_member(app, crew, member)?, Turn::New)
+        Some(mut meta) => {
+            // The crew note says which model the member runs on, so a change there applies from its next turn.
+            let model = crew.model_of(member);
+            if meta.model != model {
+                session::append(&session::raw_path(vault, &meta.id), &json!({"type": "marq_model", "model": model}))?;
+                meta.model = model;
+            }
+            (meta, Turn::Resume)
         }
+        None => (new_member(app, crew, member)?, Turn::New),
     };
     let session_id = meta.id.clone();
     runner.start(app.clone(), vault.to_path_buf(), meta, prompt, turn)?;
@@ -590,6 +625,7 @@ pub struct NewMember<'a> {
     pub instructions: &'a str,
     pub worktree: bool,
     pub permission_mode: Option<&'a str>,
+    pub model: Option<&'a str>,
 }
 
 /// Adds a member to the crew note: an entry under `members:` and its `### <role>` section under
@@ -607,12 +643,49 @@ pub fn add_member(app: &AppHandle, vault: &Path, crew_id: &str, by: &str, m: New
     if let Some(mode) = m.permission_mode.filter(|p| !["auto", "default", "acceptEdits", "plan"].contains(p)) {
         return Err(Error::Other(format!("unknown permission_mode: {mode}")));
     }
+    let model = m.model.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(model) = model {
+        check_model(model)?;
+    }
     let text = std::fs::read_to_string(&crew.path)?;
-    let text = with_member(&text, role, m.worktree, m.permission_mode)?;
+    let text = with_member(&text, role, m.worktree, m.permission_mode, model)?;
     let text = append_to_section(&text, "Roles", &format!("### {role}\n\n{}", m.instructions.trim()));
     std::fs::write(&crew.path, vault::fm_set(&text, "updated", &vault::now()))?;
     let _ = app.emit("vault://changed", json!({"path": crew.path}));
     log(app, vault, &crew.id, json!({"type": "crew_event", "text": format!("{by} added {role}"), "at": vault::now()}))
+}
+
+/// Crews run on Claude only: an Ollama model cannot use the crew's tools reliably.
+fn check_model(model: &str) -> Result<()> {
+    if model.starts_with("ollama:") {
+        return Err(Error::Other("crews run on Claude models only (e.g. opus, sonnet, haiku)".into()));
+    }
+    Ok(())
+}
+
+/// Sets the model `role` runs on from its next turn, in the crew note. None goes back to the
+/// crew's model.
+pub fn set_model(app: &AppHandle, vault: &Path, crew_id: &str, by: &str, role: &str, model: Option<&str>) -> Result<Option<String>> {
+    let _lock = MAIL.lock().unwrap();
+    let crew = find(vault, crew_id)?;
+    let model = model.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(m) = model {
+        check_model(m)?;
+    }
+    let member = crew.members.iter().find(|m| m.role == role).ok_or_else(|| Error::Other(format!("no member \"{role}\" in this crew")))?;
+    if member.model.as_deref() == model {
+        return Ok(crew.model_of(member));
+    }
+    let text = std::fs::read_to_string(&crew.path)?;
+    let text = with_member_field(&text, role, "model", model)?;
+    std::fs::write(&crew.path, vault::fm_set(&text, "updated", &vault::now()))?;
+    let _ = app.emit("vault://changed", json!({"path": crew.path}));
+    let crew = find(vault, crew_id)?;
+    let now = crew.members.iter().find(|m| m.role == role).and_then(|m| crew.model_of(m));
+    let shown = now.clone().unwrap_or_else(|| "the default model".into());
+    let who = if by == role { format!("{by} switched to {shown}") } else { format!("{by} switched {role} to {shown}") };
+    log(app, vault, &crew.id, json!({"type": "crew_event", "text": who, "at": vault::now()}))?;
+    Ok(now)
 }
 
 /// Records a decision under `## Decisions` in the crew note and tells every member.
@@ -634,7 +707,7 @@ pub fn decide(app: &AppHandle, vault: &Path, crew_id: &str, by: &str, decision: 
 }
 
 /// Adds an entry to the frontmatter's block-style `members:` list, matching its indentation.
-fn with_member(text: &str, role: &str, worktree: bool, mode: Option<&str>) -> Result<String> {
+fn with_member(text: &str, role: &str, worktree: bool, mode: Option<&str>, model: Option<&str>) -> Result<String> {
     let (Some(fm), body) = vault::split_frontmatter(text) else {
         return Err(Error::Other("the crew note has no frontmatter".into()));
     };
@@ -671,7 +744,42 @@ fn with_member(text: &str, role: &str, worktree: bool, mode: Option<&str>) -> Re
     if let Some(m) = mode.filter(|m| !m.is_empty()) {
         entry.push(format!("{pad}  permission_mode: {m}"));
     }
+    if let Some(m) = model.filter(|m| !m.is_empty()) {
+        entry.push(format!("{pad}  model: {m}"));
+    }
     lines.splice(insert..insert, entry);
+    Ok(format!("---\n{}\n---\n{body}", lines.join("\n")))
+}
+
+/// Sets or (with None) removes `key` in the `- role: <role>` entry of the frontmatter's `members:` list.
+fn with_member_field(text: &str, role: &str, key: &str, value: Option<&str>) -> Result<String> {
+    let (Some(fm), body) = vault::split_frontmatter(text) else {
+        return Err(Error::Other("the crew note has no frontmatter".into()));
+    };
+    let mut lines: Vec<String> = fm.lines().map(str::to_string).collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let item = lines
+        .iter()
+        .position(|l| {
+            let t = l.trim_start().strip_prefix("- ").unwrap_or("");
+            t.strip_prefix("role:").is_some_and(|r| r.trim().trim_matches(|c| c == '"' || c == '\'') == role)
+        })
+        .ok_or_else(|| Error::Other(format!("members: in the crew note has no block entry \"- role: {role}\"")))?;
+    let pad = indent(&lines[item]) + 2;
+    let mut end = item + 1;
+    while end < lines.len() && !lines[end].trim().is_empty() && indent(&lines[end]) >= pad {
+        end += 1;
+    }
+    let found = (item + 1..end).find(|&i| lines[i].trim_start().strip_prefix(key).is_some_and(|r| r.starts_with(':')));
+    let line = value.map(|v| format!("{}{key}: {v}", " ".repeat(pad)));
+    match (found, line) {
+        (Some(i), Some(l)) => lines[i] = l,
+        (Some(i), None) => {
+            lines.remove(i);
+        }
+        (None, Some(l)) => lines.insert(end, l),
+        (None, None) => {}
+    }
     Ok(format!("---\n{}\n---\n{body}", lines.join("\n")))
 }
 
@@ -756,7 +864,7 @@ fn new_member(app: &AppHandle, crew: &Crew, member: &Member) -> Result<SessionMe
         cwd,
         started: vault::now(),
         permission_mode: member.permission_mode.clone(),
-        model: None,
+        model: crew.model_of(member),
         worktree,
         crew: Some(CrewRef { id: crew.id.clone(), role: member.role.clone() }),
     })
@@ -770,7 +878,7 @@ pub fn other_dirs(vault: &Path, crew_ref: &CrewRef) -> Vec<String> {
         .iter()
         .filter(|m| m.role != crew_ref.role)
         .filter_map(|m| member_session(&events, &m.role))
-        .filter_map(|s| claude::meta(vault, &s).ok())
+        .filter_map(|s| session::meta(vault, &s).ok())
         .map(|m| vault::expand_home(&m.cwd).to_string_lossy().into_owned())
         .collect()
 }
@@ -784,7 +892,13 @@ pub fn start(app: &AppHandle, vault: &Path, title: &str, goal: &str, project: &s
     std::fs::write(&path, template(&vault::new_id(), title, &vault::now(), project, goal))?;
     let _ = app.emit("vault://changed", json!({"path": path}));
     let crew = find(vault, &rel)?;
-    kick_off(app, vault, &crew.id)?;
+    // A crew that cannot start is not left behind, so trying again does not make a second one.
+    if let Err(e) = kick_off(app, vault, &crew.id) {
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(crew_dir(&crew));
+        let _ = app.emit("vault://changed", json!({"path": path}));
+        return Err(e);
+    }
     Ok(crew)
 }
 
@@ -808,12 +922,15 @@ pub fn system_prompt(vault: &Path, crew_ref: &CrewRef) -> String {
     let roster = crew
         .members
         .iter()
-        .map(|m| format!("- {}{}", m.role, if m.role == crew_ref.role { " (you)" } else { "" }))
+        .map(|m| {
+            let model = crew.model_of(m).unwrap_or_else(|| "default model".into());
+            format!("- {} ({model}){}", m.role, if m.role == crew_ref.role { ", you" } else { "" })
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let own = crew.members.iter().find(|m| m.role == crew_ref.role).map(|m| m.instructions.trim()).unwrap_or("");
     format!(
-        "\n\nYou are the \"{role}\" member of the crew \"{title}\", a team of Claude sessions working on one goal together.\n\n\
+        "\n\nYou are the \"{role}\" member of the crew \"{title}\", a team of agent sessions working on one goal together.\n\n\
 Members:\n{roster}\n- user (the human who runs the crew)\n\n\
 Goal:\n{goal}\n\n\
 Your role:\n{own}\n\n\
@@ -836,6 +953,10 @@ can work in parallel without overlapping, and note branches and commits on the t
 - Save designs, plans, specs, investigations and reports with write_doc. They go to the crew's folder in the vault \
 and are linked from the crew note, so every member and the user can read them with read_note.\n\
 - crew_add_member adds a role to the crew (the user approves it). Add one only when the work needs a skill nobody has.\n\
+- Each member runs on a model, shown in the roster. Match it to the work: opus for design, hard problems and careful \
+review; sonnet for most implementation and testing; haiku for simple, mechanical work. crew_add_member takes a model, \
+and crew_set_model switches a member (or you) from its next turn when the work changes; leave the user's choices \
+alone unless the work clearly needs another model.\n\
 - The roster can change. Use crew_members to see who is in the crew, where each member works (directory and branch) \
 and who is busy.\n\
 - Send the user only what needs a human: decisions you cannot make, blockers and finished results.\n\
@@ -855,6 +976,8 @@ pub struct MemberState {
     pub pending: usize,
     pub cwd: Option<String>,
     pub branch: Option<String>,
+    /// The model it runs on from its next turn; None for Claude Code's default.
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -884,12 +1007,12 @@ pub fn state(app: &AppHandle, vault: &Path, crew_id: &str) -> Result<CrewState> 
         .iter()
         .map(|m| {
             let session = member_session(&events, &m.role);
-            let log = session.as_ref().and_then(|s| claude::read_events(vault, s).ok());
-            let meta = session.as_ref().and_then(|s| claude::meta(vault, s).ok());
+            let log = session.as_ref().and_then(|s| session::read_events(vault, s).ok());
+            let meta = session.as_ref().and_then(|s| session::meta(vault, s).ok());
             let status = match (&session, &log) {
                 (Some(s), _) if !runner.approvals(Some(s)).is_empty() => "waiting".to_string(),
                 (Some(s), _) if runner.is_busy(s) => "running".to_string(),
-                (Some(_), Some(l)) => match claude::status_of(l).as_str() {
+                (Some(_), Some(l)) => match session::status_of(l).as_str() {
                     // Logged as running without a live turn: the app stopped part-way.
                     "running" => "interrupted".to_string(),
                     s => s.to_string(),
@@ -902,6 +1025,7 @@ pub fn state(app: &AppHandle, vault: &Path, crew_id: &str) -> Result<CrewState> 
                 pending: pending(&events, &m.role).len(),
                 cwd: meta.as_ref().map(|m| m.cwd.clone()),
                 branch: meta.and_then(|m| m.worktree).map(|w| w.branch),
+                model: crew.model_of(m),
                 session_id: session,
             }
         })
@@ -931,10 +1055,41 @@ pub fn members_for_tool(app: &AppHandle, vault: &Path, crew_ref: &CrewRef) -> Re
         .iter()
         .map(|m| {
             json!({"role": m.role, "you": m.role == crew_ref.role, "status": m.status, "unread": m.pending,
-                "cwd": m.cwd, "branch": m.branch})
+                "cwd": m.cwd, "branch": m.branch, "model": m.model.as_deref().unwrap_or("default")})
         })
         .collect();
     Ok(json!({"crew": st.crew.title, "project": st.crew.project, "members": members}))
+}
+
+/// Moves Markdown headings down so the highest is `###`, keeping them inside the note's `## Goal`.
+fn demote(md: &str) -> String {
+    let level = |l: &str| {
+        let n = l.chars().take_while(|c| *c == '#').count();
+        (1..=6).contains(&n).then_some(n).filter(|&n| l[n..].starts_with(' '))
+    };
+    let mut in_fence = false;
+    let headings: Vec<Option<usize>> = md
+        .lines()
+        .map(|l| {
+            if l.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+                return None;
+            }
+            if in_fence { None } else { level(l) }
+        })
+        .collect();
+    let shift = headings.iter().flatten().min().map_or(0, |&top| 3usize.saturating_sub(top));
+    if shift == 0 {
+        return md.to_string();
+    }
+    md.lines()
+        .zip(&headings)
+        .map(|(l, h)| match h {
+            Some(n) => format!("{}{}", "#".repeat((n + shift).min(6)), &l[*n..]),
+            None => l.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 const GOAL_PLACEHOLDER: &str = "What the crew should build or fix, and how you will know it is done.";
@@ -944,7 +1099,7 @@ const GOAL_PLACEHOLDER: &str = "What the crew should build or fix, and how you w
 pub fn template(id: &str, title: &str, now: &str, project: &str, goal: &str) -> String {
     let q = serde_json::to_string(title).unwrap();
     let project = if project.is_empty() { String::new() } else { format!(" {project}") };
-    let goal = if goal.trim().is_empty() { GOAL_PLACEHOLDER } else { goal.trim() };
+    let goal = if goal.trim().is_empty() { GOAL_PLACEHOLDER.to_string() } else { demote(goal.trim()) };
     format!(
         r#"---
 id: {id}
@@ -957,6 +1112,8 @@ project:{project}
 max_hops: 20
 # role: the member's address. worktree: false works in the project directory instead of its own worktree.
 # permission_mode: auto (default) | default | acceptEdits | plan
+# model: opus | sonnet | haiku | a full model name, for a member or (at the top level) the whole crew.
+#   Unset: Claude Code's default. lead may pick models for the members it adds and switch them as the work changes.
 # lead adds the rest of the team with crew_add_member. List members here to choose them yourself.
 members:
   - role: lead
@@ -1018,15 +1175,40 @@ mod tests {
 
     #[test]
     fn adds_a_member_to_the_note() {
-        let t = with_member(CREW, "tester", false, Some("acceptEdits")).unwrap();
+        let t = with_member(CREW, "tester", false, Some("acceptEdits"), Some("haiku")).unwrap();
         let t = append_to_section(&t, "Roles", "### tester\n\nRun the tests.");
         let crew = parse(&t, Path::new("/v/crews/h.md"), Path::new("/v")).unwrap();
         let tester = crew.members.iter().find(|m| m.role == "tester").unwrap();
         assert!(!tester.worktree);
         assert_eq!(tester.permission_mode.as_deref(), Some("acceptEdits"));
+        assert_eq!(tester.model.as_deref(), Some("haiku"));
         assert_eq!(tester.instructions, "Run the tests.");
         // The new role goes before the next section.
         assert!(t.contains("Build it.\n\n### tester\n\nRun the tests.\n\n## Decisions"));
+    }
+
+    #[test]
+    fn sets_a_members_model() {
+        let t = with_member_field(CREW, "impl", "model", Some("opus")).unwrap();
+        let t = with_member_field(&t, "lead", "model", Some("sonnet")).unwrap();
+        assert!(t.contains("  - role: lead\n    worktree: false\n    model: sonnet\n  - role: impl\n    model: opus\n---"));
+        let t = with_member_field(&t, "impl", "model", Some("haiku")).unwrap();
+        let mut crew = parse(&t, Path::new("/v/crews/h.md"), Path::new("/v")).unwrap();
+        assert_eq!(crew.members[1].model.as_deref(), Some("haiku"));
+        let t = with_member_field(&t, "lead", "model", None).unwrap();
+        assert!(t.contains("  - role: lead\n    worktree: false\n  - role: impl"));
+        crew.model = Some("sonnet".into());
+        crew.members[0].model = None;
+        assert_eq!(crew.model_of(&crew.members[0]).as_deref(), Some("sonnet"));
+        assert!(with_member_field(&t, "tester", "model", Some("opus")).is_err());
+    }
+
+    #[test]
+    fn keeps_goal_headings_inside_the_goal() {
+        let t = template("c3", "X", "2026-10-29T10:00:00+09:00", "", "## 目的\n\nやる\n\n## 完了条件\n\n- 動く\n\n```\n# not a heading\n```");
+        let crew = parse(&t, Path::new("/v/crews/x.md"), Path::new("/v")).unwrap();
+        assert_eq!(crew.goal, "### 目的\n\nやる\n\n### 完了条件\n\n- 動く\n\n```\n# not a heading\n```");
+        assert_eq!(crew.members[0].instructions.lines().next(), Some("You run the crew and do not edit code yourself."));
     }
 
     #[test]

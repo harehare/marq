@@ -4,11 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
-  Users, Palette, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Globe,
+  Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Globe, Timer, Play, Pause,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, FileEntry, SessionInfo } from "./api";
+import { api, FileEntry, Schedule, SessionInfo } from "./api";
+import { ScheduleDialog } from "./AutomationDialogs";
+import { setVaultFiles } from "./wikilinks";
 import { NoteEditor } from "./NoteEditor";
 import { SessionView } from "./SessionView";
 import { CrewView } from "./CrewView";
@@ -27,11 +29,12 @@ import { LogoMark } from "./Logo";
 import { Resizer, usePaneSize } from "./Resizer";
 import { Excerpt, SendToSessionDialog } from "./SendToSessionDialog";
 import { NameDialog } from "./NameDialog";
+import { SettingsDialog } from "./SettingsDialog";
 import { ContextMenu, MenuItem, MenuState } from "./ContextMenu";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { PALETTES, useTheme } from "./theme";
 import { Settings, setSettings } from "./settings";
-import { notify } from "./notify";
+import { notify, summary } from "./notify";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
@@ -163,7 +166,7 @@ function DirRow({ name, path, depth, open, toggle, props }: {
   );
 }
 
-const INDENT = 16;
+const INDENT = 12;
 const indent = (depth: number) => 8 + depth * INDENT;
 
 /** Whether `path` is one of the files somewhere under `tree`. */
@@ -266,22 +269,67 @@ const NotesTree = forwardRef<HTMLDivElement, Omit<TreeProps, "depth" | "prefix">
 });
 
 const GROUPS = [
-  { key: "waiting", label: "Needs you", match: (s: SessionInfo) => s.status === "waiting" },
-  { key: "running", label: "Running", match: (s: SessionInfo) => s.status === "running" },
   // Finished sessions with changes that nobody has marked done or turned into a PR yet.
   { key: "review", label: "Needs review", match: (s: SessionInfo) =>
       s.status !== "running" && !s.review && (s.additions ?? 0) + (s.deletions ?? 0) > 0 },
-  { key: "recent", label: "Recent", match: () => true },
 ];
 
-/** Crew members are listed under their crew, except when they need the user. */
+/**
+ * `active`: every running session and every one that needs the user, crew members included, those
+ * waiting first. Other crew members are listed under their crew. The rest is `recent`.
+ */
 function groupSessions(sessions: SessionInfo[]) {
-  const used = new Set<string>();
-  return GROUPS.map((g) => {
-    const items = sessions.filter((s) => !used.has(s.id) && g.match(s) && (!s.crew || g.key === "waiting")).slice(0, g.key === "recent" ? 30 : undefined);
+  const active = sessions.filter((s) => s.status === "waiting" || s.status === "running")
+    .sort((a, b) => Number(b.status === "waiting") - Number(a.status === "waiting"));
+  const used = new Set(active.map((s) => s.id));
+  const groups = GROUPS.map((g) => {
+    const items = sessions.filter((s) => !used.has(s.id) && g.match(s) && !s.crew);
     items.forEach((s) => used.add(s.id));
     return { ...g, items };
   }).filter((g) => g.items.length);
+  return { active, groups, recent: sessions.filter((s) => !used.has(s.id) && !s.crew).slice(0, 100) };
+}
+
+/** `every 1h · 14:30`, `daily 09:00 · tomorrow`: how often and when next. */
+function scheduleLabel(s: Schedule) {
+  if (!s.enabled) return "paused";
+  const how = s.at ? `daily ${s.at}` : `every ${s.every ?? "?"}`;
+  if (!s.next_run) return how;
+  const next = new Date(s.next_run);
+  const today = new Date().toDateString() === next.toDateString();
+  const time = next.toTimeString().slice(0, 5);
+  return `${how} · ${next <= new Date() ? "now" : today ? time : `${next.getMonth() + 1}/${next.getDate()} ${time}`}`;
+}
+
+/** `5m`, `3h`, `2d`; the date after a month. */
+function ago(iso: string) {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 60) return `${m}m`;
+  if (m < 60 * 24) return `${Math.round(m / 60)}h`;
+  if (m < 60 * 24 * 30) return `${Math.round(m / 60 / 24)}d`;
+  return iso.slice(5, 10);
+}
+
+/** An open/closed state remembered per sidebar section. */
+function useSectionOpen(key: string, defaultOpen = true) {
+  const storage = `marq.section.${key}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(storage);
+      return v === null ? defaultOpen : v === "1";
+    } catch {
+      return defaultOpen;
+    }
+  });
+  const set = (v: boolean) => {
+    setOpen(v);
+    try {
+      localStorage.setItem(storage, v ? "1" : "0");
+    } catch {}
+  };
+  return [open, set] as const;
 }
 
 function Collapsible({ title, icon, count, children, defaultOpen = true, action }: {
@@ -289,7 +337,7 @@ function Collapsible({ title, icon, count, children, defaultOpen = true, action 
   /** A button shown at the right of the title. */
   action?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useSectionOpen(title, defaultOpen);
   return (
     <div className="section">
       <a className="section-title" onClick={() => setOpen(!open)}>
@@ -307,7 +355,11 @@ const parentOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastInde
 export default function App() {
   const [vault, setVault] = useState<string | null>(loadVault);
   const [files, setFiles] = useState<FileEntry[]>([]);
+  // The preview and editor resolve [[links]] against these.
+  useEffect(() => setVaultFiles(files), [files]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [newSchedule, setNewSchedule] = useState(false);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -343,9 +395,15 @@ export default function App() {
   // Files only; the session list is much slower.
   const refreshFiles = useCallback(async () => {
     if (!vault) return;
-    const [fs, ds] = await Promise.all([api.listFiles(vault), api.listDirs(vault)]);
+    const [fs, ds, sc] = await Promise.all([api.listFiles(vault), api.listDirs(vault), api.schedulesList(vault)]);
     setFiles(fs);
     setDirs(ds);
+    setSchedules(sc);
+  }, [vault]);
+
+  // Board queues and schedules run for the open vault, and only while Marq runs.
+  useEffect(() => {
+    if (vault) api.automationWatch(vault).catch(() => {});
   }, [vault]);
 
   const refresh = useCallback(async () => {
@@ -367,12 +425,22 @@ export default function App() {
       clearTimeout(timer);
       timer = setTimeout(refresh, 150);
     };
-    const uns = ["claude://exit", "claude://turn", "claude://approval", "vault://changed", "sessions://changed"].map((ev) => listen(ev, soon));
+    const uns = ["session://exit", "session://turn", "session://approval", "vault://changed", "sessions://changed"].map((ev) => listen(ev, soon));
     return () => {
       clearTimeout(timer);
       uns.forEach((u) => u.then((f) => f()));
     };
   }, [refresh]);
+
+  // Sessions the board queues and schedules start on their own.
+  useEffect(() => {
+    const un = listen<{ session_id: string; title: string; from: string }>("automation://started", (e) => {
+      void notify(`Started: ${e.payload.title}`, `From ${e.payload.from}`);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   // ---- notifications and unread results ----
   const [unread, setUnread] = useState<Set<string>>(new Set());
@@ -386,15 +454,22 @@ export default function App() {
       void notify(watch.current.sessions.find((x) => x.id === id)?.title ?? "Marq", body);
     };
     const uns = [
-      listen<{ session_id: string }>("claude://turn", (e) => {
+      listen<{ session_id: string; result?: string }>("session://turn", (e) => {
         // Crew members take many short turns, and the crew view shows them.
-        if (!watch.current.sessions.find((x) => x.id === e.payload.session_id)?.crew) attention(e.payload.session_id, "Finished", true);
+        if (!watch.current.sessions.find((x) => x.id === e.payload.session_id)?.crew) {
+          attention(e.payload.session_id, summary(e.payload.result ?? "") || "Finished", true);
+        }
       }),
-      listen<{ session_id: string; status: string }>("claude://exit", (e) => {
-        if (e.payload.status === "error") attention(e.payload.session_id, "Stopped with an error", true);
+      listen<{ session_id: string; status: string; stderr?: string }>("session://exit", (e) => {
+        const why = summary(e.payload.stderr?.trim().split("\n").pop() ?? "", 140);
+        if (e.payload.status === "error") attention(e.payload.session_id, `Stopped with an error${why ? `: ${why}` : ""}`, true);
       }),
-      listen<{ session_id: string; tool_name?: string; answered?: boolean }>("claude://approval", (e) => {
-        if (!e.payload.answered) attention(e.payload.session_id, `Needs your approval${e.payload.tool_name ? `: ${e.payload.tool_name}` : ""}`, false);
+      listen<{ session_id: string; tool_name?: string; title?: string; input?: Record<string, unknown>; answered?: boolean }>("session://approval", (e) => {
+        if (e.payload.answered) return;
+        const { tool_name, title, input } = e.payload;
+        // What it wants to do: the SDK's title, else the command, file or URL.
+        const what = title ?? [input?.command, input?.file_path, input?.url].find((x) => typeof x === "string") as string | undefined;
+        attention(e.payload.session_id, `Needs your approval${tool_name ? ` · ${tool_name}` : ""}${what ? `\n${summary(what, 140)}` : ""}`, false);
       }),
     ];
     return () => uns.forEach((u) => u.then((f) => f()));
@@ -416,10 +491,13 @@ export default function App() {
   }, [unread, sessions]);
 
   // Only requests nobody has started. Started ones show up as sessions instead.
-  const inbox = useMemo(() => files.filter((f) => f.kind === "request" && f.status === "todo"), [files]);
+  // Requests waiting to run, and knowledge notes an agent wrote that nobody has checked yet.
+  const inbox = useMemo(() => files.filter((f) =>
+    (f.kind === "request" && f.status === "todo") || (f.kind === "knowledge" && f.status === "draft")), [files]);
   const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
-  const boards = useMemo(() => files.filter((f) => f.kind === "board"), [files]);
+  // A crew's task board is shown on its Tasks tab, not with the other boards.
+  const boards = useMemo(() => files.filter((f) => f.kind === "board" && !f.rel.startsWith("crews/")), [files]);
   const [newBoard, setNewBoard] = useState(false);
   const [closedDirs, setClosedDirs] = useClosedDirs();
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
@@ -495,7 +573,21 @@ export default function App() {
       await message(String(err), { title: "Could not move", kind: "error" });
     }
   };
-  const groups = useMemo(() => groupSessions(sessions), [sessions]);
+  const { active: activeSessions, groups, recent } = useMemo(() => groupSessions(sessions), [sessions]);
+  const recentHeight = usePaneSize("recent", 180, 60, 600);
+  // The crew list scrolls on its own, so many crews do not push Notes away.
+  const crewsHeight = usePaneSize("crews", 240, 80, 800);
+  const [recentOpen, setRecentOpen] = useSectionOpen("Recent");
+
+  // A session got a new title (named from its prompt, or renamed): its tab follows.
+  useEffect(() => {
+    const un = listen<{ session_id: string; title: string }>("sessions://renamed", (e) => {
+      setTabs((prev) => prev.map((t) => (t.kind === "session" && t.id === e.payload.session_id ? { ...t, title: e.payload.title } : t)));
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   // A session handed its task to a crew (start_crew): show the crew.
   useEffect(() => {
@@ -603,10 +695,28 @@ export default function App() {
     return () => window.removeEventListener("marq:terminal", on);
   });
 
+  // A tag clicked in a note's properties searches for it.
+  useEffect(() => {
+    const on = (e: Event) => openSearch((e as CustomEvent<string>).detail);
+    window.addEventListener("marq:search", on);
+    return () => window.removeEventListener("marq:search", on);
+  });
+
   const openSession = (id: string, title: string) => {
     openTab({ key: `session:${id}`, kind: "session", id, title });
     refresh();
   };
+
+  // The active session after the one shown, so repeated clicks go through them all.
+  const nextActive = () => {
+    if (!activeSessions.length) return;
+    const at = activeSessions.findIndex((s) => active === `session:${s.id}`);
+    const s = activeSessions[(at + 1) % activeSessions.length];
+    openSession(s.id, s.title);
+  };
+
+  const runSchedule = (s: Schedule) =>
+    api.scheduleRun(vault!, s.path).then((id) => openSession(id, s.title ?? s.rel), (e) => void message(String(e), { kind: "error" }));
 
   const openCompare = (ids: string[], title: string) => {
     openTab({ key: `compare:${ids.slice().sort().join(",")}`, kind: "compare", ids, title: `Compare: ${title}` });
@@ -628,6 +738,7 @@ export default function App() {
     const path = await api.createNote(vault!, rel, kind);
     openNote(path, undefined, true);
     refreshFiles();
+    return path;
   };
 
   const createNamed = async (kind: "note" | "crew", name: string) => {
@@ -648,6 +759,7 @@ export default function App() {
       y: e.clientY,
       items: [
         { label: "Open", icon: ExternalLink, onClick: () => openSession(s.id, s.title) },
+        { label: "Rename…", icon: Pencil, onClick: () => setRenamingSession({ id: s.id, title: s.title }) },
         {
           label: "Open origin note",
           icon: CornerUpLeft,
@@ -793,21 +905,46 @@ export default function App() {
   const [showPalette, setShowPalette] = useState(false);
   const [showQuickOpen, setShowQuickOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [renamingSession, setRenamingSession] = useState<{ id: string; title: string } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [treeFocus, setTreeFocus] = useState(false);
+  // A terminal has focus: only ⌘ keys are taken, the rest go to the shell (and zellij or tmux in it).
+  const [termFocus, setTermFocus] = useState(false);
+  useEffect(() => {
+    const h = () => setTermFocus(!!document.activeElement?.closest(".terminal-view"));
+    window.addEventListener("focusin", h);
+    window.addEventListener("focusout", h);
+    return () => {
+      window.removeEventListener("focusin", h);
+      window.removeEventListener("focusout", h);
+    };
+  }, []);
   const [treeCursor, setTreeCursor] = useState<string | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
 
+  const loadConfig = () =>
+    api.readConfig().then((c) => {
+      setKeymap(mergeKeys(c));
+      setSettings(c as Settings);
+      themeFromConfig((c as Settings).appearance?.palette, (c as Settings).appearance?.mode);
+    }, (e) => console.error(e));
+
+  const editConfigFile = () =>
+    api.configPath().then((p) => openTerminal(p.replace(/\/[^/]*$/, ""), "config.toml", `\${EDITOR:-vi} '${p}'`));
+
+  // Settings… in the native menu.
+  useEffect(() => {
+    const un = listen("menu://settings", () => setShowSettings(true));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
   // Reloaded on focus, so edits to config.toml apply without a restart.
   useEffect(() => {
-    const load = () =>
-      api.readConfig().then((c) => {
-        setKeymap(mergeKeys(c));
-        setSettings(c as Settings);
-        themeFromConfig((c as Settings).appearance?.palette, (c as Settings).appearance?.mode);
-      }, (e) => console.error(e));
-    load();
-    window.addEventListener("focus", load);
-    return () => window.removeEventListener("focus", load);
+    loadConfig();
+    window.addEventListener("focus", loadConfig);
+    return () => window.removeEventListener("focus", loadConfig);
   }, []);
 
   const rows = useMemo(() => visibleRows(tree, closedDirs), [tree, closedDirs]);
@@ -852,6 +989,11 @@ export default function App() {
     palette: { label: "Command palette", run: () => setShowPalette(true) },
     "file.open": { label: "Open a note…", run: () => setShowQuickOpen(true) },
     "search.open": { label: "Search notes", run: () => openSearch("") },
+    "knowledge.gardening": {
+      label: "Knowledge: merge session learnings into knowledge notes (daily schedule)",
+      run: () => void api.knowledgeGardening(vault!).then((p) => { refreshFiles(); openNote(p); }),
+    },
+    "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },
     "board.new": { label: "New board", run: () => setNewBoard(true) },
@@ -861,7 +1003,11 @@ export default function App() {
     "tab.close": { label: "Close tab", run: () => active && closeTab(active) },
     "tab.next": { label: "Next tab", run: () => cycleTab(1) },
     "tab.prev": { label: "Previous tab", run: () => cycleTab(-1) },
-    "tab.rename": { label: "Rename terminal tab", run: () => activeTab?.kind === "terminal" && setRenaming(activeTab.key) },
+    "tab.rename": {
+      label: "Rename tab or session",
+      run: () => activeTab?.kind === "terminal" ? setRenaming(activeTab.key)
+        : activeTab?.kind === "session" && setRenamingSession({ id: activeTab.id, title: activeTab.title }),
+    },
     ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`tab.goto.${n}`, {
       label: n === 9 ? "Go to last tab" : `Go to tab ${n}`,
       run: () => {
@@ -896,10 +1042,14 @@ export default function App() {
       run: () => setTheme({ ...theme, palette: PALETTES[(PALETTES.findIndex((p) => p.key === theme.palette) + 1) % PALETTES.length].key }),
     },
     "vault.switch": { label: "Open another vault…", run: () => void pickVault() },
-    "settings.open": {
-      label: "Settings (config.toml)",
-      run: () => api.configPath().then((p) => openTerminal(p.replace(/\/[^/]*$/, ""), "config.toml", `\${EDITOR:-vi} '${p}'`)),
+    "settings.open": { label: "Settings", run: () => setShowSettings(true) },
+    "settings.file": { label: "Settings: edit config.toml", run: editConfigFile },
+    "note.toggleEdit": {
+      label: "Note: switch between preview and edit",
+      run: () => activeTab?.kind === "note" && window.dispatchEvent(new CustomEvent("marq:note-toggle", { detail: activeTab.path })),
     },
+    "session.nextActive": { label: "Go to the next running or waiting session", run: nextActive },
+    "schedule.new": { label: "New schedule…", run: () => setNewSchedule(true) },
   };
 
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -908,9 +1058,11 @@ export default function App() {
     const key = eventKey(e);
     if (!key) return;
     // Dialogs and menus keep their own keys.
-    if (showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || menu || renaming || newBoard) return;
+    if (showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || menu || renaming || renamingSession || newBoard || showSettings || newSchedule) return;
     let cmd: string | undefined;
     if (mode === "normal") {
+      // ⌃T, ⌃P, ⌃G… belong to whatever runs in a terminal; the ⌘ shortcuts still work there.
+      if (!key.includes("Cmd") && (e.target as Element).closest?.(".terminal-view")) return;
       cmd = lookup(keymap.normal, key) ?? (treeFocus ? lookup(TREE_KEYS, key) : undefined);
       // Unmodified keys never steal typing from editors and terminals.
       const typing = (e.target as Element).closest?.("input, textarea, [contenteditable=true], .cm-editor");
@@ -943,7 +1095,7 @@ export default function App() {
   }, [treeCursor, treeFocus]);
 
   // Back into the active tab after a dialog or menu closes, and on tab switches.
-  const dialogOpen = !!(showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || renaming || menu || newBoard);
+  const dialogOpen = !!(showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || renaming || renamingSession || menu || newBoard || showSettings || newSchedule);
   const wasOpen = useRef(false);
   useEffect(() => {
     if (wasOpen.current && !dialogOpen && !treeFocus) requestAnimationFrame(focusContent);
@@ -963,9 +1115,9 @@ export default function App() {
         <div className="welcome-card">
           <div className="logo"><LogoMark size={44} /></div>
           <h1>Marq</h1>
-          <p>Mark up your notes, query them with mq: every note can start a Claude session, and every session comes back as a note.</p>
+          <p>Mark up your notes, query them with mq: every note can start an agent session, and every session comes back as a note.</p>
           <ul className="welcome-points">
-            <li><Sparkles size={14} /> Ask Claude from any heading</li>
+            <li><Sparkles size={14} /> Ask from any heading</li>
             <li><ArrowLeftRight size={14} /> Jump between notes and sessions</li>
             <li><Braces size={14} /> Query notes with mq, live in the preview</li>
           </ul>
@@ -986,6 +1138,7 @@ export default function App() {
           <span className="ellipsis">{vault.split("/").pop()}</span>
           <ChevronsUpDown size={12} className="vault-switch" />
           <button className="theme-btn" title="Theme" onClick={themeMenu}><Palette size={14} /></button>
+          <button className="theme-btn" title="Settings (⌘,)" onClick={(e) => (e.stopPropagation(), setShowSettings(true))}><SettingsIcon size={14} /></button>
         </div>
         <button className="side-search" onClick={() => setShowQuickOpen(true)} title="Open a note (⌘P) or search notes (⇧⌘F)">
           <Search size={13} /> <span>Search</span> <kbd>⌘P</kbd>
@@ -1001,9 +1154,24 @@ export default function App() {
           <button onClick={() => openTerminal(vault)} title="Terminal in the vault"><SquareTerminal size={14} /> Terminal</button>
         </div>
         <div className="side-scroll">
+          <Collapsible title="Active" count={activeSessions.length}
+            icon={activeSessions.length ? <span className={`dot ${activeSessions[0].status}`} /> : undefined}>
+            {activeSessions.map((s) => (
+              <a key={s.id} className={`recent-row ${current?.kind === "session" && current.id === s.id ? "on" : ""}`}
+                onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
+                title={[s.title, s.worktree?.branch, s.started.slice(0, 16).replace("T", " ")].filter(Boolean).join("\n")}>
+                <span className={`dot ${s.status}`} />
+                {s.crew && <Users size={11} className="muted" />}
+                <span className="ellipsis">{s.title}</span>
+                {s.status === "waiting" && <span className="row-badge waiting">needs you</span>}
+                <span className="recent-ago">{ago(s.started)}</span>
+              </a>
+            ))}
+            {activeSessions.length === 0 && <div className="muted small" style={{ padding: "2px 12px 6px" }}>Nothing is running.</div>}
+          </Collapsible>
           {groups.map((g) => (
             <Collapsible key={g.key} title={g.label} count={g.items.length}
-              icon={g.key === "running" ? <span className="dot running" /> : g.key === "waiting" ? <span className="dot waiting" /> : undefined}>
+>
               {g.items.map((s) => (
                 <a key={s.id} className={`session-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
                   onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
@@ -1053,6 +1221,7 @@ export default function App() {
             action={<button className="section-action" title="New crew" onClick={() => setNaming({ kind: "crew", initial: "" })}>
               <Plus size={13} />
             </button>}>
+            {crews.length > 0 && <div className="crew-list" style={{ maxHeight: crewsHeight.size }}>
             {crews.map((f) => {
               const members = crewMembers(f);
               const open = openCrews.has(f.path);
@@ -1085,9 +1254,34 @@ export default function App() {
                 </div>
               );
             })}
+            </div>}
+            {crews.length > 0 && <Resizer axis="y" sign={1} pane={crewsHeight} />}
             {crews.length === 0 && (
               <div className="muted small" style={{ padding: "2px 12px 6px" }}>
                 Sessions that work on one project together. <a onClick={() => setNaming({ kind: "crew", initial: "" })}>New crew</a>
+              </div>
+            )}
+          </Collapsible>
+          <Collapsible title="Schedules" icon={<Timer size={11} />} count={schedules.length} defaultOpen={false}
+            action={<button className="section-action" title="New schedule" onClick={() => setNewSchedule(true)}><Plus size={13} /></button>}>
+            {schedules.map((s) => (
+              <a key={s.path} className={`inbox-row schedule-row ${s.enabled ? "" : "off"} ${current?.kind === "note" && current.path === s.path ? "on" : ""}`}
+                onClick={() => openNote(s.path)} title={`${s.rel}${s.last_run ? `\nLast run ${s.last_run.slice(0, 16).replace("T", " ")}` : ""}`}>
+                {s.running ? <span className="dot running" /> : <Timer size={13} />}
+                <span className="ellipsis">{s.title ?? s.rel}</span>
+                <span className="spacer" />
+                <span className="muted small schedule-when">{scheduleLabel(s)}</span>
+                <button className="icon row-action" title="Run now" disabled={s.running}
+                  onClick={(e) => { e.stopPropagation(); runSchedule(s); }}><Play size={11} /></button>
+                <button className="icon row-action" title={s.enabled ? "Pause" : "Resume"}
+                  onClick={(e) => { e.stopPropagation(); api.scheduleSetEnabled(vault, s.path, !s.enabled).then(refreshFiles); }}>
+                  {s.enabled ? <Pause size={11} /> : <RotateCw size={11} />}
+                </button>
+              </a>
+            ))}
+            {schedules.length === 0 && (
+              <div className="muted small" style={{ padding: "2px 12px 6px" }}>
+                Prompts that run on their own every so often while Marq is open. <a onClick={() => setNewSchedule(true)}>New schedule</a>
               </div>
             )}
           </Collapsible>
@@ -1109,6 +1303,30 @@ export default function App() {
               onDirMenu={dirMenu} onDrop={(from, to) => { move(from, to ? `${to}/` : ""); }} />
           </Collapsible>
         </div>
+        {recent.length > 0 && (
+          <div className="recent-dock">
+            {recentOpen && <Resizer axis="y" sign={-1} pane={recentHeight} />}
+            <a className="section-title" onClick={() => setRecentOpen(!recentOpen)}>
+              <ChevronRight size={11} className={`chev ${recentOpen ? "open" : ""}`} /> Recent
+              <span className="count">{recent.length}</span>
+            </a>
+            {recentOpen && (
+              <div className="recent-list" style={{ height: recentHeight.size }}>
+                {recent.map((s) => (
+                  <a key={s.id} className={`recent-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
+                    onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
+                    title={[s.title, s.worktree?.branch, s.started.slice(0, 16).replace("T", " ")].filter(Boolean).join("\n")}>
+                    <span className={`dot ${s.status}`} />
+                    <span className="ellipsis">{s.title}</span>
+                    {s.review === "pr" && <GitPullRequest size={11} className="muted" />}
+                    {s.review === "done" && <CircleCheck size={11} className="muted" />}
+                    <span className="recent-ago">{ago(s.started)}</span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </aside>
       <Resizer axis="x" sign={1} pane={sidebar} />
       <main>
@@ -1116,7 +1334,7 @@ export default function App() {
           {tabs.map((t) => (
             <div key={t.key} className={`tab ${t.key === active ? "on" : ""}`} onClick={() => setActive(t.key)}
               onAuxClick={(e) => e.button === 1 && closeTab(t.key)}
-              onDoubleClick={() => t.kind === "terminal" && setRenaming(t.key)}>
+              onDoubleClick={() => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }))}>
               {t.kind === "session" ? <MessageSquare size={15} /> : t.kind === "compare" ? <GitCompare size={15} /> : t.kind === "query" ? <Braces size={15} />
                 : t.kind === "crew" ? <Users size={15} /> : t.kind === "terminal" ? <SquareTerminal size={15} />
                 : t.kind === "board" ? <Columns3 size={15} /> : t.kind === "search" ? <Search size={15} />
@@ -1130,7 +1348,7 @@ export default function App() {
           {/* Tabs stay mounted so editor state and session streams survive switching. */}
           {tabs.map((t) => (
             <div key={t.key} className="pane-inner" tabIndex={-1} hidden={t.key !== active}>
-              {t.kind === "note" && <NoteEditor vault={vault} path={t.path} jump={t.jump} fresh={t.fresh} onOpenSession={openSession}
+              {t.kind === "note" && <NoteEditor vault={vault} path={t.path} jump={t.jump} fresh={t.fresh} onOpenSession={openSession} onOpenFile={openFile}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} />}
               {t.kind === "compare" && <CompareView vault={vault} ids={t.ids} sessions={sessions} onOpenSession={openSession} onChanged={refresh} />}
               {t.kind === "session" && <SessionView vault={vault} sessionId={t.id} onOpenOrigin={openNote} onOpenSession={openSession}
@@ -1138,7 +1356,8 @@ export default function App() {
                 onSendExcerpt={(excerpt) => setSending({ excerpt, exclude: t.id })} />}
               {t.kind === "terminal" && <TerminalView id={t.id} cwd={t.cwd} command={t.command} active={t.key === active}
                 onTitle={(title) => setTabs((prev) => prev.map((x) => (x.key === t.key && x.kind === "terminal" && !x.named ? { ...x, title } : x)))} />}
-              {t.kind === "board" && <BoardView vault={vault} path={t.path} onOpenMarkdown={() => openNote(t.path)}
+              {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
+                onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
                 onStartTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }} />}
               {t.kind === "browser" && <BrowserView url={t.url} nonce={t.nonce}
                 onTitle={(title) => setTabs((prev) => prev.map((x) => (x.key === t.key ? { ...x, title } : x)))} />}
@@ -1146,7 +1365,8 @@ export default function App() {
                 onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))} />}
               {t.kind === "query" && <QueryView vault={vault} saved={files.filter((f) => f.kind === "query")} onOpenNote={(p) => openNote(p)} />}
               {t.kind === "crew" && <CrewView vault={vault} crewKey={t.crew} onOpenNote={openNote} onOpenSession={openSession}
-                onSendExcerpt={(excerpt) => setSending({ excerpt })} onOpenCrew={openCrewAt} />}
+                onSendExcerpt={(excerpt) => setSending({ excerpt })} onOpenCrew={openCrewAt}
+                files={files} recent={recentFiles} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")} />}
             </div>
           ))}
           {!current && (
@@ -1223,6 +1443,9 @@ export default function App() {
           onClose={() => setSending(null)}
         />
       )}
+      {newSchedule && vault && (
+        <ScheduleDialog vault={vault} onClose={() => setNewSchedule(false)} onCreated={(p) => { refreshFiles(); openNote(p); }} />
+      )}
       {showNewTask && (
         <NewTaskDialog vault={vault} initialPrompt={taskPrompt}
           onClose={() => { setShowNewTask(false); setTaskPrompt(""); }}
@@ -1244,13 +1467,24 @@ export default function App() {
           hint="Saved as boards/<name>.md with Todo, Doing and Done. Add lists on the board or as ## headings in the Markdown."
           onSubmit={async (v) => openBoard(await api.boardCreate(vault, v))} onClose={() => setNewBoard(false)} />
       )}
+      {showSettings && (
+        <SettingsDialog onSaved={loadConfig} onClose={() => setShowSettings(false)}
+          onOpenFile={() => (setShowSettings(false), void editConfigFile())} />
+      )}
+      {renamingSession && (
+        <NameDialog title="Rename session" label="Title" initial={renamingSession.title} submit="Rename"
+          onSubmit={async (v) => { await api.renameSession(vault, renamingSession.id, v); refresh(); }}
+          onClose={() => setRenamingSession(null)} />
+      )}
       {renaming && (
         <NameDialog title="Rename tab" label="Title" initial={tabs.find((t) => t.key === renaming)?.title ?? ""} submit="Rename"
           onSubmit={async (v) => setTabs((prev) => prev.map((t) => (t.key === renaming && t.kind === "terminal" ? { ...t, title: v, named: true } : t)))}
           onClose={() => setRenaming(null)} />
       )}
     </div>
-    <StatusBar mode={mode} keymap={keymap} treeFocus={treeFocus} />
+    <StatusBar mode={mode} keymap={keymap} treeFocus={treeFocus} termFocus={termFocus}
+      running={activeSessions.filter((s) => s.status === "running").length}
+      waiting={activeSessions.filter((s) => s.status === "waiting").length} onActive={nextActive} />
     </div>
   );
 }

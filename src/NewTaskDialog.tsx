@@ -20,11 +20,11 @@ type Props = {
   initialPrompt?: string;
 };
 
-const MODES = [
+export const MODES = [
   { value: "auto", label: "Auto", hint: "A classifier reviews each action instead of you" },
   { value: "default", label: "Ask", hint: "Edits and commands wait for your approval in the session" },
   { value: "acceptEdits", label: "Accept edits", hint: "File edits run without asking; commands still ask" },
-  { value: "plan", label: "Plan only", hint: "Claude plans but does not change files" },
+  { value: "plan", label: "Plan only", hint: "The agent plans but does not change files" },
 ];
 
 const PROJECT_KEY = "marq.lastProject";
@@ -153,12 +153,12 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           vault={vault}
           cwd={project.trim() || undefined}
           placement="below"
-          placeholder="Describe the task for Claude…  Type / for skills and commands"
+          placeholder="Describe the task…  Type / for skills and commands"
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") start();
           }}
         />
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (empty: Claude names it)" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (empty: named automatically)" />
         <label className="field-label">Project</label>
         <div className="project-row">
           <FolderGit2 size={14} className="muted" />
@@ -179,7 +179,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         <p className="muted small">
           {team
             ? "Starts a crew: a lead forms the team (e.g. impl, reviewer, tester), they agree on a plan, and build, review and test together. Saved in crews/."
-            : "One Claude session. If the task turns out to be large, it can suggest handing it to a crew, and you approve it."}
+            : "One agent session. If the task turns out to be large, it can suggest handing it to a crew, and you approve it."}
         </p>
         {!team && <>
         <label className="check">
@@ -189,7 +189,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         <p className="muted small">
           {worktree
             ? "A git repository gets its own worktree and branch from HEAD, so tasks can run in parallel. Rename the branch later from the Changes panel."
-            : "Claude works directly in the project, on whatever is checked out. Tasks in the same project can get in each other's way."}
+            : "The agent works directly in the project, on whatever is checked out. Tasks in the same project can get in each other's way."}
         </p>
         {worktree && (
           <label className="check">

@@ -5,7 +5,7 @@ type Props = {
   /** Only selections inside this element count. */
   container: RefObject<HTMLElement | null>;
   onSend: (text: string) => void;
-  /** Ask Claude about the selection. */
+  /** Ask the agent about the selection. */
   onAsk?: (text: string) => void;
 };
 
@@ -45,7 +45,7 @@ export function SelectionPopover({ container, onSend, onAsk }: Props) {
     // Keep the selection: a mousedown here would otherwise clear it before the click.
     <div className="selection-popover" style={{ left: at.x, top: at.y }} onMouseDown={(e) => e.preventDefault()}>
       {onAsk && (
-        <button onClick={() => { onAsk(at.text); setAt(null); }}><Sparkles size={13} /> Ask Claude</button>
+        <button onClick={() => { onAsk(at.text); setAt(null); }}><Sparkles size={13} /> Ask</button>
       )}
       <button onClick={() => { onSend(at.text); setAt(null); }}><Send size={13} /> Send to session</button>
     </div>

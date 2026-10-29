@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  AlertCircle, ArrowUp, FileOutput, CornerDownRight, ExternalLink, FileText, FolderGit2, GitBranch, Gavel, Hand, Loader2, Play, ShieldQuestion,
-  UserPlus, Users, X,
+  AlertCircle, ArrowUp, FileOutput, CornerDownRight, Cpu, ExternalLink, FileText, FolderGit2, GitBranch, Gavel, Hand, Loader2, Play,
+  ShieldQuestion, UserPlus, Users, X,
 } from "lucide-react";
-import { api, CrewMessage, CrewState } from "./api";
+import { api, CrewDoc, CrewMessage, CrewState, FileEntry } from "./api";
 import { Md } from "./markdown/Md";
 import { Resizer, usePaneSize } from "./Resizer";
 import { SessionView } from "./SessionView";
-import { CrewTasks } from "./CrewTasks";
+import { BoardView } from "./BoardView";
 import type { Excerpt } from "./SendToSessionDialog";
 import { composing } from "./keys";
 import { useAutoGrow } from "./useAutoGrow";
+import { useStickToBottom } from "./useStickToBottom";
+import { NoteEditor } from "./NoteEditor";
 
 type Props = {
   vault: string;
@@ -21,16 +23,24 @@ type Props = {
   onOpenSession: (id: string, title: string) => void;
   onSendExcerpt: (excerpt: Excerpt) => void;
   onOpenCrew: (rel: string, title: string) => void;
+  /** For the task board: notes a card can link to, and opening or creating them. */
+  files: FileEntry[];
+  recent: string[];
+  onOpenFile: (path: string) => void;
+  onCreateNote: (rel: string) => Promise<string>;
 };
 
 // Each member gets a color for its timeline entries, in roster order.
 const ROLE_COLORS = ["var(--run)", "var(--info)", "var(--accent)", "var(--ok)", "var(--err)"];
 
 const time = (at: string) => at.slice(11, 16);
+
+/** Claude aliases a member can run on; empty follows the crew's model. */
+const MODELS = ["opus", "sonnet", "haiku"];
 const toList = (to: string | string[]) => (Array.isArray(to) ? to : [to]);
 
 /** One project worked on by several sessions that message each other by role. */
-export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExcerpt, onOpenCrew }: Props) {
+export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExcerpt, onOpenCrew, files, recent, onOpenFile, onCreateNote }: Props) {
   const [st, setSt] = useState<CrewState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [to, setTo] = useState<string>("");
@@ -38,9 +48,10 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
   const [sending, setSending] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"timeline" | "tasks" | "docs">("timeline");
+  // A document opened inside the Docs view.
+  const [doc, setDoc] = useState<CrewDoc | null>(null);
   const sessionWidth = usePaneSize("crewSession", 560, 320, 1400);
   const membersWidth = usePaneSize("crewMembers", 220, 160, 400);
-  const bottom = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(inputRef, input, 240);
   // Once loaded, the crew is addressed by id, so the tab keeps working if the note moves.
@@ -54,12 +65,13 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
     load();
     const uns = [
       listen<{ crew_id: string }>("crew://changed", (e) => (!st || e.payload.crew_id === st.id) && load()),
-      ...["claude://turn", "claude://exit", "claude://approval", "vault://changed"].map((ev) => listen(ev, () => load())),
+      ...["session://turn", "session://exit", "session://approval", "vault://changed"].map((ev) => listen(ev, () => load())),
     ];
     return () => uns.forEach((u) => u.then((f) => f()));
   }, [load, st?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [st?.messages.length]);
+  // The timeline opens at its latest message, also when switching back to it.
+  const timelineRef = useStickToBottom<HTMLDivElement>([st?.messages.length]);
 
   // Default the recipient to the first member (usually the lead).
   useEffect(() => {
@@ -100,6 +112,15 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
   const release = async (m: CrewMessage) => {
     try {
       await api.crewRelease(vault, st.id, m.id);
+      load();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const setModel = async (role: string, model: string) => {
+    try {
+      await api.crewSetModel(vault, st.id, role, model);
       load();
     } catch (e) {
       setError(String(e));
@@ -164,6 +185,7 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
               <span className="crew-member-body">
                 <span className="crew-member-role">{m.role}</span>
                 <span className="muted small ellipsis">
+                  {m.model && <span className="crew-model">{m.model}</span>}
                   {m.session_id ? (m.branch ? <><GitBranch size={10} /> {m.branch}</> : m.status) : "starts on its first message"}
                 </span>
               </span>
@@ -185,33 +207,49 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
             <button className={view === "tasks" ? "on" : ""} onClick={() => setView("tasks")}>
               Tasks {openTasks > 0 && <span className="count">{openTasks}</span>}
             </button>
-            <button className={view === "docs" ? "on" : ""} onClick={() => setView("docs")}>
+            <button className={view === "docs" ? "on" : ""} onClick={() => { setView("docs"); setDoc(null); }}>
               Docs {st.docs.length > 0 && <span className="count">{st.docs.length}</span>}
             </button>
           </div>
           {view === "tasks" && (
-            <CrewTasks vault={vault} st={st} color={color} onError={setError} onChanged={load} onOpenNote={(p) => onOpenNote(p)} />
+            <BoardView vault={vault} path={st.tasks_path} files={files} recent={recent} onOpenMarkdown={() => onOpenNote(st.tasks_path)}
+              onOpenFile={onOpenFile} onCreateNote={onCreateNote} onStartTask={() => {}}
+              crew={{ id: st.id, members: st.members.map((m) => m.role) }} />
           )}
-          {view === "docs" && (
+          {view === "docs" && doc && (
+            <div className="crew-doc">
+              <NoteEditor key={doc.path} vault={vault} path={doc.path} onOpenSession={onOpenSession} onSendExcerpt={onSendExcerpt}
+                parents={[{ label: st.title, onClick: () => { setView("timeline"); setDoc(null); } }, { label: "Docs", onClick: () => setDoc(null) }]}
+                onOpenFile={(p) => {
+                  const d = st.docs.find((x) => x.path === p);
+                  if (d) setDoc(d);
+                  else onOpenNote(p);
+                }} />
+            </div>
+          )}
+          {view === "docs" && !doc && (
             <div className="messages">
               <div className="messages-inner">
                 {st.docs.length === 0 && (
                   <p className="muted small">Designs, plans and reports the members save with <code>write_doc</code> show up here. They are kept in the crew's folder and linked from the crew note.</p>
                 )}
                 {st.docs.map((d) => (
-                  <a key={d.path} className="doc-card" onClick={() => onOpenNote(d.path)} title="Open in a tab">
+                  <a key={d.path} className="doc-card" onClick={() => setDoc(d)} title="Open">
                     <FileOutput size={18} />
                     <span className="doc-card-body">
                       <span className="doc-card-title">{d.title ?? d.rel}</span>
                       <span className="muted small mono">{d.rel}</span>
                     </span>
+                    <button className="icon" title="Open in a tab" onClick={(e) => { e.stopPropagation(); onOpenNote(d.path); }}>
+                      <ExternalLink size={13} />
+                    </button>
                   </a>
                 ))}
               </div>
             </div>
           )}
           {view === "timeline" && <>
-          <div className="messages">
+          <div className="messages" ref={timelineRef}>
             <div className="messages-inner">
               {st.messages.length === 0 && (
                 <div className="crew-empty muted">
@@ -265,7 +303,6 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
                   </div>
                 );
               })}
-              <div ref={bottom} />
             </div>
           </div>
           <div className="composer">
@@ -279,7 +316,7 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={`Message ${to || "a member"}…  (⌘↵ to send)`}
-                rows={2}
+                rows={1}
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !composing(e)) send(to, input);
                 }}
@@ -298,6 +335,18 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
               <div className="crew-session-head">
                 <span className="crew-member-role" style={{ color: color(member.role) }}>{member.role}</span>
                 <span className="spacer" />
+                <label className="crew-model-pick" title="The model it runs on from its next turn. Members may also switch with crew_set_model.">
+                  <Cpu size={12} />
+                  <select value={st.members.find((m) => m.role === member.role)?.model ?? ""}
+                    onChange={(e) => setModel(member.role, e.target.value)}>
+                    <option value="">{st.model ? `crew (${st.model})` : "default"}</option>
+                    {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    {(() => {
+                      const own = st.members.find((m) => m.role === member.role)?.model;
+                      return own && !MODELS.includes(own) ? <option value={own}>{own}</option> : null;
+                    })()}
+                  </select>
+                </label>
                 {member.session_id && (
                   <button className="icon" title="Open in its own tab"
                     onClick={() => onOpenSession(member.session_id!, `${st.title} · ${member.role}`)}>

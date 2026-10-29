@@ -29,15 +29,18 @@ Only `sessions/` and dot folders belong to Marq. Everything else can be edited o
 ```yaml
 ---
 id: 0192f0c4-...            # assigned the first time Marq links something to the file
-type: note                  # note | request | session | crew | board | doc
+type: note                  # note | request | session | crew | board | doc | schedule | glossary | knowledge
 title: ...                  # optional, defaults to the first heading or the filename
 created: 2026-10-27T10:12:00+09:00
 updated: 2026-10-27T11:40:00+09:00
-tags: [mq, lsp]
+tags: [mq, lsp]             # or a YAML list; a leading # is dropped
+aliases: [language server]  # other names for the note
 ---
 ```
 
 Files without frontmatter are treated as `type: note`.
+
+Tags show in the preview's properties; click one to search for it. Aliases find the note in Quick Open and count as synonyms of its title in search.
 
 ### Request
 
@@ -69,6 +72,62 @@ any ──you──▶ dropped
 
 The prompt is the body up to `## Result`, followed by each `context:` entry as a `<context source="...">` block.
 
+## Links between notes
+
+Link to another note with `[[Name]]`, where the name is the note's title, file name, vault-relative path (without `.md`) or one of its `aliases:`, ignoring case. `[[Name|shown text]]` changes the text and `[[Name#Heading]]` points into the note. Typing `[[` in the editor suggests notes. Relative Markdown links (`[plan](../docs/plan.md)`) work too and count the same.
+
+In the preview, a link to a note that does not exist yet is dashed; click it to create `notes/<Name>.md`. Moving or renaming a note updates relative links and `[[links]]` that name it by file name or path.
+
+The note's right panel (the panel button in the toolbar) shows, under its sessions:
+
+- **Linked from**: lines in other notes that link here.
+- **Mentioned in**: lines that name the note (its title, an alias or the file name) without linking. The link button turns the mention into `[[Name]]`, keeping the words as written.
+- **Links to** and **Not written yet**: where this note links, and its `[[links]]` that name no note, with a button to create one.
+
+Session logs are left out, since they quote everything. Agents link with `[[Name]]` too, open notes by the same names with `read_note`, and see these lists with `note_links`.
+
+## Glossary
+
+`glossary.md` (or any note with `type: glossary`) lists the words the vault uses for things, so a search for one finds the others. Open it with **Glossary** in the command palette; it is created with an example the first time. Each `## ` heading is a preferred term:
+
+```markdown
+## 認証
+- aliases: auth, authentication, login, ログイン
+- broader: セキュリティ
+- narrower: OAuth
+
+Checking who the user is. Not authorization (認可).
+```
+
+- **aliases**: other words for the same thing. Searching any of them matches all of them, together with notes whose `aliases:` share a word.
+- **narrower**: more specific terms. Searching a term also finds its narrower terms (one level), so 認証 finds OAuth but not the other way round.
+- **broader**, **related**: kept for people and agents reading the glossary.
+
+Search lists what each word was widened to. `tag:name` (or `#name`) keeps notes with that tag, and tags are widened the same way. Agents search the same way, are told to write with the preferred terms, and can tag the documents they save.
+
+## Knowledge notes
+
+Sessions write what they learn under their own `## Learnings`, so the same lesson ends up in many places and old ones never go away. Knowledge notes in `knowledge/` gather it by topic instead:
+
+```markdown
+---
+type: knowledge
+title: "Worktrees"
+project: "~/dev/git/marq"   # the project it applies to; empty for the whole vault
+status: draft               # draft until you mark it reviewed
+sources: [0192f0c5-..., …]  # sessions whose learnings it took in
+---
+Worktrees live in .marq/worktrees/<id> …
+
+## Sources
+
+- [[sessions/2026-10-29-fix-cleanup|Fix the worktree cleanup]] (2026-10-29)
+```
+
+**Knowledge: merge session learnings into knowledge notes** in the command palette sets up a daily [schedule](sessions.md#schedules) that does the merging: it lists the learnings no knowledge note has taken in yet (`list_learnings`), merges them topic by topic into knowledge notes (`write_knowledge`), drops duplicates and what no longer holds, and keeps contradictions with reviewed notes under `## Open questions` instead of overwriting them. Edit the schedule note to change when it runs or what it does; **Run now** on it in the sidebar runs it at once.
+
+Whatever an agent writes is a **draft**: it shows in the Inbox, and **Mark reviewed** in the note's properties marks it checked. A new session is given the knowledge notes for its project (and those for no project), marked draft or reviewed, and reads the ones that bear on its task before starting.
+
 ## Markers in the body
 
 Markers are HTML comments, so other Markdown viewers show nothing. mq sees them as `.html` nodes.
@@ -79,7 +138,7 @@ An anchor ties a session to part of a note. It sits directly under the heading o
 
 ```markdown
 ### How should we design this?
-<!-- claude:anchor id="0192f0c6-..." -->
+<!-- marq:anchor id="0192f0c6-..." -->
 ```
 
 The anchor's scope is its section: from the heading up to the next heading of the same or a higher level. Linked sessions are found through each session's `origin`, so the marker never changes when you run again.
@@ -87,12 +146,14 @@ The anchor's scope is its section: from the heading up to the next heading of th
 ### Result block
 
 ```markdown
-<!-- claude:result session="0192f0c5-..." -->
+<!-- marq:result session="0192f0c5-..." -->
 ...summary...
-<!-- /claude:result -->
+<!-- /marq:result -->
 ```
 
 Marq only rewrites text between these two markers. A request's result block is under `## Result`; an anchor's goes right after its section body.
+
+Notes written by earlier versions use `claude:anchor` and `claude:result`. Marq still reads them, and replaces an old result block with a `marq:` one the next time that session writes back.
 
 ### Pinned mq output
 
@@ -116,6 +177,7 @@ title: Show types on hover
 origin: 0192f0c4-...         # request id or anchor id
 origin_path: requests/2026-10-27-hover.md   # a hint; the id is authoritative
 cwd: ~/dev/git/mq
+project: ~/dev/git/mq         # the worktree's repository, else cwd; knowledge is grouped by it
 model: claude-opus-5-5
 status: done                  # running | done | error | interrupted
 started: 2026-10-27T10:15:00+09:00
@@ -133,7 +195,7 @@ files_changed: [crates/mq-lsp/src/hover.rs]
 ### 👤 User
 ...
 
-### 🤖 Claude
+### 🤖 Assistant
 ...
 
 ```tool:Read

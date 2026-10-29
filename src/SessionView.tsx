@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowUp, CornerUpLeft, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
   FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, NotebookPen, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
+  Forward, MessageSquareReply, MessagesSquare, ExternalLink,
 } from "lucide-react";
-import { api, Approval, ClaudeEvent, SessionInfo, Worktree } from "./api";
+import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
 import { Md } from "./markdown/Md";
 import { ChangesPanel } from "./review/ChangesPanel";
 import { OriginNotePanel } from "./review/OriginNotePanel";
 import { Resizer, usePaneSize } from "./Resizer";
 import { SlashTextarea } from "./SlashTextarea";
+import { useStickToBottom } from "./useStickToBottom";
 import { SelectionPopover } from "./SelectionPopover";
 import type { Excerpt } from "./SendToSessionDialog";
 
@@ -31,7 +33,11 @@ type Item =
   | { kind: "tool"; name: string; arg: string; result?: string }
   | { kind: "info"; text: string; error?: boolean }
   | { kind: "doc"; path: string; title: string; created: boolean }
-  | { kind: "crew"; path: string; title: string };
+  | { kind: "crew"; path: string; title: string }
+  /** Markdown files the turn wrote with the Write tool, shown when it ends. */
+  | { kind: "files"; paths: string[] }
+  /** A message from or to another session. */
+  | { kind: "relay"; dir: "in" | "out" | "reply"; session: string; title: string; reply: boolean; by: string };
 
 /** Tallest the message box grows to before it scrolls, in pixels. */
 const COMPOSER_MAX = 420;
@@ -55,15 +61,18 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
 };
 
 /** Folds stream-json events into display items, attaching each tool result to its call. */
-function toItems(events: ClaudeEvent[]): Item[] {
+function toItems(events: SessionEvent[]): Item[] {
   const items: Item[] = [];
   const byId = new Map<string, Extract<Item, { kind: "tool" }>>();
+  let written: string[] = [];
   for (const e of events) {
     if (e.type === "marq_user") items.push({ kind: "user", text: e.text });
     else if (e.type === "assistant") {
       for (const c of e.message?.content ?? []) {
         if (c.type === "text" && c.text.trim()) items.push({ kind: "text", text: c.text });
         if (c.type === "tool_use") {
+          const file = c.input?.file_path;
+          if (c.name === "Write" && typeof file === "string" && /\.(md|markdown)$/i.test(file) && !written.includes(file)) written.push(file);
           const item = { kind: "tool" as const, name: c.name, arg: toolArg(c.input) };
           byId.set(c.id, item);
           items.push(item);
@@ -78,8 +87,14 @@ function toItems(events: ClaudeEvent[]): Item[] {
       const secs = Math.round((e.duration_ms ?? 0) / 1000);
       const took = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
       items.push({ kind: "info", text: `${e.is_error ? "Failed" : "Done"} in ${took} · ${e.num_turns} turns`, error: e.is_error });
+      if (written.length) items.push({ kind: "files", paths: written });
+      written = [];
     } else if (e.type === "marq_doc") {
       items.push({ kind: "doc", path: e.path, title: e.title, created: e.created !== false });
+    } else if (e.type === "marq_message") {
+      items.push({ kind: "relay", dir: e.by === "reply" ? "reply" : "in", session: e.from, title: e.title, reply: !!e.reply, by: e.by });
+    } else if (e.type === "marq_sent") {
+      items.push({ kind: "relay", dir: "out", session: e.to, title: e.title, reply: !!e.reply, by: e.by });
     } else if (e.type === "marq_crew") {
       items.push({ kind: "crew", path: e.path, title: e.title });
     } else if (e.type === "marq_approval") {
@@ -139,12 +154,12 @@ function ApprovalCard({ a }: { a: Approval }) {
     <div className="approval">
       <div className="approval-head">
         <ShieldQuestion size={15} />
-        <span>{a.title ?? `Claude wants to use ${a.tool_name}`}</span>
+        <span>{a.title ?? `The agent wants to use ${a.tool_name}`}</span>
       </div>
       {a.reason && <div className="muted small">{a.reason}</div>}
       <pre className="approval-detail">{approvalDetail(a)}</pre>
       <div className="approval-actions">
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Tell Claude what to do instead (optional)" />
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What to do instead (optional)" />
         <button className="danger" disabled={busy} onClick={() => answer(false)}><X size={13} /> Deny</button>
         <button disabled={busy} onClick={() => answer(true, true)} title={`Allow ${a.tool_name} for the rest of this session`}>
           Always allow
@@ -176,19 +191,18 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     }
   };
   const [notice, setNotice] = useState<string | null>(null);
-  const [events, setEvents] = useState<ClaudeEvent[]>([]);
+  const [events, setEvents] = useState<SessionEvent[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
     api.sessionEvents(vault, sessionId).then((ev) => alive && setEvents(ev)).catch((e) => setError(String(e)));
-    const un1 = listen<{ session_id: string; event: ClaudeEvent }>("claude://event", (e) => {
+    const un1 = listen<{ session_id: string; event: SessionEvent }>("session://event", (e) => {
       if (e.payload.session_id === sessionId) setEvents((prev) => [...prev, e.payload.event]);
     });
     // Reload on exit so marq_exit (written by the backend, not streamed) shows up.
-    const un2 = listen<{ session_id: string }>("claude://exit", (e) => {
+    const un2 = listen<{ session_id: string }>("session://exit", (e) => {
       if (e.payload.session_id === sessionId) api.sessionEvents(vault, sessionId).then(setEvents);
     });
     return () => {
@@ -200,22 +214,28 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
 
   useEffect(() => {
     loadInfo();
-    const uns = ["claude://turn", "claude://exit", "sessions://changed"].map((ev) => listen(ev, () => loadInfo()));
+    const uns = ["session://turn", "session://exit", "sessions://changed"].map((ev) => listen(ev, () => loadInfo()));
     return () => uns.forEach((u) => u.then((f) => f()));
   }, [vault, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const load = () => api.listApprovals(sessionId).then(setApprovals);
     load();
-    const un = listen<{ session_id: string }>("claude://approval", (e) => e.payload.session_id === sessionId && load());
+    const un = listen<{ session_id: string }>("session://approval", (e) => e.payload.session_id === sessionId && load());
     return () => {
       un.then((f) => f());
     };
   }, [sessionId]);
 
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [events.length, approvals.length]);
+  // Opens at the latest message and follows new ones.
+  const stick = useStickToBottom<HTMLDivElement>([events.length, approvals.length]);
+  const messagesEl = useCallback((el: HTMLDivElement | null) => {
+    messagesRef.current = el;
+    stick(el);
+  }, [stick]);
 
   const meta = events.find((e) => e.type === "marq_meta");
+  const title: string = info?.title ?? meta?.title ?? "session";
   // A turn is running from a prompt until its result.
   const last = [...events].reverse().find((e) => ["marq_user", "result", "marq_exit"].includes(e.type));
   const running = last?.type === "marq_user";
@@ -314,6 +334,31 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     }
   };
 
+  // The title, edited in place after a double-click.
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const renameTo = async () => {
+    const t = editingTitle?.trim();
+    setEditingTitle(null);
+    if (!t || t === title) return;
+    try {
+      await api.renameSession(vault, sessionId, t);
+      await loadInfo();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // Forward what is typed, with the latest answer as context, to another session.
+  const latest = [...events].reverse().find((e) => e.type === "result")?.result as string | undefined;
+  const forward = () => {
+    onSendExcerpt({
+      text: latest?.trim() || input,
+      source: `latest answer in session: ${title}`,
+      from: { id: sessionId, title },
+      instruction: latest?.trim() ? input : "",
+    });
+  };
+
   const openOrigin = async () => {
     const o = await api.sessionOrigin(vault, sessionId);
     if (o) onOpenOrigin(o.path, o.line);
@@ -324,7 +369,15 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     <div className="session">
       <header className="session-head">
         <div className="session-title">
-          <h2 title={meta?.title}>{meta?.title ?? "Session"}</h2>
+          {editingTitle !== null ? (
+            <input className="session-title-input" autoFocus value={editingTitle} onChange={(e) => setEditingTitle(e.target.value)}
+              onBlur={renameTo} onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) renameTo();
+                if (e.key === "Escape") setEditingTitle(null);
+              }} />
+          ) : (
+            <h2 title={`${title}\nDouble-click to rename`} onDoubleClick={() => setEditingTitle(title)}>{meta ? title : "Session"}</h2>
+          )}
           <div className="session-meta">
             <span className={`pill status-${status}`}>{status}</span>
             {worktree ? (
@@ -350,7 +403,8 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             </button>
           )
         )}
-        {info?.review === "done" && !worktree && !running && (
+        {/* Without a worktree the changes panel has no commit and push buttons, so pushing is offered here once a turn ends. */}
+        {info && !worktree && !running && info.review !== "pr" && events.some((e) => e.type === "result") && (
           <button onClick={push} disabled={pushing} title={`git push the branch checked out in ${meta?.cwd ?? "the project"}`}>
             {pushing ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Push
           </button>
@@ -377,9 +431,9 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       )}
       <div className="session-body">
       <div className="session-main">
-      <div className="messages" ref={messagesRef}>
+      <div className="messages" ref={messagesEl}>
         <SelectionPopover container={messagesRef}
-          onSend={(text) => onSendExcerpt({ text, source: `session: ${meta?.title ?? sessionId}` })} />
+          onSend={(text) => onSendExcerpt({ text, source: `session: ${title}`, from: { id: sessionId, title } })} />
         <div className="messages-inner">
           {toItems(events).map((it, i) => {
             switch (it.kind) {
@@ -401,6 +455,37 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
                     </span>
                   </a>
                 );
+              case "files":
+                return (
+                  <div key={i} className="written-files">
+                    {it.paths.map((p) => {
+                      const inVault = p.startsWith(`${vault}/`);
+                      return (
+                        <a key={p} className="doc-card" title={inVault ? "Open in a tab" : "Open with the default app"}
+                          onClick={() => (inVault ? onOpenOrigin(p, 0) : api.openIn(p, "finder").catch((e) => setError(String(e))))}>
+                          <FileText size={18} />
+                          <span className="doc-card-body">
+                            <span className="doc-card-title">{p.split("/").pop()}</span>
+                            <span className="muted small mono ellipsis">Wrote {inVault ? p.slice(vault.length + 1) : p.replace(/^\/Users\/[^/]+/, "~")}</span>
+                          </span>
+                          <ExternalLink size={13} className="muted" />
+                        </a>
+                      );
+                    })}
+                  </div>
+                );
+              case "relay":
+                return (
+                  <a key={i} className={`relay-row ${it.dir}`} onClick={() => onOpenSession(it.session, it.title)} title="Open that session">
+                    {it.dir === "out" ? <Forward size={13} /> : it.dir === "reply" ? <MessageSquareReply size={13} /> : <MessagesSquare size={13} />}
+                    <span className="ellipsis">
+                      {it.dir === "out" ? (it.by === "user" ? "You sent this to " : "Sent to ")
+                        : it.dir === "reply" ? "Reply from " : it.by === "user" ? "Forwarded by you from " : "Message from "}
+                      <b>{it.title}</b>
+                    </span>
+                    {it.reply && <span className="muted small">{it.dir === "out" ? "· the answer comes back here" : "· your answer goes back"}</span>}
+                  </a>
+                );
               case "crew":
                 return (
                   <a key={i} className="doc-card" onClick={() => onOpenCrew?.(it.path, it.title)} title="Open the crew">
@@ -417,7 +502,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           {running && approvals.length === 0 && (
             <div className="thinking"><Loader2 size={14} className="spin" /> Working…</div>
           )}
-          <div ref={bottom} />
         </div>
       </div>
       <div className="composer">
@@ -444,6 +528,10 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
               else if (e.key === "Escape" && running) api.stopSession(sessionId).catch((err) => setError(String(err)));
             }}
           />
+          <button className="icon forward" onClick={forward} disabled={!input.trim() && !latest}
+            title="Send to another session: what you typed, with this session's latest answer. Its answer can come back here.">
+            <Forward size={15} />
+          </button>
           <button className="send" onClick={send} disabled={!input.trim()} title="Send">
             <ArrowUp size={16} />
           </button>

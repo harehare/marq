@@ -25,9 +25,11 @@ type: crew
 title: Improve mq LSP
 project: ~/dev/git/mq       # where members work
 max_hops: 20                # see Hops below
+model: sonnet               # the members' model unless they set their own
 members:
   - role: lead
     worktree: false         # work in the project directory
+    model: opus
   - role: impl
     permission_mode: acceptEdits
   - role: reviewer
@@ -52,6 +54,12 @@ members:
 - A member gets its own worktree on `marq/<role>-<short id>` when the project is a git repository, unless `worktree: false`. Members can read each other's directories.
 - The note is read whenever a message is sent or a member starts, so edits apply from then on.
 
+### Models
+
+Each member runs on its own `model`, else the crew's `model`, else Claude Code's default. Use `opus`, `sonnet`, `haiku` or a full Claude model name; crews do not run on Ollama.
+
+The lead picks a model for each member it adds, and any member can switch one with `crew_set_model` when the work changes (for example, opus for a hard design question, then sonnet for the implementation). The switch is written to the crew note and shown in the timeline. You can also pick a member's model at the top of its session pane in the crew view. A new model applies from the member's next turn.
+
 ### Messages
 
 A member is an ordinary session, listed and reviewed like any other. Members send messages with `crew_send` to a role, to `user`, to `all`, or to several roles at once. A message is delivered only between turns: if the member is in the middle of a turn it waits, and when the turn ends everything waiting arrives together. A member never waits for an answer inside a turn; replies come as new messages.
@@ -66,7 +74,7 @@ Every message from you has hop 0. A message a member sends has the hop of the la
 
 The crew's folder `crews/<name>/` holds the task list and the members' documents.
 
-`crews/<name>/tasks.md` has a section per status (Todo, Doing, Review, Blocked, Done) and a checklist item per task, with notes as nested items:
+`crews/<name>/tasks.md` is a [board](#boards) (`type: board` with `crew: <id>`) with a list per status (Todo, Doing, Review, Blocked, Done) and a card per task, with notes as nested items:
 
 ```markdown
 ## Doing
@@ -75,14 +83,14 @@ The crew's folder `crews/<name>/` holds the task list and the members' documents
   - impl: branch marq/impl-1a2b3c
 ```
 
-Moving an item to another section by hand changes its status. Members take a task by setting it to `doing`, which makes them its owner; if another member is already doing it, that fails, so members working in parallel never pick the same task. Documents members write are saved in the crew's folder and linked from `## Documents` in the crew note.
+Moving a card to another list changes its status; lists you add that are not a status are kept but hold no tasks. Members take a task by setting it to `doing`, which makes them its owner; if another member is already doing it, that fails, so members working in parallel never pick the same task. Documents members write are saved in the crew's folder and linked from `## Documents` in the crew note.
 
 ### The crew view
 
 - **Left**: members with status, unread mail and branch. Click one to show its session on the right, with approvals; double-click to open it in its own tab.
 - **Center**: the timeline of every message, with `ask` and `reply` badges, `queued` until delivered, and held messages. The composer sends to one member or to all.
 - **Header**: the project, **Kick off** and **Edit crew note**. A banner names members waiting for an approval.
-- **Tasks** shows the task list by status, where you can add tasks and change status or owner. **Docs** lists the crew's documents.
+- **Tasks** shows the task list as a board: drag cards between statuses, add cards, link notes, and pick the owner from the members (the new owner is told). Crew boards are not listed under Boards in the sidebar. **Docs** lists the crew's documents.
 
 Not yet: a budget limit, routing rules (for example, every impl result goes to reviewer), and restarting failed members.
 
@@ -104,5 +112,13 @@ A board is a Markdown note, `boards/<name>.md` with `type: board`. Each `## ` he
 Editing the Markdown is editing the board: moving an item under another heading moves the card, items written without `**T<n>**` get an id on the next save, and moving a card into a list named Done checks it. New boards start with Todo, Doing and Done.
 
 The board tab shows the lists as columns (**Board**) or stacked (**List**). Drag cards between and within lists; lists can be added, renamed, moved and removed when empty. A card can start a session whose prompt names the card. **Markdown** opens the note itself.
+
+### Queue
+
+**Queue** in the board's header lets Marq work through a list on its own while it runs. Pick the queue list (e.g. Agent), the list cards move to while a session works on them (Doing) and the one they move to when its turn ends (Review), how many run at once, the project, permissions and model. Lists that do not exist yet are added.
+
+Every 30 seconds Marq takes the cards at the top of the queue list, up to the limit: each moves to the working list, gets a link to the request note it started, and runs like **Start a session**, in its own worktree unless you turn that off. When the session's turn ends the card moves to the review list, unless the session or you moved it elsewhere already. Nothing moves a card to Done: you decide that after checking the result. A card that fails to start goes to the review list with the reason.
+
+The settings are frontmatter keys on the board note (`queue`, `queue_doing`, `queue_review`, `queue_max`, `queue_project`, `queue_model`, `queue_permission_mode`, `queue_worktree`). Nobody watches these sessions start, so with **Ask** permissions they wait for your approval; **Accept edits** or **Auto** lets them get on with it.
 
 Agents read and change boards with `list_boards`, `read_board`, `board_add_card`, `board_update_card` and `board_add_list`. See [Vault tools for agents](tools.md).

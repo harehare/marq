@@ -1,6 +1,6 @@
 //! The user's shell environment. Apps started from Finder or the Dock get a minimal PATH
 //! (`/usr/bin:/bin:/usr/sbin:/sbin`), so Homebrew tools such as `gh`, `node` and `claude`, and
-//! anything Claude runs through Bash, would not be found without this.
+//! anything the agent runs through Bash, would not be found without this.
 
 use std::collections::HashMap;
 use std::path::Path;

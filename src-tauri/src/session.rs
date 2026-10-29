@@ -36,6 +36,13 @@ pub struct SessionMeta {
     pub crew: Option<crate::crew::CrewRef>,
 }
 
+impl SessionMeta {
+    /// The project the session worked on: its worktree's repository, else the directory it ran in.
+    pub fn project(&self) -> &str {
+        self.worktree.as_ref().map_or(&self.cwd, |w| &w.repo)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionInfo {
     #[serde(flatten)]
@@ -115,12 +122,18 @@ fn upgrade(mut e: Value) -> Value {
     e
 }
 
-/// The first `marq_meta` line, with the latest `marq_worktree` line applied.
+/// The first `marq_meta` line, with the latest `marq_worktree`, `marq_model` and `marq_title` lines applied.
 fn meta_of(events: &[Value]) -> Option<SessionMeta> {
     let mut meta: SessionMeta =
         events.first().filter(|e| e["type"] == "marq_meta").and_then(|e| serde_json::from_value(e.clone()).ok())?;
     if let Some(wt) = events.iter().rev().find(|e| e["type"] == "marq_worktree") {
         meta.worktree = serde_json::from_value(wt["worktree"].clone()).ok();
+    }
+    if let Some(m) = events.iter().rev().find(|e| e["type"] == "marq_model") {
+        meta.model = m["model"].as_str().map(str::to_string);
+    }
+    if let Some(t) = events.iter().rev().find_map(|e| (e["type"] == "marq_title").then(|| e["title"].as_str()).flatten()) {
+        meta.title = t.to_string();
     }
     Some(meta)
 }
@@ -311,6 +324,16 @@ pub fn find_origin(vault: &Path, meta: &SessionMeta) -> Option<PathBuf> {
     vault::list_files(vault).into_iter().map(|f| PathBuf::from(f.path)).find(|p| holds(p))
 }
 
+/// Renames a session. Appended like a worktree change, so it is safe while the session runs.
+pub fn set_title(vault: &Path, id: &str, title: &str) -> Result<()> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(Error::Other("the title is empty".into()));
+    }
+    append(&raw_path(vault, id), &serde_json::json!({"type": "marq_title", "title": title}))?;
+    rerender(vault, id)
+}
+
 /// Records a changed worktree, e.g. after the branch was renamed. The log is only appended to,
 /// so this is safe while the session is running and writing to it.
 pub fn update_worktree(vault: &Path, id: &str, wt: &git::Worktree) -> Result<()> {
@@ -328,7 +351,7 @@ pub fn current_worktree(vault: &Path, id: &str) -> Result<Option<git::Worktree>>
     Ok(Some(synced))
 }
 
-/// Whether Claude ever started the session's conversation, so it can be resumed.
+/// Whether the agent ever started the session's conversation, so it can be resumed.
 pub fn has_conversation(events: &[Value]) -> bool {
     events.iter().any(|e| (e["type"] == "system" && e["subtype"] == "init") || e["type"] == "assistant")
 }
@@ -456,7 +479,7 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
     let mut last_role = "";
     let mut role = |t: &mut String, r: &'static str| {
         if last_role != r {
-            t.push_str(if r == "user" { "\n### 👤 User\n\n" } else { "\n### 🤖 Claude\n\n" });
+            t.push_str(if r == "user" { "\n### 👤 User\n\n" } else { "\n### 🤖 Assistant\n\n" });
             last_role = r;
         }
     };
@@ -545,12 +568,13 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
     };
     let q = |s: &str| serde_json::to_string(s).unwrap();
     format!(
-        "---\nid: {}\ntype: session\ntitle: {}\norigin: {}\norigin_path: {}\ncwd: {}\nbranch: {}\nmodel: {}\nstatus: {}\nstarted: {}\nended: {}\ncost_usd: {:.4}\nfiles_changed: [{}]\ndocs: [{}]\n---\n{}\n\n## Transcript\n{}",
+        "---\nid: {}\ntype: session\ntitle: {}\norigin: {}\norigin_path: {}\ncwd: {}\nproject: {}\nbranch: {}\nmodel: {}\nstatus: {}\nstarted: {}\nended: {}\ncost_usd: {:.4}\nfiles_changed: [{}]\ndocs: [{}]\n---\n{}\n\n## Transcript\n{}",
         meta.id,
         q(&meta.title),
         meta.origin,
         q(&meta.origin_path),
         q(&meta.cwd),
+        q(meta.project()),
         meta.worktree.as_ref().map(|w| w.branch.as_str()).unwrap_or(""),
         model,
         status,

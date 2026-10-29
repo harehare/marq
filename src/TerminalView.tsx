@@ -4,7 +4,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "./api";
-import { getSettings, useSettings } from "./settings";
+import { getSettings, quote, useSettings, type Settings } from "./settings";
 
 /** xterm colors from the app's CSS tokens. */
 function themeFromCss(): ITheme {
@@ -25,6 +25,11 @@ function themeFromCss(): ITheme {
   };
 }
 
+/** `[terminal] font`, else the app's monospace font. */
+function fontFamily(t: Settings["terminal"]) {
+  return t?.font ? `${quote(t.font)}, ui-monospace, Menlo, monospace` : getComputedStyle(document.documentElement).getPropertyValue("--font-mono");
+}
+
 /** A login shell (or `command`) in `cwd`. It lives as long as the tab. */
 export function TerminalView({ id, cwd, command, active, onTitle }: {
   id: string; cwd: string; command?: string; active: boolean; onTitle: (title: string) => void;
@@ -41,7 +46,7 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
     const pty = `${id}:${crypto.randomUUID().slice(0, 8)}`;
     const t = getSettings().terminal;
     const term = new Terminal({
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono"),
+      fontFamily: fontFamily(t),
       fontSize: t?.font_size ?? 13,
       cursorStyle: t?.cursor ?? "block",
       cursorBlink: true,
@@ -101,7 +106,7 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-mono");
+    term.options.fontFamily = fontFamily(settings.terminal);
     term.options.fontSize = settings.terminal?.font_size ?? 13;
     term.options.cursorStyle = settings.terminal?.cursor ?? "block";
     fitRef.current?.fit();
@@ -117,7 +122,8 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
   }, [active]);
 
   return (
-    <div className="terminal-view">
+    // The DOM renderer draws runs of text as one span, so the browser shapes ligatures unless this turns them off.
+    <div className={`terminal-view ${settings.terminal?.ligatures === false ? "no-ligatures" : ""}`}>
       <div ref={host} className="terminal-host" />
       {exited && <div className="terminal-exited muted small">The shell exited. Close the tab or open a new terminal.</div>}
     </div>

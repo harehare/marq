@@ -1,24 +1,29 @@
+mod automation;
 mod boards;
-mod claude;
 mod config;
 mod crew;
 mod error;
 mod git;
+mod knowledge;
+mod links;
 mod mq;
 mod organize;
+mod relay;
+mod session;
 mod shell;
 mod tasks;
 mod terminal;
+mod thesaurus;
 mod sidecar;
 mod vault;
 
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem, HELP_SUBMENU_ID};
+use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID};
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
 
-use claude::{SessionInfo, SessionMeta};
+use session::{SessionInfo, SessionMeta};
 use sidecar::{Approval, Runner, Turn};
 use error::Result;
 
@@ -158,7 +163,7 @@ fn ask_suffix(intent: Option<&str>, instruction: Option<&str>) -> String {
     out
 }
 
-/// Starts Claude from the note at `path`: the whole body for a request, otherwise the section at `line`.
+/// Starts a session from the note at `path`: the whole body for a request, otherwise the section at `line`.
 fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: RunOptions) -> Result<Started> {
     let runner = app.state::<Runner>();
     let v = PathBuf::from(vault);
@@ -271,7 +276,43 @@ fn render_context(vault: &Path, text: &str) -> String {
 
 #[tauri::command]
 async fn run_from_note(app: AppHandle, vault: String, path: String, line: usize, options: Option<RunOptions>) -> Result<Started> {
-    blocking(move || start_from_note(app, &vault, &path, line, options.unwrap_or_default())).await
+    let (a, v) = (app.clone(), vault.clone());
+    let started = blocking(move || start_from_note(a, &v, &path, line, options.unwrap_or_default())).await?;
+    // A section's heading or a note's path says little about what was asked: name the session
+    // from its prompt while it runs. Requests keep their own title.
+    if vault::fm_get(&started.content, "type").as_deref() != Some("request") {
+        let id = started.session_id.clone();
+        tauri::async_runtime::spawn(async move { name_session(&app, &vault, &id).await });
+    }
+    Ok(started)
+}
+
+/// Gives a session a short title from its first prompt, written by a small model.
+async fn name_session(app: &AppHandle, vault: &str, id: &str) {
+    let v = PathBuf::from(vault);
+    let Some(prompt) = session::read_events(&v, id).ok().and_then(|e| session::first_prompt(&e)) else { return };
+    let model = session::meta(&v, id).ok().and_then(|m| m.model);
+    match app.state::<Runner>().title(app, &prompt, model.as_deref()).await {
+        Ok(title) => {
+            if session::set_title(&v, id, &title).is_ok() {
+                let _ = app.emit("sessions://changed", id);
+                let _ = app.emit("sessions://renamed", serde_json::json!({"session_id": id, "title": title}));
+            }
+        }
+        Err(e) => eprintln!("marq: could not name the session: {e}"),
+    }
+}
+
+/// Renames a session.
+#[tauri::command]
+async fn rename_session(app: AppHandle, vault: String, session_id: String, title: String) -> Result<()> {
+    blocking(move || {
+        session::set_title(Path::new(&vault), &session_id, &title)?;
+        let _ = app.emit("sessions://changed", &session_id);
+        let _ = app.emit("sessions://renamed", serde_json::json!({"session_id": session_id, "title": title.trim()}));
+        Ok(())
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -311,17 +352,45 @@ async fn auto_title(app: &AppHandle, prompt: &str, fallback: String, model: Opti
 }
 
 /// Creates a request note from the new-task dialog and runs it, so every task is kept as a note.
+/// An untitled task starts under its first line at once and is renamed when the model has named it.
 #[tauri::command]
-async fn new_task(app: AppHandle, vault: String, mut task: NewTask) -> Result<Started> {
-    if task.auto_title {
-        task.title = auto_title(&app, &task.prompt, task.title, task.model.as_deref()).await;
+async fn new_task(app: AppHandle, vault: String, task: NewTask) -> Result<Started> {
+    let rename = task.auto_title.then(|| (task.prompt.clone(), task.model.clone()));
+    let (a, v) = (app.clone(), vault.clone());
+    let (rel, started) = blocking(move || create_task(a, &v, task)).await?;
+    if let Some((prompt, model)) = rename {
+        let id = started.session_id.clone();
+        tauri::async_runtime::spawn(async move {
+            let Ok(title) = app.state::<Runner>().title(&app, &prompt, model.as_deref()).await else { return };
+            let v = Path::new(&vault);
+            if let Err(e) = session::set_title(v, &id, &title).and_then(|_| retitle_request(&v.join(&rel), &title)) {
+                eprintln!("marq: could not rename the task: {e}");
+                return;
+            }
+            let _ = app.emit("sessions://changed", &id);
+            let _ = app.emit("sessions://renamed", serde_json::json!({"session_id": id, "title": title}));
+        });
     }
-    blocking(move || create_task(app, &vault, task)).await
+    Ok(started)
 }
 
-fn create_task(app: AppHandle, vault: &str, task: NewTask) -> Result<Started> {
+fn create_task(app: AppHandle, vault: &str, task: NewTask) -> Result<(String, Started)> {
     let rel = write_request(vault, task)?;
-    start_from_note(app, vault, &rel, 0, RunOptions::default())
+    let started = start_from_note(app, vault, &rel, 0, RunOptions::default())?;
+    Ok((rel, started))
+}
+
+/// Replaces the `title:` in a request note's frontmatter; the file keeps its name.
+fn retitle_request(path: &Path, title: &str) -> Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    let line = format!("title: {}", serde_json::to_string(title).unwrap());
+    let mut done = false;
+    let out: Vec<String> = text
+        .lines()
+        .map(|l| if !done && l.starts_with("title: ") { done = true; line.clone() } else { l.to_string() })
+        .collect();
+    std::fs::write(path, out.join("\n") + "\n")?;
+    Ok(())
 }
 
 /// Writes the task as a request note (`status: todo`) and returns its path relative to the vault.
@@ -398,16 +467,16 @@ async fn save_task(app: AppHandle, vault: String, mut task: NewTask) -> Result<S
 
 /// The session's worktree, with the branch that is checked out now.
 fn worktree_of(vault: &str, session_id: &str) -> Result<git::Worktree> {
-    claude::current_worktree(Path::new(vault), session_id)?
+    session::current_worktree(Path::new(vault), session_id)?
         .ok_or_else(|| error::Error::Other("this session has no worktree".into()))
 }
 
 /// What to diff for a session: its worktree, or else the checkout it ran in.
 fn diff_target(vault: &str, session_id: &str) -> Result<git::Worktree> {
-    if let Some(wt) = claude::current_worktree(Path::new(vault), session_id)? {
+    if let Some(wt) = session::current_worktree(Path::new(vault), session_id)? {
         return Ok(wt);
     }
-    let meta = claude::meta(Path::new(vault), session_id)?;
+    let meta = session::meta(Path::new(vault), session_id)?;
     git::checkout(&vault::expand_home(&meta.cwd))
         .ok_or_else(|| error::Error::Other(format!("{} is not a git repository with a commit", meta.cwd)))
 }
@@ -416,7 +485,7 @@ fn diff_target(vault: &str, session_id: &str) -> Result<git::Worktree> {
 #[tauri::command]
 async fn session_checkout(vault: String, session_id: String) -> Result<Option<git::Worktree>> {
     blocking(move || {
-        let meta = claude::meta(Path::new(&vault), &session_id)?;
+        let meta = session::meta(Path::new(&vault), &session_id)?;
         Ok(git::checkout(&vault::expand_home(&meta.cwd)))
     })
     .await
@@ -446,7 +515,7 @@ async fn session_push(vault: String, session_id: String) -> Result<String> {
 #[tauri::command]
 async fn session_push_cwd(vault: String, session_id: String) -> Result<String> {
     blocking(move || {
-        let meta = claude::meta(Path::new(&vault), &session_id)?;
+        let meta = session::meta(Path::new(&vault), &session_id)?;
         let repo = git::repo_root(&vault::expand_home(&meta.cwd))
             .ok_or_else(|| error::Error::Other(format!("{} is not a git repository", meta.cwd)))?;
         git::push_dir(&repo)
@@ -457,13 +526,13 @@ async fn session_push_cwd(vault: String, session_id: String) -> Result<String> {
 #[tauri::command]
 async fn session_create_pr(app: AppHandle, vault: String, session_id: String, message: String) -> Result<String> {
     blocking(move || {
-        let meta = claude::meta(Path::new(&vault), &session_id)?;
+        let meta = session::meta(Path::new(&vault), &session_id)?;
         let wt = worktree_of(&vault, &session_id)?;
         let footer = format!("Created from Marq session `{session_id}`.");
         let (title, body) = git::pr_text(&message, &meta.title, &footer);
         let url = git::create_pr(&wt, &title, &body)?;
         // A session with an open PR is reviewed there, so it leaves Needs review.
-        let _ = claude::set_review(Path::new(&vault), &session_id, "pr", Some(&url));
+        let _ = session::set_review(Path::new(&vault), &session_id, "pr", Some(&url));
         let _ = app.emit("sessions://changed", &session_id);
         Ok(url)
     })
@@ -477,7 +546,7 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
         if !["done", "open"].contains(&state.as_str()) {
             return Err(error::Error::Other(format!("unknown review state: {state}")));
         }
-        if let Some(path) = claude::set_review(Path::new(&vault), &session_id, &state, None)? {
+        if let Some(path) = session::set_review(Path::new(&vault), &session_id, &state, None)? {
             let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
         }
         let _ = app.emit("sessions://changed", &session_id);
@@ -491,7 +560,7 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
 async fn session_rename_branch(app: AppHandle, vault: String, session_id: String, branch: String) -> Result<git::Worktree> {
     blocking(move || {
         let wt = git::rename_branch(&worktree_of(&vault, &session_id)?, &branch)?;
-        claude::update_worktree(Path::new(&vault), &session_id, &wt)?;
+        session::update_worktree(Path::new(&vault), &session_id, &wt)?;
         let _ = app.emit("sessions://changed", &session_id);
         Ok(wt)
     })
@@ -521,8 +590,64 @@ fn open_with(path: &str, app: &str) -> Result<()> {
 }
 
 #[tauri::command]
-async fn search_text(vault: String, query: String, include_sessions: bool) -> Result<Vec<vault::SearchHit>> {
-    blocking(move || Ok(vault::grep(Path::new(&vault), &query, include_sessions, 200, 20))).await
+async fn search_text(vault: String, query: String, include_sessions: bool) -> Result<serde_json::Value> {
+    blocking(move || {
+        let (hits, q) = vault::search(Path::new(&vault), &query, include_sessions, 200, 20);
+        Ok(serde_json::json!({"hits": hits, "expanded": q.expanded()}))
+    })
+    .await
+}
+
+/// Links into and out of a note, and mentions of it that are not links yet.
+#[tauri::command]
+async fn note_links(vault: String, path: String) -> Result<links::Backlinks> {
+    blocking(move || {
+        let v = Path::new(&vault);
+        let p = vault::resolve(v, &path)?;
+        let rel = p.strip_prefix(v).unwrap_or(&p).to_string_lossy().into_owned();
+        Ok(links::backlinks(&vault::list_files(v), &rel))
+    })
+    .await
+}
+
+/// The note a `[[target]]` names, created under notes/ when there is none yet (`create`).
+#[tauri::command]
+fn wikilink_open(app: AppHandle, vault: String, target: String, create: bool) -> Result<Option<String>> {
+    let v = Path::new(&vault);
+    if let Some(f) = links::resolve(&vault::list_files(v), &target) {
+        return Ok(Some(f.path.clone()));
+    }
+    if !create {
+        return Ok(None);
+    }
+    let p = links::create_for(v, &target)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(Some(p.to_string_lossy().into_owned()))
+}
+
+/// Marks a knowledge note as checked by the user.
+#[tauri::command]
+fn knowledge_review(app: AppHandle, vault: String, path: String) -> Result<()> {
+    let p = vault::resolve(Path::new(&vault), &path)?;
+    knowledge::set_reviewed(&p)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(())
+}
+
+/// The schedule that merges learnings into knowledge notes, created the first time.
+#[tauri::command]
+fn knowledge_gardening(app: AppHandle, vault: String) -> Result<String> {
+    let p = knowledge::ensure_gardening(Path::new(&vault))?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// Opens `glossary.md`, creating it with an example entry first.
+#[tauri::command]
+fn glossary_path(app: AppHandle, vault: String) -> Result<String> {
+    let p = thesaurus::ensure_glossary(Path::new(&vault))?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
 }
 
 /// Saves a query as `queries/<name>.md`: a note whose mq block runs in the preview too. Overwrites.
@@ -570,6 +695,47 @@ fn board_create(app: AppHandle, vault: String, name: String) -> Result<String> {
 }
 
 #[tauri::command]
+fn board_set_queue(app: AppHandle, vault: String, path: String, queue: Option<boards::Queue>) -> Result<()> {
+    on_board(&app, &vault, &path, |p| boards::set_queue(p, queue))
+}
+
+/// The vault the window has open, for the board queues and schedules.
+#[tauri::command]
+fn automation_watch(app: AppHandle, vault: String) {
+    app.state::<automation::Automation>().watch(&vault);
+}
+
+#[tauri::command]
+async fn schedules_list(app: AppHandle, vault: String) -> Result<Vec<serde_json::Value>> {
+    blocking(move || Ok(automation::list(&app, Path::new(&vault)))).await
+}
+
+#[tauri::command]
+fn schedule_create(app: AppHandle, vault: String, title: String, when: String, prompt: String, project: String) -> Result<String> {
+    let p = automation::create(Path::new(&vault), &title, &when, &prompt, &project)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn schedule_run(app: AppHandle, vault: String, path: String) -> Result<String> {
+    blocking(move || {
+        let v = PathBuf::from(&vault);
+        let p = vault::resolve(&v, &path)?;
+        automation::run_schedule(&app, &v, &p)
+    })
+    .await
+}
+
+#[tauri::command]
+fn schedule_set_enabled(app: AppHandle, vault: String, path: String, enabled: bool) -> Result<()> {
+    let p = vault::resolve(Path::new(&vault), &path)?;
+    automation::set_enabled(&p, enabled)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(())
+}
+
+#[tauri::command]
 fn board_read(vault: String, path: String) -> Result<boards::Board> {
     boards::read(&vault::resolve(Path::new(&vault), &path)?)
 }
@@ -612,6 +778,17 @@ fn read_config() -> Result<serde_json::Value> {
 #[tauri::command]
 fn config_path() -> Result<String> {
     Ok(config::ensure()?.to_string_lossy().into_owned())
+}
+
+/// Sets `section.key` values in config.toml; null removes a key.
+#[tauri::command]
+fn write_config(changes: serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    config::write(&changes)
+}
+
+#[tauri::command]
+fn shells() -> Vec<String> {
+    config::shells()
 }
 
 #[tauri::command]
@@ -658,7 +835,7 @@ async fn ollama_models(app: AppHandle) -> Result<serde_json::Value> {
 async fn recent_projects(vault: String) -> Result<Vec<String>> {
     blocking(move || {
         let mut seen = Vec::new();
-        for s in claude::list(Path::new(&vault), None) {
+        for s in session::list(Path::new(&vault), None) {
             let p = s.meta.worktree.as_ref().map(|w| w.repo.clone()).unwrap_or(s.meta.cwd);
             if p != vault && !seen.contains(&p) {
                 seen.push(p);
@@ -669,11 +846,18 @@ async fn recent_projects(vault: String) -> Result<Vec<String>> {
     .await
 }
 
+/// Sends text from one session to another for the user (Send to session), optionally bringing the
+/// answer back to the first.
+#[tauri::command]
+async fn forward_message(app: AppHandle, vault: String, from: String, to: String, text: String, reply: bool) -> Result<()> {
+    blocking(move || relay::send(&app, Path::new(&vault), &from, &to, &text, reply, relay::By::User)).await
+}
+
 #[tauri::command]
 async fn send_message(app: AppHandle, vault: String, session_id: String, text: String) -> Result<()> {
     blocking(move || {
         let v = PathBuf::from(&vault);
-        let meta = claude::meta(&v, &session_id)?;
+        let meta = session::meta(&v, &session_id)?;
         app.state::<Runner>().start(app.clone(), v, meta, text, Turn::Resume)
     })
     .await
@@ -692,15 +876,15 @@ async fn resume_session(app: AppHandle, vault: String, session_id: String) -> Re
         if runner.is_alive(&session_id) {
             return Err(error::Error::Other("the session is still running".into()));
         }
-        let events = claude::read_events(&v, &session_id)?;
-        let meta = claude::meta(&v, &session_id)?;
+        let events = session::read_events(&v, &session_id)?;
+        let meta = session::meta(&v, &session_id)?;
         if !std::path::Path::new(&vault::expand_home(&meta.cwd)).is_dir() {
             return Err(error::Error::Other(format!("the working directory no longer exists: {}", meta.cwd)));
         }
-        if claude::has_conversation(&events) {
+        if session::has_conversation(&events) {
             runner.start(app.clone(), v, meta, CONTINUE_PROMPT.into(), Turn::Resume)
         } else {
-            let prompt = claude::first_prompt(&events).ok_or_else(|| error::Error::Other("no prompt to retry".into()))?;
+            let prompt = session::first_prompt(&events).ok_or_else(|| error::Error::Other("no prompt to retry".into()))?;
             runner.start(app.clone(), v, meta, prompt, Turn::Restart)
         }
     })
@@ -735,7 +919,7 @@ fn list_approvals(runner: State<Runner>, session_id: Option<String>) -> Vec<Appr
 async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, session_id: Option<String>) -> Result<serde_json::Value> {
     let cwd = match (cwd.filter(|c| !c.is_empty()), &session_id) {
         (Some(c), _) => c,
-        (None, Some(id)) => claude::meta(Path::new(&vault), id).map(|m| m.cwd).unwrap_or_else(|_| vault.clone()),
+        (None, Some(id)) => session::meta(Path::new(&vault), id).map(|m| m.cwd).unwrap_or_else(|_| vault.clone()),
         (None, None) => vault.clone(),
     };
     let runner = app.state::<Runner>();
@@ -751,7 +935,7 @@ async fn summarize_session(app: AppHandle, vault: String, session_id: String) ->
 
 #[tauri::command]
 fn session_events(vault: String, session_id: String) -> Result<Vec<serde_json::Value>> {
-    claude::read_events(Path::new(&vault), &session_id)
+    session::read_events(Path::new(&vault), &session_id)
 }
 
 /// Lists sessions. One still marked running without a live process (e.g. after a crash) is
@@ -761,9 +945,9 @@ async fn list_sessions(app: AppHandle, vault: String, origin: Option<String>) ->
     blocking(move || {
         let runner = app.state::<Runner>();
         let v = Path::new(&vault);
-        let mut list = claude::list(v, origin.as_deref());
+        let mut list = session::list(v, origin.as_deref());
         for s in list.iter_mut().filter(|s| s.status == "running" && !runner.is_alive(&s.meta.id)) {
-            if claude::mark_interrupted(v, &s.meta.id).is_ok() {
+            if session::mark_interrupted(v, &s.meta.id).is_ok() {
                 s.status = "interrupted".into();
             }
         }
@@ -780,14 +964,14 @@ async fn delete_session(app: AppHandle, vault: String, session_id: String, remov
 
 fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktree: bool, delete_branch: bool) -> Result<()> {
     let v = Path::new(vault);
-    let meta = claude::meta(v, session_id)?;
+    let meta = session::meta(v, session_id)?;
     let runner = app.state::<Runner>();
     if runner.is_alive(session_id) {
         progress(app, "Stopping the session…");
         runner.stop(app, session_id)?;
     }
     // The branch may have been renamed in the worktree, so delete the one checked out now.
-    let current = if delete_branch { claude::current_worktree(v, session_id).ok().flatten() } else { None };
+    let current = if delete_branch { session::current_worktree(v, session_id).ok().flatten() } else { None };
     if let Some(wt) = current.as_ref().or(meta.worktree.as_ref()) {
         if remove_worktree || delete_branch {
             progress(app, "Removing the worktree…");
@@ -798,7 +982,7 @@ fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktre
         }
     }
     progress(app, "Moving files to the Trash…");
-    if let Some(path) = claude::delete(v, session_id)? {
+    if let Some(path) = session::delete(v, session_id)? {
         let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
     }
     Ok(())
@@ -877,6 +1061,12 @@ async fn crew_send(app: AppHandle, vault: String, crew_id: String, to: String, t
     }).await
 }
 
+/// Sets the model a member runs on from its next turn. An empty model goes back to the crew's.
+#[tauri::command]
+async fn crew_set_model(app: AppHandle, vault: String, crew_id: String, role: String, model: String) -> Result<Option<String>> {
+    blocking(move || crew::set_model(&app, Path::new(&vault), &crew_id, crew::USER, &role, Some(&model))).await
+}
+
 /// Sends the crew's Goal to its first member.
 #[tauri::command]
 async fn crew_kick_off(app: AppHandle, vault: String, crew_id: String) -> Result<()> {
@@ -899,12 +1089,6 @@ async fn new_crew(app: AppHandle, vault: String, title: String, prompt: String, 
         Ok(StartedCrew { rel: c.rel, title: c.title })
     })
     .await
-}
-
-/// Adds a task to the crew's task list as the user.
-#[tauri::command]
-async fn crew_task_add(app: AppHandle, vault: String, crew_id: String, title: String, owner: Option<String>) -> Result<tasks::Task> {
-    blocking(move || crew::task_add(&app, Path::new(&vault), &crew_id, crew::USER, &title, owner.as_deref(), None)).await
 }
 
 /// Changes a task's status or owner as the user. An empty owner unassigns it.
@@ -944,8 +1128,8 @@ async fn session_origin(vault: String, session_id: String) -> Result<Option<Orig
 
 fn find_session_origin(vault: &str, session_id: &str) -> Result<Option<OriginLocation>> {
     let v = PathBuf::from(vault);
-    let Ok(meta) = claude::meta(&v, session_id) else { return Ok(None) };
-    let Some(path) = claude::find_origin(&v, &meta) else { return Ok(None) };
+    let Ok(meta) = session::meta(&v, session_id) else { return Ok(None) };
+    let Some(path) = session::find_origin(&v, &meta) else { return Ok(None) };
     let text = std::fs::read_to_string(&path)?;
     let line = vault::anchors(&text).into_iter().find(|a| a.id == meta.origin).map(|a| a.line).unwrap_or(0);
     Ok(Some(OriginLocation { path: path.to_string_lossy().into_owned(), line }))
@@ -968,14 +1152,21 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         }),
     )?;
     // About: first item of the app menu on macOS, of Help elsewhere.
+    let first = menu.items()?.into_iter().next().and_then(|i| i.as_submenu().cloned());
     let submenu = if cfg!(target_os = "macos") {
-        menu.items()?.into_iter().next().and_then(|i| i.as_submenu().cloned())
+        first.clone()
     } else {
         menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned())
     };
     if let Some(sub) = submenu {
         sub.remove_at(0)?;
         sub.prepend(&about)?;
+    }
+    // Settings…: under About on macOS, at the top of File elsewhere. Opened in the webview (`menu://settings`).
+    if let Some(sub) = first {
+        let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        let at = if cfg!(target_os = "macos") { 1 } else { 0 };
+        sub.insert_items(&[&PredefinedMenuItem::separator(app)?, &settings], at)?;
     }
     // ⌘W closes the tab in the webview, not the window.
     for item in menu.items()? {
@@ -993,12 +1184,19 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 pub fn run() {
     tauri::Builder::default()
         .menu(app_menu)
+        .on_menu_event(|app, e| {
+            if e.id() == "settings" {
+                let _ = app.emit("menu://settings", ());
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Runner::default())
         .manage(terminal::Terminals::default())
+        .manage(automation::Automation::default())
         .setup(|app| {
+            automation::start(app.handle());
             // Resolving `claude` and `node` through the login shell and starting Node take a few
             // seconds, so do it now instead of on the first run.
             let handle = app.handle().clone();
@@ -1010,14 +1208,27 @@ pub fn run() {
             probe_url,
             save_query,
             search_text,
+            glossary_path,
+            note_links,
+            knowledge_review,
+            knowledge_gardening,
+            wikilink_open,
             board_create,
             board_read,
             board_add,
             board_update,
             board_remove,
             board_list,
+            board_set_queue,
+            automation_watch,
+            schedules_list,
+            schedule_create,
+            schedule_run,
+            schedule_set_enabled,
             read_config,
             config_path,
+            write_config,
+            shells,
             terminal_open,
             terminal_write,
             terminal_resize,
@@ -1065,7 +1276,9 @@ pub fn run() {
             crew_send,
             crew_release,
             crew_kick_off,
-            crew_task_add,
+            crew_set_model,
+            forward_message,
+            rename_session,
             crew_task_update,
             new_crew,
         ])

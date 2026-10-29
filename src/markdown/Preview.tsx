@@ -2,9 +2,12 @@ import { createContext, createElement, ReactNode, useContext } from "react";
 import ReactMarkdown, { Components, defaultUrlTransform } from "react-markdown";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import remarkGfm from "remark-gfm";
-import { Sparkles, Pencil, Anchor as AnchorIcon, Bot } from "lucide-react";
+import { Sparkles, Pencil, Anchor as AnchorIcon, Bot, Check } from "lucide-react";
 import { SessionInfo } from "../api";
 import { MqBlock } from "./MqBlock";
+import { resolveLink } from "../links";
+import { api } from "../api";
+import { remarkWikilinks, resolveWiki, useVaultFiles, WIKI_SCHEME } from "../wikilinks";
 import { parseFrontmatter, segments, fenceMeta } from "./segments";
 
 type Props = {
@@ -16,11 +19,13 @@ type Props = {
   onRunAt: (line: number, withOptions?: boolean) => void;
   onEditAt: (line: number) => void;
   onOpenSession: (id: string, title: string) => void;
+  /** Opens a note or board a relative `.md` link points to. */
+  onOpenFile?: (path: string) => void;
   /** Called with the new note text after an mq output is pinned. */
   onPinned?: (text: string) => void;
 };
 
-const urlTransform = (url: string) => (url.startsWith("marq-anchor:") ? url : defaultUrlTransform(url));
+const urlTransform = (url: string) => (url.startsWith("marq-anchor:") || url.startsWith(WIKI_SCHEME) ? url : defaultUrlTransform(url));
 
 function textOf(node: any): string {
   if (!node) return "";
@@ -29,17 +34,29 @@ function textOf(node: any): string {
 }
 
 function Properties({ text }: { text: string }) {
+  const { vault, path } = useContext(PreviewCtx);
   const { fields } = parseFrontmatter(text);
   const get = (k: string) => fields.find(([key]) => key === k)?.[1];
-  const shown = fields.filter(([k]) => !["id", "title", "type", "status", "tags", "sessions"].includes(k) && k);
-  const tags = get("tags")?.replace(/^\[|\]$/g, "").split(",").map((t) => t.trim()).filter(Boolean) ?? [];
+  const shown = fields.filter(([k]) => !["id", "title", "type", "status", "tags", "aliases", "sessions"].includes(k) && k);
+  const list = (k: string) =>
+    get(k)?.replace(/^\[|\]$/g, "").split(",").map((t) => t.trim().replace(/^["'#]+|["']$/g, "")).filter(Boolean) ?? [];
+  const tags = list("tags");
+  const aliases = list("aliases");
   if (!fields.length) return null;
   return (
     <div className="props">
       <div className="props-row">
         {get("type") && <span className={`pill type-${get("type")}`}>{get("type")}</span>}
         {get("status") && <span className={`pill status-${get("status")}`}>{get("status")}</span>}
-        {tags.map((t) => <span key={t} className="tag">#{t}</span>)}
+        {tags.map((t) => (
+          <a key={t} className="tag" title={`Notes tagged ${t}`}
+            onClick={() => window.dispatchEvent(new CustomEvent("marq:search", { detail: `tag:${t}` }))}>#{t}</a>
+        ))}
+        {aliases.length > 0 && <span className="muted small">also: {aliases.join(", ")}</span>}
+        {get("type") === "knowledge" && get("status") === "draft" && (
+          <button className="small-btn" title="An agent wrote or changed this; mark it as checked so agents trust it"
+            onClick={() => void api.knowledgeReview(vault, path)}><Check size={11} /> Mark reviewed</button>
+        )}
       </div>
       {shown.length > 0 && (
         <dl className="props-grid">
@@ -89,8 +106,8 @@ const heading = (tag: string) =>
       <div className="heading" data-line={line}>
         {createElement(tag, {}, children)}
         <span className="heading-actions">
-          <button className="icon accent" title="Ask Claude about this section (⌥-click for options)" onClick={(e) => onRunAt(line, e.altKey)}>
-            <Sparkles size={14} /> Ask Claude
+          <button className="icon accent" title="Ask about this section (⌥-click for options)" onClick={(e) => onRunAt(line, e.altKey)}>
+            <Sparkles size={14} /> Ask
           </button>
           <button className="icon" title="Edit here" onClick={() => onEditAt(line)}>
             <Pencil size={13} />
@@ -127,8 +144,22 @@ function Img({ src, alt }: any) {
   return <img src={imageSrc(src, path)} alt={alt ?? ""} loading="lazy" />;
 }
 
+/** `[[Target]]`: a link to the note it names, or a dashed one that creates the note on click. */
+function WikiLink({ target, children }: { target: string; children: ReactNode }) {
+  const { vault, onOpenFile } = useContext(PreviewCtx);
+  const file = resolveWiki(useVaultFiles(), target);
+  if (file) {
+    return <a className="note-link wikilink" title={file.rel} onClick={() => onOpenFile?.(file.path)}>{children}</a>;
+  }
+  return (
+    <a className="wikilink missing" title={`No note "${target}" yet: click to create notes/${target}.md`}
+      onClick={() => api.wikilinkOpen(vault, target, true).then((p) => p && onOpenFile?.(p))}>{children}</a>
+  );
+}
+
 function Link({ href, children }: any) {
-  const { sessions, onOpenSession } = useContext(PreviewCtx);
+  const { path, sessions, onOpenSession, onOpenFile } = useContext(PreviewCtx);
+  if (href?.startsWith(WIKI_SCHEME)) return <WikiLink target={decodeURIComponent(href.slice(WIKI_SCHEME.length))}>{children}</WikiLink>;
   if (href?.startsWith("marq-anchor:")) {
     const id = href.slice("marq-anchor:".length);
     const linked = sessions.filter((s) => s.origin === id);
@@ -144,6 +175,10 @@ function Link({ href, children }: any) {
       </span>
     );
   }
+  const file = onOpenFile && href ? resolveLink(path, href) : null;
+  if (file) {
+    return <a href={href} className="note-link" onClick={(e) => { e.preventDefault(); onOpenFile!(file); }}>{children as ReactNode}</a>;
+  }
   return <a href={href} target="_blank" rel="noreferrer">{children as ReactNode}</a>;
 }
 
@@ -156,7 +191,7 @@ const COMPONENTS: Components = {
   a: Link,
 };
 
-const PLUGINS = [remarkGfm];
+const PLUGINS = [remarkGfm, remarkWikilinks];
 
 function Segment({ text, line }: { text: string; line: number }) {
   return (
@@ -176,7 +211,9 @@ export function Preview(props: Props) {
     <PreviewCtx.Provider value={props}>
       <article
         className="preview"
-        onDoubleClick={(e) => {
+        // ⌘-click edits there; a plain double-click selects a word as usual.
+        onClick={(e) => {
+          if (!e.metaKey || (e.target as HTMLElement).closest("a, button, input, summary")) return;
           const el = (e.target as HTMLElement).closest("[data-line]");
           if (el) onEditAt(Number(el.getAttribute("data-line")));
         }}
@@ -188,13 +225,13 @@ export function Preview(props: Props) {
           ) : (
             <div key={i} className="result-card">
               <div className="result-head">
-                <Bot size={14} /> Claude result
+                <Bot size={13} /> Result
                 <span className="spacer" />
                 <a onClick={() => onOpenSession(s.session, sessions.find((x) => x.id === s.session)?.title ?? "session")}>
                   Open session →
                 </a>
               </div>
-              <Segment text={s.text} line={s.line} />
+              <div className="result-body"><Segment text={s.text} line={s.line} /></div>
             </div>
           ),
         )}

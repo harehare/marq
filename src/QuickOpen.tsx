@@ -24,13 +24,14 @@ const icon = (f: FileEntry) =>
   f.kind === "board" ? Columns3 : f.kind === "crew" ? Users : f.rel.startsWith("sessions/") ? MessageSquare : FileText;
 
 /** ⌘P: open a note, board or crew by title or path; recent ones first. */
-export function QuickOpen({ files, recent, onOpen, onSearch, onClose }: {
+export function QuickOpen({ files, recent, placeholder, onOpen, onSearch, onClose }: {
   files: FileEntry[];
   /** Paths, most recent first. */
   recent: string[];
+  placeholder?: string;
   onOpen: (f: FileEntry) => void;
   /** Search the text of notes instead. */
-  onSearch: (q: string) => void;
+  onSearch?: (q: string) => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
@@ -46,7 +47,15 @@ export function QuickOpen({ files, recent, onOpen, onSearch, onClose }: {
       return [...rec, ...rest].slice(0, 60);
     }
     return files
-      .map((f) => ({ f, score: Math.max(fuzzy(query, (f.title ?? "").toLowerCase()) + 2, fuzzy(query, f.rel.toLowerCase())) }))
+      // A note's aliases find it like its title.
+      .map((f) => ({
+        f,
+        score: Math.max(
+          fuzzy(query, (f.title ?? "").toLowerCase()) + 2,
+          fuzzy(query, f.rel.toLowerCase()),
+          ...(f.aliases ?? []).map((a) => fuzzy(query, a.toLowerCase()) + 1),
+        ),
+      }))
       .filter((x) => x.score >= 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 60)
@@ -67,13 +76,13 @@ export function QuickOpen({ files, recent, onOpen, onSearch, onClose }: {
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="palette">
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Open a note by title or path…  (⇧↵ searches the text)"
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder ?? "Open a note by title or path…  (⇧↵ searches the text)"}
           onKeyDown={(e) => {
             if (composing(e)) return;
             if (e.key === "Escape") onClose();
             else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) setSel((i) => Math.min(i + 1, shown.length - 1));
             else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) setSel((i) => Math.max(i - 1, 0));
-            else if (e.key === "Enter" && e.shiftKey) { onClose(); onSearch(q); }
+            else if (e.key === "Enter" && e.shiftKey && onSearch) { onClose(); onSearch(q); }
             else if (e.key === "Enter") open(shown[sel]);
             else return;
             e.preventDefault();
@@ -89,7 +98,7 @@ export function QuickOpen({ files, recent, onOpen, onSearch, onClose }: {
               </div>
             );
           })}
-          {q.trim() && (
+          {q.trim() && onSearch && (
             <div className="palette-item search-text" onClick={() => { onClose(); onSearch(q); }}>
               <Search size={14} className="muted" /> <span>Search notes for “{q.trim()}”</span> <kbd>⇧↵</kbd>
             </div>
