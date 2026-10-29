@@ -23,6 +23,7 @@ Moving never overwrites, never leaves the vault, and refuses `sessions/` and dot
 | Tool | Approval | Description |
 | --- | --- | --- |
 | `list_sessions()` | no | Other sessions: id, title, status, working directory, branch |
+| `search_sessions(text, project?, since?, limit?)` | no | Past sessions whose note mentions every word (glossary synonyms too, anywhere in the note), best matches first, each with its note path and three best lines. `project` is part of a directory or repository path, `since` a `YYYY-MM-DD` date. Read a hit with `read_note` |
 | `read_session(session_id)` | no | Another session's status, first prompt and latest result |
 | `send_to_session(session_id, text, reply?)` | yes | Send a message to another session. Messages start with "Message from another Marq session". With `reply` (default true), the answer to it comes back as a new message when that session finishes the turn |
 | `open_preview(url, title?)` | no | Show a dev server or an HTML file in a browser tab; each session has one preview tab, reloaded on every call |

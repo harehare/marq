@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
+use crate::thesaurus::{Query, Thesaurus};
 use crate::{boards, crew, knowledge, links, mq, organize, relay, vault};
 
 /// How a turn reaches the agent.
@@ -66,7 +67,7 @@ fn sidecar_script() -> PathBuf {
 
 const SYSTEM_APPEND: &str = "You are running inside marq, the user's Markdown knowledge base (the vault). \
 The MCP server \"marq\" can search_notes, query_notes (mq queries) and read_note to look up the user's notes, \
-earlier sessions and their learnings for background. \
+earlier sessions and their learnings for background; search_sessions finds past sessions by what was said or done in them. \
 search_notes also finds synonyms from the vault's glossary (glossary.md: preferred terms with aliases, broader and \
 narrower terms) and notes' aliases, and tag:<name> narrows it to notes with that tag. When you write documents or \
 learnings, use the glossary's preferred terms rather than synonyms, and give documents a few tags. \
@@ -617,6 +618,11 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
                 .collect();
             Ok(json!(list))
         }
+        "search_sessions" => {
+            let opt = |k: &str| p[k].as_str().filter(|v| !v.is_empty());
+            let limit = p["limit"].as_u64().unwrap_or(10).clamp(1, 30) as usize;
+            Ok(json!(search_sessions(vault, &s("text"), opt("project"), opt("since"), limit, session)))
+        }
         "read_session" => {
             let id = s("session_id");
             let events = session::read_events(vault, &id)?;
@@ -708,6 +714,47 @@ fn search(vault: &Path, text: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Past sessions whose note mentions every word of `text` (or a synonym), anywhere in it.
+/// Best matches first, each with its three best lines. `project` is a part of the working directory
+/// or repository, `since` a `YYYY-MM-DD` start date.
+fn search_sessions(vault: &Path, text: &str, project: Option<&str>, since: Option<&str>, limit: usize, exclude: &str) -> Vec<Value> {
+    let q = Query::parse(text, &Thesaurus::load(&vault::list_files(vault)));
+    if q.words.is_empty() {
+        return vec![];
+    }
+    let mut hits: Vec<(usize, Value)> = session::list(vault, None)
+        .into_iter()
+        .filter(|x| x.meta.id != exclude)
+        .filter(|x| project.is_none_or(|p| x.meta.project().contains(p)))
+        .filter(|x| since.is_none_or(|d| x.meta.started.as_str() >= d))
+        .filter_map(|x| {
+            let content = std::fs::read_to_string(&x.path).ok()?;
+            if !q.matches_text(&content) {
+                return None;
+            }
+            let mut lines: Vec<(usize, usize, &str)> = content
+                .lines()
+                .enumerate()
+                .map(|(i, l)| (q.line_score(l), i + 1, l))
+                .filter(|(score, ..)| *score > 0)
+                .collect();
+            let matching = lines.len();
+            lines.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let top: Vec<Value> = lines
+                .into_iter()
+                .take(3)
+                .map(|(_, n, l)| json!({"line": n, "text": l.trim().chars().take(240).collect::<String>()}))
+                .collect();
+            let rel = Path::new(&x.path).strip_prefix(vault).unwrap_or(Path::new(&x.path)).to_string_lossy().into_owned();
+            Some((matching, json!({"id": x.meta.id, "title": x.meta.title, "status": x.status, "project": x.meta.project(),
+                "started": x.meta.started, "note": rel, "matching_lines": matching, "matches": top})))
+        })
+        .collect();
+    // list() is newest first and the sort is stable, so ties stay in that order.
+    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    hits.into_iter().take(limit).map(|(_, v)| v).collect()
+}
+
 #[cfg(test)]
 mod tests {
     /// Commands call `spawn` from the main thread, which has no tokio runtime of its own.
@@ -720,6 +767,29 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    #[test]
+    fn finds_sessions_by_words_anywhere_in_the_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path();
+        std::fs::create_dir_all(v.join("sessions/.raw")).unwrap();
+        let meta = |id: &str, started: &str| {
+            format!(r#"{{"type":"marq_meta","id":"{id}","title":"t {id}","origin":"","origin_path":"","cwd":"/work/app","started":"{started}"}}"#)
+        };
+        for (id, started, body) in [
+            ("s-aaaaaaaa", "2026-10-01T10:00:00Z", "hover\n\nlater: the LSP crashed\n"),
+            ("s-bbbbbbbb", "2026-10-20T10:00:00Z", "only hover here\n"),
+        ] {
+            std::fs::write(v.join(format!("sessions/.raw/{id}.jsonl")), meta(id, started) + "\n").unwrap();
+            std::fs::write(v.join(format!("sessions/{}-{}.md", &started[..10], id.rsplit('-').next().unwrap())), body).unwrap();
+        }
+        let hits = super::search_sessions(v, "hover lsp", None, None, 10, "");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["id"], "s-aaaaaaaa");
+        assert!(super::search_sessions(v, "hover", None, Some("2026-10-10"), 10, "").iter().all(|h| h["id"] == "s-bbbbbbbb"));
+        assert!(super::search_sessions(v, "hover", Some("/elsewhere"), None, 10, "").is_empty());
+        assert_eq!(super::search_sessions(v, "hover", None, None, 10, "s-aaaaaaaa").len(), 1);
     }
 
     #[test]

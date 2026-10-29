@@ -198,6 +198,18 @@ impl Query {
         self.words.iter().all(|alts| alts.iter().any(|w| l.contains(w.as_str())))
     }
 
+    /// Whether every set of alternatives occurs somewhere in `text`, not necessarily on one line.
+    pub fn matches_text(&self, text: &str) -> bool {
+        let t = text.to_lowercase();
+        self.words.iter().all(|alts| alts.iter().any(|w| t.contains(w.as_str())))
+    }
+
+    /// How many sets of alternatives occur in `line`.
+    pub fn line_score(&self, line: &str) -> usize {
+        let l = line.to_lowercase();
+        self.words.iter().filter(|alts| alts.iter().any(|w| l.contains(w.as_str()))).count()
+    }
+
     pub fn matches_tags(&self, tags: &[String]) -> bool {
         let tags: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
         self.tags.iter().all(|alts| alts.iter().any(|a| tags.contains(a)))

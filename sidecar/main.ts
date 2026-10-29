@@ -251,6 +251,9 @@ function vaultServer(sessionId: string, crew: boolean) {
         { path: z.string() }, async (a) => text(await rpc("trash_note", { ...a, session: sessionId }))),
       tool("list_sessions", "List the user's other sessions in Marq (id, title, status, working directory), most recent first.",
         {}, async () => text(await rpc("list_sessions", { session: sessionId }))),
+      tool("search_sessions", "Search past sessions by text (words also match their glossary synonyms): sessions whose log mentions every word, best matches first, each with its note path and best lines. project narrows it to a directory or repository (part of its path), since to sessions started on or after a YYYY-MM-DD date. Read a hit with read_note on its note path.",
+        { text: z.string(), project: z.string().optional(), since: z.string().optional(), limit: z.number().optional() },
+        async (a) => text(await rpc("search_sessions", { ...a, session: sessionId }))),
       tool("read_session", "Read another session's latest result and status, to coordinate with it or reuse its findings.",
         { session_id: z.string() }, async (a) => text(await rpc("read_session", { ...a, session: sessionId }))),
       tool("send_to_session",
@@ -268,7 +271,7 @@ function vaultServer(sessionId: string, crew: boolean) {
 // move_note and trash_note change the user's notes, so they ask too.
 // Crew messages are pre-approved too: the crew's hop limit, not an approval card, keeps them in check.
 // crew_add_member asks, since every member is another session to pay for.
-const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "list_sessions", "read_session",
+const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
   "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list", "open_preview"]
   .map((t) => `mcp__marq__${t}`);
