@@ -59,6 +59,17 @@ A few things worth knowing:
 - Without `-A`, `select(...)` yields `None` for non-matching nodes instead of dropping them. Inside the app, queries run on the node array and the `None`s are dropped.
 - Nodes carry `position` (line and column), which the editor uses to jump to a result's source.
 
+## Run agent on results
+
+The sparkle button on an mq block and **Run agent** in the Query tab open the New task dialog with the results. A query can carry its own agent prompt: the field under the query is saved with it as `agent:` in `queries/<name>.md`, and **One session per file** as `agent_each: true`. Both prefill the dialog, and a [schedule](sessions.md#only-when-a-query-has-results) can run the query on its own and start the agent only when it finds something.
+
+```yaml
+type: query
+glob: "requests/*.md"
+agent: "Fix each of these and open a pull request."
+agent_each: true
+```
+
 ## Picking what an agent sees
 
 Since everything is Markdown, you choose the context instead of pasting whole files:
@@ -72,6 +83,7 @@ Since everything is Markdown, you choose the context instead of pasting whole fi
       from: notes/design.md
   ```
 
+- **Run agent.** The sparkle button on an mq block, and **Run agent** in the Query tab, open the New task dialog with the results. Your prompt comes first, then the query and its results. With results from several files (up to 10), choose one session for all of them or one session per file. Results over 40,000 characters are cut, and the agent can read the files itself.
 - **A selection.** Select text in a note or a session, and choose **Send to session** (see [Sessions](sessions.md)).
 - **A section.** **Ask** on a heading sends that section.
 - **From the agent's side.** Agents can run read-only queries over the vault with `query_notes`. See [Vault tools for agents](tools.md).

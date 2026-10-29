@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Play, RotateCw, FileText, AlertTriangle, Loader2, Pin } from "lucide-react";
+import { Play, RotateCw, FileText, AlertTriangle, Loader2, Pin, Sparkles } from "lucide-react";
 import { api, FileResult } from "../api";
 import { Md } from "./Md";
+import { fmValue, queryContext, runAgent } from "../queryContext";
 
 type Props = {
   vault: string;
@@ -78,6 +79,12 @@ export function MqBlock({ vault, notePath, noteText, query, meta, line, onPinned
             <Pin size={13} />
           </button>
         )}
+        <button className="icon" title="Start an agent on these results" disabled={!count}
+          onClick={() => state.results && runAgent(queryContext(vault, query, meta.input, state.results, {
+            prompt: fmValue(noteText, "agent"), perFile: fmValue(noteText, "agent_each") === "true",
+          }))}>
+          <Sparkles size={13} />
+        </button>
         <button className="icon" title="Run again" onClick={() => setRuns((n) => n + 1)}>
           {runs ? <RotateCw size={13} /> : <Play size={13} />}
         </button>

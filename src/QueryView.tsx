@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   Play, Inbox, Lightbulb, Terminal, FileText, AlertCircle, ListTodo, Columns3, Heading, Link2, MessageSquareWarning, NotebookPen, Code2,
-  Save, Trash2, Bookmark, Loader2,
+  Save, Trash2, Bookmark, Loader2, Sparkles,
 } from "lucide-react";
 import { api, FileEntry, FileResult, INBOX_QUERY } from "./api";
 import { Md } from "./markdown/Md";
 import { composing } from "./keys";
+import { fmValue, queryContext, runAgent } from "./queryContext";
 
-type Query = { query: string; glob: string; aggregate: boolean };
+type Query = { query: string; glob: string; aggregate: boolean; agent?: string; agentEach?: boolean };
 
 const OPEN_ITEMS = "select(.list.checked == false)";
 
@@ -31,7 +32,10 @@ function parseSaved(text: string): Query | null {
   const query = text.match(/```mq[^\n]*\n([\s\S]*?)\n```/)?.[1];
   if (!query) return null;
   const glob = fm("glob") ?? "**/*.md";
-  return { query, glob: glob.startsWith('"') ? JSON.parse(glob) : glob, aggregate: fm("aggregate") !== "false" };
+  return {
+    query, glob: glob.startsWith('"') ? JSON.parse(glob) : glob, aggregate: fm("aggregate") !== "false",
+    agent: fmValue(text, "agent"), agentEach: fm("agent_each") === "true",
+  };
 }
 
 type Props = { vault: string; saved: FileEntry[]; onOpenNote: (path: string) => void };
@@ -41,6 +45,9 @@ export function QueryView({ vault, saved, onOpenNote }: Props) {
   const [glob, setGlob] = useState(PRESETS[0].glob);
   const [aggregate, setAggregate] = useState(true);
   const [raw, setRaw] = useState(false);
+  // What an agent started from the results is told, saved with the query.
+  const [agent, setAgent] = useState("");
+  const [agentEach, setAgentEach] = useState(false);
   const [results, setResults] = useState<FileResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [current, setCurrent] = useState<string>(PRESETS[0].name);
@@ -84,6 +91,8 @@ export function QueryView({ vault, saved, onOpenNote }: Props) {
     setQuery(q.query);
     setGlob(q.glob);
     setAggregate(q.aggregate);
+    setAgent(q.agent ?? "");
+    setAgentEach(!!q.agentEach);
     run(q);
   };
 
@@ -95,7 +104,7 @@ export function QueryView({ vault, saved, onOpenNote }: Props) {
 
   const save = async (name: string) => {
     try {
-      await api.saveQuery(vault, name, query, glob, aggregate);
+      await api.saveQuery(vault, name, query, glob, aggregate, agent, agentEach);
       setCurrent(name);
       setSaving(null);
     } catch (e) {
@@ -157,10 +166,20 @@ export function QueryView({ vault, saved, onOpenNote }: Props) {
                   }} />
               </span>
             )}
+            <button onClick={() => results && runAgent(queryContext(vault, query, glob, results, { prompt: agent, perFile: agentEach }))}
+              disabled={running || count === 0} title="Start an agent on these results">
+              <Sparkles size={13} /> Run agent
+            </button>
             <button className="primary" onClick={() => run()} disabled={running}>
               {running ? <Loader2 size={13} className="spin" /> : <Play size={13} />} {running ? "Running…" : "Run"}
             </button>
           </div>
+        </div>
+        <div className="query-agent">
+          <Sparkles size={13} />
+          <input value={agent} onChange={(e) => setAgent(e.target.value)}
+            placeholder="Agent prompt for the results (saved with the query; scheduled runs use it too)" />
+          <label className="check"><input type="checkbox" checked={agentEach} onChange={(e) => setAgentEach(e.target.checked)} /> One session per file</label>
         </div>
         {error && <div className="banner error"><AlertCircle size={14} /><pre>{error}</pre></div>}
         {running ? (

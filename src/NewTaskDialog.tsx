@@ -6,6 +6,7 @@ import { api } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
 import { useAutoGrow } from "./useAutoGrow";
 import { ModelSelect } from "./ModelSelect";
+import { QueryContext } from "./queryContext";
 
 type Props = {
   vault: string;
@@ -18,7 +19,12 @@ type Props = {
   /** A task run on several models; the session ids to compare. */
   onStartedCompare: (ids: string[], title: string) => void;
   initialPrompt?: string;
+  /** mq results to give the agent along with the prompt, in one session or one per file. */
+  context?: QueryContext;
 };
+
+/** More sessions than this in one go is more likely a mistake than a plan. */
+const MAX_FANOUT = 10;
 
 export const MODES = [
   { value: "auto", label: "Auto", hint: "A classifier reviews each action instead of you" },
@@ -42,8 +48,8 @@ function stored(key: string, fallback: string) {
 }
 
 /** Starts a task. It is saved as a request note first, so the task stays in the knowledge base. */
-export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSaved, onStartedCompare, initialPrompt = "" }: Props) {
-  const [prompt, setPrompt] = useState(initialPrompt);
+export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSaved, onStartedCompare, initialPrompt = "", context }: Props) {
+  const [prompt, setPrompt] = useState(initialPrompt || context?.prompt || "");
   const [title, setTitle] = useState("");
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState(() => stored(PROJECT_KEY, ""));
@@ -55,6 +61,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
   // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
+  // With mq results from several files: one session for all of them, or one per file.
+  const [perFile, setPerFile] = useState(!!context?.perFile);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -79,6 +87,10 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   };
 
   const comparing = worktree && !team && extra.length > 0;
+  const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !team && !comparing;
+  const splitting = canSplit && perFile;
+  // The agent gets the instruction, then the results; a saved request keeps both.
+  const withContext = (text: string, results = context?.all) => (results ? `${text.trim()}\n\n${results}` : text);
   const derivedTitle = title.trim() || prompt.trim().split("\n")[0].slice(0, 60);
 
   const start = async () => {
@@ -94,7 +106,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         localStorage.setItem(WORKTREE_KEY, String(worktree));
       } catch {}
       if (team) {
-        const c = await api.newCrew(vault, { title: derivedTitle, prompt, project, autoTitle: !title.trim() });
+        const c = await api.newCrew(vault, { title: derivedTitle, prompt: withContext(prompt), project, autoTitle: !title.trim() });
         onStartedCrew(c.rel, c.title);
         onClose();
         return;
@@ -102,15 +114,29 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
       if (comparing) {
         const r = await api.newTaskCompare(
           vault,
-          { title: derivedTitle, prompt, project, permissionMode: mode, carryChanges: carry, worktree, autoTitle: !title.trim() },
+          { title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, carryChanges: carry, worktree, autoTitle: !title.trim() },
           [model, ...extra],
         );
         onStartedCompare(r.sessions.map((x) => x.session_id), r.sessions[0]?.title ?? derivedTitle);
         onClose();
         return;
       }
+      if (splitting && context) {
+        let first: { session_id: string; title: string } | undefined;
+        for (const [i, each] of context.each.entries()) {
+          setStage(`Starting session ${i + 1} of ${context.each.length}…`);
+          const t = await api.newTask(vault, {
+            title: `${derivedTitle} · ${context.names[i]}`, prompt: withContext(prompt, each), project, permissionMode: mode, model,
+            carryChanges: carry, worktree, autoTitle: false,
+          });
+          first ??= t;
+        }
+        if (first) onStarted(first.session_id, first.title);
+        onClose();
+        return;
+      }
       const started = await api.newTask(vault, {
-        title: derivedTitle, prompt, project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
+        title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
       });
       onStarted(started.session_id, started.title);
       onClose();
@@ -127,7 +153,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     setStage("Saving the request…");
     try {
       const rel = await api.saveTask(vault, {
-        title: derivedTitle, prompt, project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
+        title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
       });
       onSaved(rel);
       onClose();
@@ -153,11 +179,27 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           vault={vault}
           cwd={project.trim() || undefined}
           placement="below"
-          placeholder="Describe the task…  Type / for skills and commands"
+          placeholder={context ? "What should the agent do with these results?  Type / for skills and commands" : "Describe the task…  Type / for skills and commands"}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") start();
           }}
         />
+        {context && (
+          <div className="query-context">
+            <p className="muted small">
+              <Sparkles size={12} /> {context.items} mq result{context.items === 1 ? "" : "s"} from {context.files} file{context.files === 1 ? "" : "s"} go to the agent after your prompt.
+            </p>
+            {context.files > 1 && (
+              <div className="modes">
+                <button className={`mode ${!splitting ? "on" : ""}`} onClick={() => setPerFile(false)}>One session</button>
+                <button className={`mode ${splitting ? "on" : ""}`} onClick={() => setPerFile(true)} disabled={!canSplit}
+                  title={canSplit ? "" : `Up to ${MAX_FANOUT} files, and not for a team or a comparison`}>
+                  One session per file ({context.files})
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (empty: named automatically)" />
         <label className="field-label">Project</label>
         <div className="project-row">
@@ -236,7 +278,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             </button>
           )}
           <button className="primary" onClick={start} disabled={!prompt.trim() || busy}>
-            <Sparkles size={14} /> {comparing ? `Start ${extra.length + 1} runs` : "Start"} ⌘↵
+            <Sparkles size={14} /> {comparing ? `Start ${extra.length + 1} runs` : splitting ? `Start ${context!.files} sessions` : "Start"} ⌘↵
           </button>
         </div>
       </div>

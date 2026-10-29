@@ -252,7 +252,7 @@ pub fn ensure_gardening(vault: &Path) -> Result<PathBuf> {
     });
     match existing {
         Some(f) => Ok(PathBuf::from(f.path)),
-        None => crate::automation::create(vault, "Knowledge gardening", "1d", GARDENING_PROMPT, ""),
+        None => crate::automation::create(vault, "Knowledge gardening", "1d", GARDENING_PROMPT, "", ""),
     }
 }
 

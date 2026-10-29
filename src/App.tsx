@@ -24,6 +24,7 @@ import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
 import { DEFAULT_KEYS, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { QueryContext, RUN_AGENT_EVENT } from "./queryContext";
 import { CompareView } from "./review/CompareView";
 import { LogoMark } from "./Logo";
 import { Resizer, usePaneSize } from "./Resizer";
@@ -364,6 +365,8 @@ export default function App() {
   const [active, setActive] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [taskPrompt, setTaskPrompt] = useState("");
+  // mq results the New task dialog hands to the agent, from a Run agent button.
+  const [taskContext, setTaskContext] = useState<QueryContext | null>(null);
   const [sending, setSending] = useState<{ excerpt: Excerpt; exclude?: string } | null>(null);
   const sidebar = usePaneSize("sidebar", 300, 200, 600);
   const [naming, setNaming] = useState<{ kind: "note" | "crew"; initial: string } | null>(null);
@@ -701,6 +704,11 @@ export default function App() {
     window.addEventListener("marq:search", on);
     return () => window.removeEventListener("marq:search", on);
   });
+  useEffect(() => {
+    const on = (e: Event) => { setTaskContext((e as CustomEvent<QueryContext>).detail); setShowNewTask(true); };
+    window.addEventListener(RUN_AGENT_EVENT, on);
+    return () => window.removeEventListener(RUN_AGENT_EVENT, on);
+  }, []);
 
   const openSession = (id: string, title: string) => {
     openTab({ key: `session:${id}`, kind: "session", id, title });
@@ -716,7 +724,10 @@ export default function App() {
   };
 
   const runSchedule = (s: Schedule) =>
-    api.scheduleRun(vault!, s.path).then((id) => openSession(id, s.title ?? s.rel), (e) => void message(String(e), { kind: "error" }));
+    api.scheduleRun(vault!, s.path).then(
+      (id) => (id ? openSession(id, s.title ?? s.rel) : void message("The schedule's query found nothing, so no session was started.")),
+      (e) => void message(String(e), { kind: "error" }),
+    );
 
   const openCompare = (ids: string[], title: string) => {
     openTab({ key: `compare:${ids.slice().sort().join(",")}`, kind: "compare", ids, title: `Compare: ${title}` });
@@ -1444,11 +1455,11 @@ export default function App() {
         />
       )}
       {newSchedule && vault && (
-        <ScheduleDialog vault={vault} onClose={() => setNewSchedule(false)} onCreated={(p) => { refreshFiles(); openNote(p); }} />
+        <ScheduleDialog vault={vault} queries={files.filter((f) => f.kind === "query")} onClose={() => setNewSchedule(false)} onCreated={(p) => { refreshFiles(); openNote(p); }} />
       )}
       {showNewTask && (
-        <NewTaskDialog vault={vault} initialPrompt={taskPrompt}
-          onClose={() => { setShowNewTask(false); setTaskPrompt(""); }}
+        <NewTaskDialog vault={vault} initialPrompt={taskPrompt} context={taskContext ?? undefined}
+          onClose={() => { setShowNewTask(false); setTaskPrompt(""); setTaskContext(null); }}
           onStarted={(id, title) => { refresh(); openSession(id, title); }}
           onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); }}
           onSaved={(rel) => { refresh(); openNote(`${vault}/${rel}`); }}

@@ -4,7 +4,8 @@
 //! starts a session for each card put there, up to its limit; the card moves to the queue's doing
 //! list and, when the session's turn ends, on to its review list. A schedule is a note in
 //! `schedules/` (`type: schedule`) whose body is the prompt; it runs `every` so long, or daily `at`
-//! a time, as a request note like any other task.
+//! a time, as a request note like any other task. With `query:` naming a saved query note, it runs
+//! the query first and starts a session only when there are results, giving them to the agent.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::boards::{self, Change, Queue};
 use crate::error::{Error, Result};
-use crate::{vault, NewTask, RunOptions};
+use crate::{mq, vault, NewTask, RunOptions};
 
 const TICK: Duration = Duration::from_secs(30);
 
@@ -256,38 +257,77 @@ fn is_due(text: &str, now: DateTime<Local>) -> bool {
     enabled(text) && next_run(text).is_some_and(|t| t <= now)
 }
 
-/// Starts the schedule's prompt as a new request note. Returns the session id.
-pub fn run_schedule(app: &AppHandle, vault: &Path, path: &Path) -> Result<String> {
+/// Most sessions one run starts when it gives each file of results its own.
+const MAX_SESSIONS: usize = 10;
+
+/// Starts the schedule's prompt as a new request note, or for a schedule with a `query:` one per
+/// run of it with results. Returns the first session id, or `None` when the query found nothing.
+pub fn run_schedule(app: &AppHandle, vault: &Path, path: &Path) -> Result<Option<String>> {
     let text = std::fs::read_to_string(path)?;
     let now = vault::now();
     // Recorded first, so a run that fails to start is not retried every tick.
     std::fs::write(path, vault::fm_set(&text, "last_run", &now))?;
     let title = vault::fm_get(&text, "title").unwrap_or_else(|| rel(vault, path));
+    let get = |k: &str| vault::fm_get(&text, k).filter(|v| !v.is_empty());
     let prompt = vault::split_frontmatter(&text).1.trim().to_string();
-    if prompt.is_empty() {
+    let stamp = format!("{title} · {}", &now[..16].replace('T', " "));
+
+    // (title, prompt) of each session to start.
+    let mut runs = vec![(stamp.clone(), prompt.clone())];
+    if let Some(query) = get("query") {
+        let saved = mq::read_saved(&std::fs::read_to_string(vault::resolve(vault, &query)?)?)
+            .ok_or_else(|| Error::Other(format!("{query} has no mq block")))?;
+        let results = mq::eval(vault, &saved.query, None, Some(&saved.glob), None, saved.aggregate)?;
+        if results.is_empty() {
+            return Ok(None);
+        }
+        let instruction = if prompt.is_empty() { saved.agent.clone().unwrap_or_default() } else { prompt };
+        if instruction.is_empty() {
+            return Err(Error::Other("the schedule has no prompt; write it below the frontmatter or give the query an agent prompt".into()));
+        }
+        let (all, each) = mq::prompt_context(vault, &saved.query, &saved.glob, &results);
+        let split = get("each").map_or(saved.each, |v| v == "true") && results.len() > 1;
+        runs = if split {
+            results
+                .iter()
+                .zip(each)
+                .take(MAX_SESSIONS)
+                .map(|(r, ctx)| {
+                    let file = r.file.as_deref().map_or_else(String::new, |f| rel(vault, Path::new(f)));
+                    (format!("{stamp} · {file}"), format!("{instruction}\n\n{ctx}"))
+                })
+                .collect()
+        } else {
+            vec![(stamp, format!("{instruction}\n\n{all}"))]
+        };
+    } else if prompt.is_empty() {
         return Err(Error::Other("the schedule has no prompt; write it below the frontmatter".into()));
     }
-    let get = |k: &str| vault::fm_get(&text, k).filter(|v| !v.is_empty());
-    let task = NewTask {
-        title: format!("{title} · {}", &now[..16].replace('T', " ")),
-        prompt,
-        project: get("project").unwrap_or_default(),
-        permission_mode: get("permission_mode"),
-        model: get("model"),
-        carry_changes: false,
-        worktree: get("worktree").as_deref() == Some("true"),
-        auto_title: false,
-    };
+
     let v = vault.to_string_lossy();
-    let request = crate::write_request(&v, task)?;
-    let started = crate::start_from_note(app.clone(), &v, &request, 0, RunOptions::default())?;
-    let text = std::fs::read_to_string(path)?;
-    std::fs::write(path, vault::fm_set(&text, "last_session", &started.session_id))?;
-    app.state::<Automation>().runs.lock().unwrap().insert(started.session_id.clone(), Run::Schedule { path: path.to_path_buf() });
-    let _ = app.emit("vault://changed", json!({"path": path}));
-    let _ = app.emit("sessions://changed", &started.session_id);
-    let _ = app.emit("automation://started", json!({"session_id": started.session_id, "title": started.title, "from": rel(vault, path)}));
-    Ok(started.session_id)
+    let mut first = None;
+    for (title, prompt) in runs {
+        let task = NewTask {
+            title,
+            prompt,
+            project: get("project").unwrap_or_default(),
+            permission_mode: get("permission_mode"),
+            model: get("model"),
+            carry_changes: false,
+            worktree: get("worktree").as_deref() == Some("true"),
+            auto_title: false,
+        };
+        let request = crate::write_request(&v, task)?;
+        let started = crate::start_from_note(app.clone(), &v, &request, 0, RunOptions::default())?;
+        let text = std::fs::read_to_string(path)?;
+        std::fs::write(path, vault::fm_set(&text, "last_session", &started.session_id))?;
+        app.state::<Automation>().runs.lock().unwrap().insert(started.session_id.clone(), Run::Schedule { path: path.to_path_buf() });
+        let _ = app.emit("vault://changed", json!({"path": path}));
+        let _ = app.emit("sessions://changed", &started.session_id);
+        let _ = app.emit("automation://started", json!({"session_id": started.session_id, "title": started.title, "from": rel(vault, path)}));
+        first.get_or_insert(started.session_id);
+    }
+    Ok(first)
 }
 
 /// Every schedule with when it runs next.
@@ -302,6 +342,7 @@ pub fn list(app: &AppHandle, vault: &Path) -> Vec<Value> {
                 "path": f.path,
                 "rel": f.rel,
                 "title": f.title,
+                "query": get("query"),
                 "every": get("every"),
                 "at": get("at"),
                 "enabled": enabled(&text),
@@ -314,7 +355,8 @@ pub fn list(app: &AppHandle, vault: &Path) -> Vec<Value> {
 }
 
 /// Writes `schedules/<title>.md`. `when` is an interval (`1h`) or a daily time (`09:00`).
-pub fn create(vault: &Path, title: &str, when: &str, prompt: &str, project: &str) -> Result<PathBuf> {
+/// `query` is a saved query note (`queries/x.md`) whose results go to the agent, or empty.
+pub fn create(vault: &Path, title: &str, when: &str, prompt: &str, project: &str, query: &str) -> Result<PathBuf> {
     let title = title.trim();
     if title.is_empty() {
         return Err(Error::Other("a schedule needs a name".into()));
@@ -330,8 +372,10 @@ pub fn create(vault: &Path, title: &str, when: &str, prompt: &str, project: &str
     let rel = vault::unique_path(vault, "schedules", title);
     std::fs::create_dir_all(vault.join("schedules"))?;
     let q = |s: &str| serde_json::to_string(s).unwrap();
+    let query = query.trim();
+    let query_fm = if query.is_empty() { String::new() } else { format!("query: {}\n", q(query)) };
     let content = format!(
-        "---\nid: {}\ntype: schedule\ntitle: {}\ncreated: {}\n{timing}\nenabled: true\nproject: {}\nworktree: false\n---\n{}\n",
+        "---\nid: {}\ntype: schedule\ntitle: {}\ncreated: {}\n{timing}\n{query_fm}enabled: true\nproject: {}\nworktree: false\n---\n{}\n",
         vault::new_id(),
         q(title),
         vault::now(),

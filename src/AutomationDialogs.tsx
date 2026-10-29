@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { FolderGit2, ListTodo, Timer, X } from "lucide-react";
-import { api, Board, Queue } from "./api";
+import { api, Board, FileEntry, Queue } from "./api";
 import { composing } from "./keys";
 import { ModelSelect } from "./ModelSelect";
 import { MODES } from "./NewTaskDialog";
@@ -93,18 +93,24 @@ export function QueueDialog({ vault, path, board, onClose }: { vault: string; pa
 }
 
 /** Creates a schedule note in schedules/. */
-export function ScheduleDialog({ vault, onCreated, onClose }: { vault: string; onCreated: (path: string) => void; onClose: () => void }) {
+export function ScheduleDialog({ vault, queries, onCreated, onClose }: {
+  vault: string; queries: FileEntry[]; onCreated: (path: string) => void; onClose: () => void;
+}) {
   const [title, setTitle] = useState("");
   const [when, setWhen] = useState("1h");
   const [prompt, setPrompt] = useState("");
   const [project, setProject] = useState("");
+  // A saved query: the agent starts only when it finds something, and gets the results.
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // With a query, the prompt may stay empty: the query's own agent prompt is used.
+  const ready = !!title.trim() && (!!prompt.trim() || !!query) && !busy;
   const ok = async () => {
-    if (!title.trim() || !prompt.trim() || busy) return;
+    if (!ready) return;
     setBusy(true);
     try {
-      onCreated(await api.scheduleCreate(vault, title, when, prompt, project));
+      onCreated(await api.scheduleCreate(vault, title, when, prompt, project, query || undefined));
       onClose();
     } catch (e) {
       setError(String(e));
@@ -132,13 +138,21 @@ export function ScheduleDialog({ vault, onCreated, onClose }: { vault: string; o
         <textarea className="task-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)}
           placeholder="What the agent does each time, e.g. Go through the Todo list on boards/sprint.md, pick what is ready and put it in the Agent list."
           onKeyDown={(e) => !composing(e) && (e.metaKey || e.ctrlKey) && e.key === "Enter" && ok()} />
+        {queries.length > 0 && <>
+          <label className="field-label">Only when a query has results</label>
+          <select value={query} onChange={(e) => setQuery(e.target.value)}>
+            <option value="">Always run</option>
+            {queries.map((f) => <option key={f.path} value={f.rel}>{f.title ?? f.rel}</option>)}
+          </select>
+          {query && <p className="muted small">The query runs first. With no results nothing starts; otherwise the prompt above goes to the agent with the results (empty: the query's agent prompt).</p>}
+        </>}
         <label className="field-label">Project</label>
         <ProjectInput vault={vault} value={project} onChange={setProject} />
         <p className="muted small">Saved as a note in schedules/: edit it there to change the prompt, timing, model or permission_mode.</p>
         {error && <div className="banner error">{error}</div>}
         <div className="modal-foot">
           <span />
-          <button className="primary" onClick={ok} disabled={!title.trim() || !prompt.trim() || busy}>Create</button>
+          <button className="primary" onClick={ok} disabled={!ready}>Create</button>
         </div>
       </div>
     </div>

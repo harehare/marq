@@ -652,7 +652,9 @@ fn glossary_path(app: AppHandle, vault: String) -> Result<String> {
 
 /// Saves a query as `queries/<name>.md`: a note whose mq block runs in the preview too. Overwrites.
 #[tauri::command]
-fn save_query(app: AppHandle, vault: String, name: String, query: String, glob: String, aggregate: bool) -> Result<String> {
+fn save_query(
+    app: AppHandle, vault: String, name: String, query: String, glob: String, aggregate: bool, agent: Option<String>, agent_each: Option<bool>,
+) -> Result<String> {
     let name = name.trim().trim_end_matches(".md");
     if name.is_empty() || name.split('/').any(|p| p == "..") {
         return Err(error::Error::Other("a query needs a name".into()));
@@ -665,8 +667,11 @@ fn save_query(app: AppHandle, vault: String, name: String, query: String, glob: 
     // The fence's input is relative to the note, which sits one folder down per `/` in the name.
     let up = "../".repeat(rel.matches('/').count());
     let flags = if aggregate { String::new() } else { " aggregate=false".into() };
+    // What an agent started from the results is told, and whether each file gets its own session.
+    let agent = agent.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let agent_fm = agent.map_or(String::new(), |a| format!("agent: {}\n", q(a)) + &if agent_each == Some(true) { "agent_each: true\n".to_string() } else { String::new() });
     let content = format!(
-        "---\ntype: query\ntitle: {}\nglob: {}\naggregate: {aggregate}\nupdated: {}\n---\n# {name}\n\n```mq input={up}{glob}{flags}\n{}\n```\n",
+        "---\ntype: query\ntitle: {}\nglob: {}\naggregate: {aggregate}\n{agent_fm}updated: {}\n---\n# {name}\n\n```mq input={up}{glob}{flags}\n{}\n```\n",
         q(name),
         q(&glob),
         vault::now(),
@@ -711,14 +716,16 @@ async fn schedules_list(app: AppHandle, vault: String) -> Result<Vec<serde_json:
 }
 
 #[tauri::command]
-fn schedule_create(app: AppHandle, vault: String, title: String, when: String, prompt: String, project: String) -> Result<String> {
-    let p = automation::create(Path::new(&vault), &title, &when, &prompt, &project)?;
+fn schedule_create(
+    app: AppHandle, vault: String, title: String, when: String, prompt: String, project: String, query: Option<String>,
+) -> Result<String> {
+    let p = automation::create(Path::new(&vault), &title, &when, &prompt, &project, query.as_deref().unwrap_or_default())?;
     let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
     Ok(p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
-async fn schedule_run(app: AppHandle, vault: String, path: String) -> Result<String> {
+async fn schedule_run(app: AppHandle, vault: String, path: String) -> Result<Option<String>> {
     blocking(move || {
         let v = PathBuf::from(&vault);
         let p = vault::resolve(&v, &path)?;

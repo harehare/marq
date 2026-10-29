@@ -1413,3 +1413,8 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; -webkit-user
 /* The block a search result or link jumped to, marked for a moment. */
 .preview .jumped { animation: jumped 1.6s ease-out; border-radius: 4px; }
 @keyframes jumped { 0%, 30% { background: var(--accent-soft); } 100% { background: transparent; } }
+
+.query-context { display: flex; flex-direction: column; gap: 6px; }
+.query-context p { margin: 0; display: flex; align-items: center; gap: 6px; }
+.query-agent { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.query-agent input { flex: 1; }

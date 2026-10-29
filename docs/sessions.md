@@ -61,6 +61,23 @@ Go through the Todo list on boards/sprint.md and move the cards that are ready t
 
 Each run saves a request note and starts a session from it, like **New task**. An interval counts from the last run; a run is skipped while the previous one is still in its turn; runs missed while Marq was closed are made up once when it opens. The sidebar shows when each schedule runs next, with **Run now** and **Pause** on hover.
 
+### Only when a query has results
+
+A schedule can name a saved query (see [mq queries](mq.md#run-agent-on-results)) with `query:`, or pick one in the dialog. The query runs first. With no results nothing starts, and the run counts as done until the next one; otherwise the agent gets the prompt followed by the results:
+
+```markdown
+---
+type: schedule
+title: "Open bugs"
+every: 1d
+query: queries/open-bugs.md
+each: true           # optional: one session per file (up to 10); default from the query's agent_each
+---
+Pick the ones you can fix and open a pull request for each.   # empty: the query's agent prompt
+```
+
+**Run now** on a schedule whose query finds nothing says so instead of starting a session.
+
 Pairing a schedule with a [board queue](crews-and-boards.md#queue) lets one session pick the work and the queue run it.
 
 ## Active sessions

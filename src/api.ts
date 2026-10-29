@@ -205,8 +205,9 @@ export const api = {
   /** The note a `[[target]]` names; with `create`, a new note under notes/ when there is none. */
   wikilinkOpen: (vault: string, target: string, create: boolean) => invoke<string | null>("wikilink_open", { vault, target, create }),
   /** Saves (overwrites) `queries/<name>.md`. */
-  saveQuery: (vault: string, name: string, query: string, glob: string, aggregate: boolean) =>
-    invoke<string>("save_query", { vault, name, query, glob, aggregate }),
+  /** `agent`: the prompt an agent started from the results begins with; `agentEach`: one session per file. */
+  saveQuery: (vault: string, name: string, query: string, glob: string, aggregate: boolean, agent?: string, agentEach?: boolean) =>
+    invoke<string>("save_query", { vault, name, query, glob, aggregate, agent, agentEach }),
   boardCreate: (vault: string, name: string) => invoke<string>("board_create", { vault, name }),
   boardRead: (vault: string, path: string) => invoke<Board>("board_read", { vault, path }),
   boardAdd: (vault: string, path: string, title: string, list?: string) => invoke<Card>("board_add", { vault, path, title, list }),
@@ -222,9 +223,10 @@ export const api = {
   automationWatch: (vault: string) => invoke<void>("automation_watch", { vault }),
   schedulesList: (vault: string) => invoke<Schedule[]>("schedules_list", { vault }),
   /** `when`: an interval (30m, 2h, 1d) or a daily time (09:00). */
-  scheduleCreate: (vault: string, title: string, when: string, prompt: string, project: string) =>
-    invoke<string>("schedule_create", { vault, title, when, prompt, project }),
-  scheduleRun: (vault: string, path: string) => invoke<string>("schedule_run", { vault, path }),
+  scheduleCreate: (vault: string, title: string, when: string, prompt: string, project: string, query?: string) =>
+    invoke<string>("schedule_create", { vault, title, when, prompt, project, query }),
+  /** The session id, or null when the schedule's query found nothing. */
+  scheduleRun: (vault: string, path: string) => invoke<string | null>("schedule_run", { vault, path }),
   scheduleSetEnabled: (vault: string, path: string, enabled: boolean) => invoke<void>("schedule_set_enabled", { vault, path, enabled }),
   readConfig: () => invoke<Record<string, unknown>>("read_config"),
   /** Creates ~/.marq/config.toml from a template if missing. */

@@ -13,6 +13,61 @@ pub struct FileResult {
     pub items: Vec<String>,
 }
 
+/// A query note saved by `save_query`: what to run and, optionally, what to tell an agent about the results.
+#[derive(Debug, PartialEq)]
+pub struct Saved {
+    pub query: String,
+    pub glob: String,
+    pub aggregate: bool,
+    /// The prompt an agent started from the results begins with.
+    pub agent: Option<String>,
+    /// One session per file instead of one for all the results.
+    pub each: bool,
+}
+
+/// A frontmatter value written as a JSON string (as `save_query` does) or bare.
+fn fm_text(text: &str, key: &str) -> Option<String> {
+    let (fm, _) = crate::vault::split_frontmatter(text);
+    let raw = fm?.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix(':').map(|v| v.trim().to_string()))?;
+    Some(serde_json::from_str::<String>(&raw).unwrap_or_else(|_| raw.trim_matches(['"', '\'']).to_string()))
+}
+
+/// Reads a query note: the first mq block is the query, the frontmatter has the rest.
+pub fn read_saved(text: &str) -> Option<Saved> {
+    let start = text.find("```mq")?;
+    let body = &text[start..];
+    let body = &body[body.find('\n')? + 1..];
+    let query = body[..body.find("\n```")?].trim().to_string();
+    Some(Saved {
+        query,
+        glob: fm_text(text, "glob").filter(|g| !g.is_empty()).unwrap_or_else(|| "**/*.md".into()),
+        aggregate: fm_text(text, "aggregate").as_deref() != Some("false"),
+        agent: fm_text(text, "agent").filter(|a| !a.trim().is_empty()),
+        each: fm_text(text, "agent_each").as_deref() == Some("true"),
+    })
+}
+
+/// Longest text from query results that goes into one prompt.
+const MAX_CONTEXT: usize = 40_000;
+
+/// Results as prompt text for an agent: the query, then each file's items. Returns the text for all
+/// results and the text for each file on its own, in the same order as `results`.
+pub fn prompt_context(vault: &Path, query: &str, glob: &str, results: &[FileResult]) -> (String, Vec<String>) {
+    let head = format!("The results of this mq query over {glob} (vault: {}):\n\n```mq\n{query}\n```", vault.display());
+    let section = |r: &FileResult| {
+        let file = r.file.as_deref().map_or("this note".to_string(), |f| {
+            Path::new(f).strip_prefix(vault).unwrap_or(Path::new(f)).to_string_lossy().into_owned()
+        });
+        format!("### {file}\n\n{}", r.items.join("\n\n"))
+    };
+    let cut = |text: String| match text.char_indices().nth(MAX_CONTEXT) {
+        Some((at, _)) => format!("{}\n\n… (cut, ask for the rest by reading the file)", &text[..at]),
+        None => text,
+    };
+    let all = results.iter().map(&section).collect::<Vec<_>>().join("\n\n");
+    (cut(format!("{head}\n\n{all}")), results.iter().map(|r| cut(format!("{head}\n\n{}", section(r)))).collect())
+}
+
 /// Whether `query` already starts with `nodes`, after any `import "…" |`, so it is not wrapped again.
 fn starts_with_nodes(query: &str) -> bool {
     let mut rest = query.trim_start();
@@ -100,6 +155,29 @@ pub fn eval(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_a_saved_query() {
+        let note = "---\ntype: query\ntitle: \"open\"\nglob: \"requests/*.md\"\naggregate: false\nagent: \"Fix each:\\nthen test\"\nagent_each: true\n---\n# open\n\n```mq input=../requests/*.md aggregate=false\nselect(.h)\n```\n";
+        assert_eq!(
+            read_saved(note),
+            Some(Saved { query: "select(.h)".into(), glob: "requests/*.md".into(), aggregate: false, agent: Some("Fix each:\nthen test".into()), each: true })
+        );
+        assert_eq!(read_saved("no block"), None);
+    }
+
+    #[test]
+    fn prompt_context_per_file_and_cut() {
+        let v = Path::new("/v");
+        let r = vec![
+            FileResult { file: Some("/v/a.md".into()), items: vec!["one".into(), "two".into()] },
+            FileResult { file: Some("/v/b.md".into()), items: vec!["x".repeat(50_000)] },
+        ];
+        let (all, each) = prompt_context(v, "q", "*.md", &r);
+        assert!(all.contains("### a.md\n\none\n\ntwo") && all.contains("(cut"));
+        assert_eq!(each.len(), 2);
+        assert!(each[0].contains("### a.md") && !each[0].contains("### b.md") && !each[0].contains("(cut"));
+    }
 
     #[test]
     fn inbox_query_over_files() {
