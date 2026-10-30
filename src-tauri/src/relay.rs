@@ -72,8 +72,8 @@ fn due(events: &[Value]) -> Vec<(String, String, String)> {
             continue;
         }
         let count = |t: &str| events[..i].iter().filter(|x| x["type"] == t).count();
-        let queued = count("marq_user").saturating_sub(count("result"));
-        if let Some(r) = events[i..].iter().filter(|x| x["type"] == "result").nth(queued) {
+        let queued = count("marq_user").saturating_sub(count("turn_end"));
+        if let Some(r) = events[i..].iter().filter(|x| x["type"] == "turn_end").nth(queued) {
             out.push((id.to_string(), from.to_string(), r["result"].as_str().unwrap_or("").to_string()));
         }
     }
@@ -108,7 +108,7 @@ mod tests {
     fn replies_with_the_turn_that_handled_the_message() {
         let msg = |id: &str| json!({"type": "marq_message", "id": id, "from": "a", "reply": true});
         let user = json!({"type": "marq_user"});
-        let result = |r: &str| json!({"type": "result", "result": r});
+        let result = |r: &str| json!({"type": "turn_end", "result": r, "is_error": false});
         // Sent while idle: the next result answers it.
         let ev = vec![user.clone(), result("first"), msg("m1"), user.clone()];
         assert!(due(&ev).is_empty());

@@ -1,9 +1,11 @@
+mod agents;
 mod automation;
 mod boards;
 mod config;
 mod crew;
 mod error;
 mod git;
+mod helpers;
 mod knowledge;
 mod links;
 mod mq;
@@ -177,6 +179,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         _ => vault::fm_get(&text, "permission_mode").filter(|s| !s.is_empty()),
     };
     let model = opts.model.or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
+    let agent = vault::fm_get(&text, "agent").filter(|s| !s.is_empty() && s != agents::DEFAULT);
     let use_worktree = opts.worktree.unwrap_or_else(|| vault::fm_get(&text, "worktree").as_deref() != Some("false"));
 
     // A project that is a git repo gets its own worktree, unless the note says `worktree: false`.
@@ -241,6 +244,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         started: vault::now(),
         permission_mode,
         model,
+        agent,
         worktree,
         crew: None,
     };
@@ -325,6 +329,9 @@ struct NewTask {
     /// See `SessionMeta::model`.
     #[serde(default)]
     model: Option<String>,
+    /// See `SessionMeta::agent`.
+    #[serde(default)]
+    agent: Option<String>,
     #[serde(default)]
     carry_changes: bool,
     /// False: run in the project itself instead of a new worktree.
@@ -395,7 +402,7 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 
 /// Writes the task as a request note (`status: todo`) and returns its path relative to the vault.
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
-    let NewTask { title, prompt, project, permission_mode, model, carry_changes, worktree, .. } = task;
+    let NewTask { title, prompt, project, permission_mode, model, agent, carry_changes, worktree, .. } = task;
     let v = Path::new(vault);
     let rel = vault::unique_path(v, "requests", &title);
     std::fs::create_dir_all(v.join("requests"))?;
@@ -403,6 +410,9 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let mut mode = permission_mode.filter(|m| !m.is_empty()).map(|m| format!("permission_mode: {m}\n")).unwrap_or_default();
     if let Some(m) = model.filter(|m| !m.is_empty()) {
         mode.push_str(&format!("model: {m}\n"));
+    }
+    if let Some(a) = agent.filter(|a| !a.is_empty() && a != agents::DEFAULT) {
+        mode.push_str(&format!("agent: {a}\n"));
     }
     if !worktree {
         mode.push_str("worktree: false\n");
@@ -826,11 +836,6 @@ fn terminal_close(terms: State<terminal::Terminals>, id: String) {
     terms.close(&id)
 }
 
-#[tauri::command]
-async fn probe_url(app: AppHandle, url: String) -> Result<serde_json::Value> {
-    app.state::<Runner>().probe_url(&app, &url).await
-}
-
 /// Ollama models for the new-task dialog.
 #[tauri::command]
 async fn ollama_models(app: AppHandle) -> Result<serde_json::Value> {
@@ -934,6 +939,28 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
 }
 
 /// Fills in `## Summary` and `## Learnings` from a forked one-turn summary.
+#[tauri::command]
+async fn list_helpers(vault: String) -> Result<Vec<helpers::Helper>> {
+    blocking(move || Ok(helpers::list(Path::new(&vault)))).await
+}
+
+#[tauri::command]
+async fn create_helper(vault: String, name: String) -> Result<String> {
+    blocking(move || helpers::create(Path::new(&vault), &name)).await
+}
+
+/// Sends a request to a helper, starting its session when needed. Returns that session's id.
+#[tauri::command]
+async fn send_to_helper(app: AppHandle, vault: String, path: String, text: String, from: Option<String>, reply: bool, fresh: bool) -> Result<String> {
+    blocking(move || helpers::send(&app, Path::new(&vault), &path, &text, from.as_deref(), reply, fresh)).await
+}
+
+/// The agents a task can run on, with whether each is installed.
+#[tauri::command]
+async fn list_agents() -> Result<Vec<agents::AgentInfo>> {
+    blocking(|| Ok(agents::list())).await
+}
+
 #[tauri::command]
 async fn summarize_session(app: AppHandle, vault: String, session_id: String) -> Result<String> {
     let runner = app.state::<Runner>();
@@ -1212,7 +1239,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ollama_models,
-            probe_url,
             save_query,
             search_text,
             glossary_path,
@@ -1254,6 +1280,10 @@ pub fn run() {
             answer_approval,
             list_approvals,
             summarize_session,
+            list_agents,
+            list_helpers,
+            create_helper,
+            send_to_helper,
             list_commands,
             session_events,
             list_sessions,

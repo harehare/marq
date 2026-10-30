@@ -1,0 +1,147 @@
+// marq's MCP tools: the vault, boards, sessions and crews. The tools call back into the app, which owns the vault.
+// Built with the Agent SDK's in-process MCP server; mcp-http.ts serves the same server over HTTP to agents in other processes.
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+import { rpc } from "./protocol.ts";
+
+const text = (t: unknown) => ({ content: [{ type: "text" as const, text: typeof t === "string" ? t : JSON.stringify(t, null, 2) }] });
+
+/** Tools only crew members get. Messages go through the app, which delivers them between turns. */
+function crewTools(sessionId: string) {
+  return [
+    tool("crew_members", "List the members of your crew: role, status (idle, running, waiting), unread mail, working directory and branch.",
+      {}, async () => text(await rpc("crew_members", { session: sessionId }))),
+    tool("crew_send",
+      "Send a message to crew members. to: a role, \"user\", \"all\" (every other member) or roles separated by commas; " +
+        "leave it out with reply_to to answer everyone in that thread (how discussions work). " +
+        "kind: \"ask\" when you need an answer, \"reply\" (with reply_to, the id of the message you answer), \"tell\" otherwise. " +
+        "It is delivered when each recipient finishes its current turn. Do not wait for an answer: finish your turn and it arrives as a new message.",
+      { to: z.string().optional(), text: z.string(), kind: z.enum(["tell", "ask", "reply"]).optional(), reply_to: z.string().optional() },
+      async (a) => text(await rpc("crew_send", { ...a, session: sessionId }))),
+    tool("task_list", "The crew's shared task list: id, title, status (todo, doing, review, blocked, done), owner and notes.",
+      {}, async () => text(await rpc("task_list", { session: sessionId }))),
+    tool("task_add", "Add a task to the crew's task list. With owner (a role), that member is told and can start on it.",
+      { title: z.string(), owner: z.string().optional(), note: z.string().optional() },
+      async (a) => text(await rpc("task_add", { ...a, session: sessionId }))),
+    tool("task_update",
+      "Update a task: status (todo, doing, review, blocked, done), owner (a role, or empty to unassign) or a note " +
+        "(e.g. branch, commit, what is left). Setting doing takes the task; it fails if another member is already doing it.",
+      { id: z.string(), status: z.enum(["todo", "doing", "review", "blocked", "done"]).optional(), owner: z.string().optional(), note: z.string().optional() },
+      async (a) => text(await rpc("task_update", { ...a, session: sessionId }))),
+    tool("crew_decide",
+      "Record a decision the crew has made (approach, task split, who does what, a changed plan) in the crew note's Decisions " +
+        "section, and tell every member. Use it to close a discussion.",
+      { decision: z.string() }, async (a) => text(await rpc("crew_decide", { ...a, session: sessionId }))),
+    tool("crew_add_member",
+      "Add a member to the crew. role is one word (e.g. impl, reviewer, tester). instructions say what it owns, how it hands " +
+        "work on and who checks it. worktree (default true) gives it its own git worktree and branch; use false for members " +
+        "that only read, review or test. permission_mode: auto (default), default, acceptEdits or plan. model: opus, sonnet " +
+        "or haiku (default: the crew's model); fit it to the work. The user approves it.",
+      { role: z.string(), instructions: z.string(), worktree: z.boolean().optional(), permission_mode: z.string().optional(),
+        model: z.string().optional() },
+      async (a) => text(await rpc("crew_add_member", { ...a, session: sessionId }))),
+    tool("crew_set_model",
+      "Switch the model a member runs on, from its next turn: opus for design, hard problems and careful review, sonnet " +
+        "for most implementation and testing, haiku for simple mechanical work. role defaults to you; an empty model goes " +
+        "back to the crew's model.",
+      { role: z.string().optional(), model: z.string() },
+      async (a) => text(await rpc("crew_set_model", { ...a, session: sessionId }))),
+  ];
+}
+
+/** For sessions outside a crew: hand a large task to a new crew. The user approves it. */
+function startCrew(sessionId: string) {
+  return tool("start_crew",
+    "Hand a large task to a crew: a team of agent sessions (a lead who forms the team, then e.g. impl, reviewer, tester) " +
+      "working on this project together in their own tab. goal is the full task: what to build, constraints, and how to " +
+      "know it is done; include what you have learned so far. Use it only when the work clearly benefits from several " +
+      "members in parallel. The user approves it.",
+    { title: z.string(), goal: z.string() }, async (a) => text(await rpc("start_crew", { ...a, session: sessionId })));
+}
+
+/** Kanban boards in the vault. `board` is a name, title or path; empty for the only board. */
+function boardTools(sessionId: string) {
+  const board = z.string().optional().describe("Board name, title or path; omit when there is only one");
+  return [
+    tool("list_boards", "List the user's kanban boards (task management) with their lists and card counts.",
+      {}, async () => text(await rpc("list_boards", { session: sessionId }))),
+    tool("read_board", "Read a kanban board: its lists in order, each with cards (id, title, done, owner, notes).",
+      { board }, async (a) => text(await rpc("read_board", { ...a, session: sessionId }))),
+    tool("board_add_card", "Add a card (task) to a board, in `list` (default: the first list).",
+      { board, title: z.string(), list: z.string().optional(), owner: z.string().optional(), note: z.string().optional() },
+      async (a) => text(await rpc("board_add_card", { ...a, session: sessionId }))),
+    tool("board_update_card",
+      "Update a card: move it to another `list` (e.g. Doing, Done), set owner, title or done, or append a note.",
+      { board, id: z.string(), list: z.string().optional(), owner: z.string().optional(), title: z.string().optional(),
+        done: z.boolean().optional(), note: z.string().optional() },
+      async (a) => text(await rpc("board_update_card", { ...a, session: sessionId }))),
+    tool("board_add_list", "Add a list (column) to the end of a board.",
+      { board, name: z.string() }, async (a) => text(await rpc("board_add_list", { ...a, session: sessionId }))),
+  ];
+}
+
+export function vaultServer(sessionId: string, crew: boolean) {
+  return createSdkMcpServer({
+    name: "marq",
+    version: "0.1.0",
+    tools: [
+      ...(crew ? crewTools(sessionId) : [startCrew(sessionId)]),
+      ...boardTools(sessionId),
+      tool("search_notes", "Search the user's notes (Markdown knowledge base) by text. Words also match their synonyms and narrower terms from the vault's glossary and notes' aliases; tag:<name> (or #name) keeps notes with that tag. Returns matching paths and lines.",
+        { text: z.string() }, async (a) => text(await rpc("search_notes", { ...a, session: sessionId }))),
+      tool("query_notes", "Run an mq query (jq-like language for Markdown) over notes matching a glob relative to the vault, e.g. glob 'sessions/*.md' and query 'section::find(\"Learnings\") | section::body()'. aggregate defaults to true (mq -A).",
+        { query: z.string(), glob: z.string(), aggregate: z.boolean().optional() }, async (a) => text(await rpc("query_notes", { ...a, session: sessionId }))),
+      tool("read_note", "Read a note by its id (frontmatter id), vault-relative path, or what a [[wikilink]] names (title, file name or alias).",
+        { note: z.string() }, async (a) => text(await rpc("read_note", { ...a, session: sessionId }))),
+      tool("list_learnings", "Learnings recorded in sessions that no knowledge note has taken in yet, newest first, with each session's id, title, note path and project. project narrows it to sessions that worked on that directory; all includes the ones already merged.",
+        { project: z.string().optional(), all: z.boolean().optional() }, async (a) => text(await rpc("list_learnings", { ...a, session: sessionId }))),
+      tool("write_knowledge", "Create or replace the knowledge note for a topic (knowledge/<topic>.md): the whole note as Markdown without frontmatter. sources: the session ids it draws on (added to the note's earlier ones, and no longer offered by list_learnings). The note is listed as a draft until the user reviews it. project: the directory it applies to, or leave it out for the whole vault.",
+        { topic: z.string(), content: z.string(), sources: z.array(z.string()), tags: z.array(z.string()).optional(), project: z.string().optional() },
+        async (a) => text(await rpc("write_knowledge", { ...a, session: sessionId }))),
+      tool("note_links", "What links to a note (links_here), where it is mentioned without a link (mentions), what it links to, and the [[links]] in it that name no note yet. note is as for read_note.",
+        { note: z.string() }, async (a) => text(await rpc("note_links", { ...a, session: sessionId }))),
+      tool("write_doc",
+        "Save a document for the user (report, plan, design, investigation, summary, how-to, meeting notes) in their vault. " +
+          "Use this instead of writing such documents into the working directory. content is Markdown without frontmatter. " +
+          "folder defaults to 'docs'. To revise a document saved earlier, pass its path; only documents written this way can be updated. " +
+          "tags: a few topic tags, using the glossary's terms where it has them.",
+        { title: z.string(), content: z.string(), folder: z.string().optional(), path: z.string().optional(), tags: z.array(z.string()).optional() },
+        async (a) => text(await rpc("write_doc", { ...a, session: sessionId }))),
+      tool("append_learning", "Record a reusable learning (a gotcha, decision or fact worth remembering) in this session's notes.",
+        { text: z.string() }, async (a) => text(await rpc("append_learning", { ...a, session: sessionId }))),
+      tool("list_notes", "List folders and notes in the user's vault (path, title, type, status). folder narrows it to one folder.",
+        { folder: z.string().optional() }, async (a) => text(await rpc("list_notes", { ...a, session: sessionId }))),
+      tool("create_folder", "Create a folder in the vault (parents too). path is relative to the vault.",
+        { path: z.string() }, async (a) => text(await rpc("create_folder", { ...a, session: sessionId }))),
+      tool("move_note",
+        "Move or rename a note or folder in the vault. to may be a folder to move into (or end with /). " +
+          "Relative links in and to moved notes are rewritten. Existing files are never overwritten. The user approves moves.",
+        { from: z.string(), to: z.string() }, async (a) => text(await rpc("move_note", { ...a, session: sessionId }))),
+      tool("trash_note", "Move a note or folder in the vault to the Trash. The user approves each one.",
+        { path: z.string() }, async (a) => text(await rpc("trash_note", { ...a, session: sessionId }))),
+      tool("list_sessions", "List the user's other sessions in Marq (id, title, status, working directory), most recent first.",
+        {}, async () => text(await rpc("list_sessions", { session: sessionId }))),
+      tool("search_sessions", "Search past sessions by text (words also match their glossary synonyms): sessions whose log mentions every word, best matches first, each with its note path and best lines. project narrows it to a directory or repository (part of its path), since to sessions started on or after a YYYY-MM-DD date. Read a hit with read_note on its note path.",
+        { text: z.string(), project: z.string().optional(), since: z.string().optional(), limit: z.number().optional() },
+        async (a) => text(await rpc("search_sessions", { ...a, session: sessionId }))),
+      tool("read_session", "Read another session's latest result and status, to coordinate with it or reuse its findings.",
+        { session_id: z.string() }, async (a) => text(await rpc("read_session", { ...a, session: sessionId }))),
+      tool("send_to_session",
+        "Send a message to another session, e.g. to ask it a question, hand over findings or ask it to do part of the work. " +
+          "It runs after that session's current turn, and resumes it if it has stopped. With reply (default true), its " +
+          "answer comes back to you as a new message when it finishes that turn; do not wait or poll for it. The user approves each send.",
+        { session_id: z.string(), text: z.string(), reply: z.boolean().optional() },
+        async (a) => text(await rpc("send_to_session", { ...a, session: sessionId }))),
+    ],
+  });
+}
+
+// Pre-approved: they only read the vault and sessions, or write Marq's own files in the vault.
+// send_to_session is left out so each send goes through the approval card.
+// move_note and trash_note change the user's notes, so they ask too.
+// Crew messages are pre-approved too: the crew's hop limit, not an approval card, keeps them in check.
+// crew_add_member asks, since every member is another session to pay for.
+export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "list_sessions", "search_sessions", "read_session",
+  "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
+  "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list"]
+  .map((t) => `mcp__marq__${t}`);

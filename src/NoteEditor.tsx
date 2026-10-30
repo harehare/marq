@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import CodeMirror, { EditorView, ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import CodeMirror, { EditorView, ReactCodeMirrorRef, type ViewUpdate } from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { listen } from "@tauri-apps/api/event";
-import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check } from "lucide-react";
+import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X } from "lucide-react";
 import { api, SessionInfo } from "./api";
 import { Preview } from "./markdown/Preview";
 import { editorHighlight, editorTheme } from "./editorTheme";
@@ -14,9 +14,14 @@ import type { Excerpt } from "./SendToSessionDialog";
 import { EditorState } from "@codemirror/state";
 import { NoteLinksPanel } from "./NoteLinks";
 import { wikiCompletion } from "./wikilinks";
+import { composing, FIND_EVENT } from "./keys";
 
 // `[[` completes note names, through the autocompletion basicSetup already has.
 const wikiCompletions = EditorState.languageData.of(() => [{ autocomplete: wikiCompletion }]);
+
+// Built once: the editor reconfigures itself, parsing the whole note again, whenever these change identity.
+const EXTENSIONS = [markdown(), editorHighlight, EditorView.lineWrapping, wikiCompletions];
+const BASIC_SETUP = { lineNumbers: false, foldGutter: false, highlightActiveLine: false };
 
 type Mode = "edit" | "split" | "preview";
 
@@ -32,6 +37,8 @@ function forCopy(text: string) {
 type Props = {
   vault: string;
   path: string;
+  /** Shown now; a hidden tab checks the disk again when it comes back. */
+  active?: boolean;
   jump?: { line: number; nonce: number };
   /** Just created: open in the editor, cursor at the end. */
   fresh?: boolean;
@@ -47,10 +54,12 @@ function initialMode(): Mode {
   return getSettings().editor?.default_mode ?? "preview";
 }
 
-export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile, onSendExcerpt, parents }: Props) {
+export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSession, onOpenFile, onSendExcerpt, parents }: Props) {
   const previewRef = useRef<HTMLDivElement>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [text, setText] = useState<string | null>(null);
+  // The preview follows the text at a lower priority, so typing in the editor never waits for it.
+  const previewText = useDeferredValue(text);
   const [dirty, setDirty] = useState(false);
   const [mode, setMode] = useState<Mode>(() => {
     const m = initialMode();
@@ -98,28 +107,44 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile
     load().catch((e) => setError(String(e)));
   }, [load]);
 
-  // Reload when marq writes a result back into this note, unless there are unsaved edits.
+  /** Picks up a change made on disk, unless there are unsaved edits. */
+  const reconcile = useCallback(async () => {
+    if (saved.current === null) return;
+    const disk = await api.readNote(vault, path).catch(() => null);
+    if (disk === null || disk === saved.current) return;
+    if (dirtyRef.current) {
+      conflict.current = true;
+      setError("This note was changed on disk. Autosave is paused; saving (⌘S) will overwrite it.");
+    } else loaded(disk);
+  }, [vault, path, loaded]);
+
+  // When marq writes a result back into this note.
   useEffect(() => {
-    const un = listen<{ path: string }>("vault://changed", async (e) => {
-      if (e.payload.path !== path) return;
-      const disk = await api.readNote(vault, path).catch(() => null);
-      if (disk === null || disk === saved.current) return;
-      if (dirtyRef.current) {
-        conflict.current = true;
-        setError("This note was changed on disk. Autosave is paused; saving (⌘S) will overwrite it.");
-      } else loaded(disk);
+    const un = listen<{ path: string }>("vault://changed", (e) => {
+      if (e.payload.path === path) void reconcile();
     });
     return () => {
       un.then((f) => f());
     };
-  }, [vault, path, loaded]);
+  }, [path, reconcile]);
+
+  // Edits from other apps: checked when the tab is shown or the window comes back, not watched.
+  useEffect(() => {
+    if (!active) return;
+    void reconcile();
+    const onFocus = () => void reconcile();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [active, reconcile]);
 
   const refreshLinks = useCallback(async (content: string) => {
     const found = await api.noteAnchors(content);
     const all = await api.listSessions(vault);
     const id = content.match(/^id:\s*(\S+)/m)?.[1];
     const origins = new Set([...found.map((a) => a.id), ...(id ? [id] : [])]);
-    setSessions(all.filter((s) => origins.has(s.origin)));
+    const next = all.filter((s) => origins.has(s.origin));
+    // Unchanged lists keep their identity, so the preview is not rendered again for nothing.
+    setSessions((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   }, [vault]);
 
   useEffect(() => {
@@ -218,6 +243,84 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile
     onSendExcerpt({ text, source: rel, lines: [doc.lineAt(sel.from).number, doc.lineAt(sel.to).number] });
   };
 
+  // ---- find in the note (⌘F) ----
+  // The preview's matches are marked with the CSS Custom Highlight API, so the rendered DOM is left alone.
+  // With the editor alone, matches are found in the source and selected there one at a time.
+  const [find, setFind] = useState<string | null>(null);
+  const [hit, setHit] = useState(0);
+  const [found, setFound] = useState(0);
+  const findRef = useRef<HTMLInputElement>(null);
+  const ranges = useRef<Range[]>([]);
+  const offsets = useRef<number[]>([]);
+  const q = find?.trim().toLowerCase() ?? "";
+
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== `note:${path}`) return;
+      // The selected text, when there is some, is what to look for.
+      const view = ref.current?.view;
+      const sel = mode !== "preview" && view && !view.state.selection.main.empty
+        ? view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)
+        : window.getSelection()?.toString() ?? "";
+      if (sel.trim() && !sel.includes("\n")) {
+        setFind(sel);
+        setHit(0);
+      } else setFind((f) => f ?? "");
+      requestAnimationFrame(() => findRef.current?.select());
+    };
+    window.addEventListener(FIND_EVENT, on);
+    return () => window.removeEventListener(FIND_EVENT, on);
+  }, [path, mode]);
+
+  // Collect the matches: in the preview's text when it is shown, else in the source.
+  useEffect(() => {
+    ranges.current = [];
+    offsets.current = [];
+    if (q && mode !== "edit" && previewRef.current) {
+      const walker = document.createTreeWalker(previewRef.current, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const t = n.textContent!.toLowerCase();
+        for (let i = t.indexOf(q); i >= 0; i = t.indexOf(q, i + q.length)) {
+          const r = new Range();
+          r.setStart(n, i);
+          r.setEnd(n, i + q.length);
+          ranges.current.push(r);
+        }
+      }
+    } else if (q && text !== null) {
+      const t = text.toLowerCase();
+      for (let i = t.indexOf(q); i >= 0; i = t.indexOf(q, i + q.length)) offsets.current.push(i);
+    }
+    setFound(ranges.current.length || offsets.current.length);
+  }, [q, text, previewText, mode]);
+
+  const current = found ? ((hit % found) + found) % found : -1;
+
+  // Mark and scroll to the current match.
+  useEffect(() => {
+    const highlights = (CSS as unknown as { highlights?: Map<string, Highlight> }).highlights;
+    if (current < 0) return;
+    if (ranges.current.length) {
+      highlights?.set("marq-find", new Highlight(...ranges.current));
+      highlights?.set("marq-find-current", new Highlight(ranges.current[current]));
+      ranges.current[current].startContainer.parentElement?.scrollIntoView({ block: "center" });
+    } else {
+      const view = ref.current?.view;
+      const from = offsets.current[current];
+      view?.dispatch({ selection: { anchor: from, head: from + q.length }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+    }
+    return () => {
+      highlights?.delete("marq-find");
+      highlights?.delete("marq-find-current");
+    };
+  }, [current, found, q, mode]);
+
+  const step = (d: number) => setHit((h) => h + d);
+  const closeFind = () => {
+    setFind(null);
+    if (mode !== "preview") ref.current?.view?.focus();
+  };
+
   /** Lines of a preview selection, from the source lines on the rendered blocks. */
   // ⌘E (note.toggleEdit) on this note's tab: preview → edit at the first line in view, edit or split → preview.
   useEffect(() => {
@@ -255,7 +358,26 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile
     onOpenSession(started.session_id, first?.replace(/^[#\-*\s]+/, "").slice(0, 60) || "session");
   };
 
+  // Handlers that keep their identity, so the memoized preview renders again only when the text or sessions change.
+  const onEditorChange = useCallback((v: string) => {
+    setText(v);
+    setDirty(true);
+  }, []);
+  const onEditorUpdate = useCallback((u: ViewUpdate) => {
+    if (u.selectionSet) setHasSelection(!u.state.selection.main.empty);
+  }, []);
+  const latest = useRef({ askAt, setPendingJump, onOpenFile, onOpenSession, loaded });
+  latest.current = { askAt, setPendingJump, onOpenFile, onOpenSession, loaded };
+  const previewHandlers = useMemo(() => ({
+    onRunAt: (line: number, withOptions?: boolean) => latest.current.askAt(line, withOptions),
+    onEditAt: (line: number) => latest.current.setPendingJump(line),
+    onOpenFile: (p: string) => latest.current.onOpenFile(p),
+    onOpenSession: (id: string, title: string) => latest.current.onOpenSession(id, title),
+    onPinned: (t: string) => latest.current.loaded(t),
+  }), []);
+
   if (text === null) return <div className="pane-msg">{error ?? "Loading…"}</div>;
+  if (previewText === null) return null;
 
   /** Normal → wide → full width, saved to config.toml. */
   const nextWidth = () => {
@@ -308,6 +430,22 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile
           <Sparkles size={14} /> Ask
         </button>
       </div>
+      {find !== null && (
+        <div className="find-bar">
+          <Search size={13} className="muted" />
+          <input ref={findRef} autoFocus value={find} placeholder="Find in this note" spellCheck={false}
+            onChange={(e) => { setFind(e.target.value); setHit(0); }}
+            onKeyDown={(e) => {
+              if (composing(e)) return;
+              if (e.key === "Enter") step(e.shiftKey ? -1 : 1);
+              if (e.key === "Escape") closeFind();
+            }} />
+          <span className="muted small">{q ? (found ? `${current + 1}/${found}` : "No matches") : ""}</span>
+          <button className="icon" onClick={() => step(-1)} disabled={!found} title="Previous (⇧↵)"><ChevronUp size={13} /></button>
+          <button className="icon" onClick={() => step(1)} disabled={!found} title="Next (↵)"><ChevronDown size={13} /></button>
+          <button className="icon" onClick={closeFind} title="Close (Esc)"><X size={13} /></button>
+        </div>
+      )}
       {error && (
         <div className="banner error" onClick={() => setError(null)}>
           <AlertCircle size={14} /> {error}
@@ -323,13 +461,10 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile
               height="100%"
               className="editor"
               theme={editorTheme}
-              basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false }}
-              extensions={[markdown(), editorHighlight, EditorView.lineWrapping, wikiCompletions]}
-              onUpdate={(u) => u.selectionSet && setHasSelection(!u.state.selection.main.empty)}
-              onChange={(v) => {
-                setText(v);
-                setDirty(true);
-              }}
+              basicSetup={BASIC_SETUP}
+              extensions={EXTENSIONS}
+              onUpdate={onEditorUpdate}
+              onChange={onEditorChange}
               onKeyDown={(e) => {
                 const mod = e.metaKey || e.ctrlKey;
                 if (mod && e.key === "s") {
@@ -357,19 +492,7 @@ export function NoteEditor({ vault, path, jump, fresh, onOpenSession, onOpenFile
                 const l = previewLines();
                 setAsk({ line: l?.[0] ?? 0, options: false, excerpt: l ? { text, from: l[0], to: l[1] } : undefined });
               }} />
-            <Preview
-              vault={vault}
-              path={path}
-              text={text}
-              sessions={sessions}
-              onRunAt={askAt}
-              onEditAt={(line) => setPendingJump(line)}
-              onOpenFile={onOpenFile}
-              onOpenSession={onOpenSession}
-              onPinned={(t) => {
-                loaded(t);
-              }}
-            />
+            <Preview vault={vault} path={path} text={previewText} sessions={sessions} {...previewHandlers} />
           </div>
         )}
         </div>

@@ -865,6 +865,7 @@ fn new_member(app: &AppHandle, crew: &Crew, member: &Member) -> Result<SessionMe
         started: vault::now(),
         permission_mode: member.permission_mode.clone(),
         model: crew.model_of(member),
+        agent: None,
         worktree,
         crew: Some(CrewRef { id: crew.id.clone(), role: member.role.clone() }),
     })

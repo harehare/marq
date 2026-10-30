@@ -26,11 +26,24 @@ cursor = "block"                # block | bar | underline
 [notifications]
 enabled = true                  # system notifications when a session finishes, stops or needs an approval
 
+[tabs]
+pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar, or in a row above the others
+
 [ollama]
 url = "http://127.0.0.1:11434"  # default: $OLLAMA_HOST, then this
+
+[agents]
+gemini = { command = "gemini", args = ["--experimental-acp"] }
+kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
 ```
 
 `palette` is used until you pick one in the 🎨 menu.
+
+## Agents
+
+Tasks run on Claude Code by default. The New task dialog can run one on another agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead: Gemini CLI (`gemini --experimental-acp`), Codex (`codex-acp`), OpenCode (`opencode acp`), Qwen Code (`qwen --experimental-acp`) or Goose (`goose acp`). `[agents.<id>]` changes an agent's `command` or `args`, or adds another ACP agent.
+
+Such a session uses the agent's own model and tools. Marq's tools reach it over MCP (HTTP) when the agent supports that, and its permission requests show up as approval cards. Teams, model choice and comparisons are Claude only, and a summary is written from the session note.
 
 ## Keys
 

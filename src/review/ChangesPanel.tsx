@@ -5,11 +5,12 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   GitBranch, GitCommitHorizontal, GitPullRequest, RefreshCw, FolderOpen, Terminal as TerminalIcon, Code2, Trash2,
   ChevronRight, AlertCircle, CheckCircle2, Pencil, ArrowUp, Check, Loader2, MessageSquareText, Send, TextCursorInput,
+  Search, ChevronUp, ChevronDown, X,
 } from "lucide-react";
 import { api, Changes, Worktree } from "../api";
-import { DiffComment, DiffView } from "./DiffView";
+import { countMatches, DiffComment, DiffView } from "./DiffView";
 import { Resizer, usePaneSize } from "../Resizer";
-import { composing } from "../keys";
+import { composing, FIND_EVENT } from "../keys";
 
 type Props = {
   vault: string; sessionId: string; worktree: Worktree; title: string; running: boolean;
@@ -65,10 +66,21 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   const [open, setOpen] = useState<Record<string, string | null>>({});
   const [message, setMessage] = useState(title);
   const [notice, setNotice] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+  // Successes fade on their own; errors and links stay until clicked.
+  useEffect(() => {
+    if (!notice?.ok || notice.url) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
   // What is running now, e.g. "push", so its button and the status line can show it.
   const [pending, setPending] = useState<{ kind: Action; label: string } | null>(null);
   const busy = pending !== null;
   const commitHeight = usePaneSize("commitMessage", 60, 34, 360);
+  // Search in the diffs: null when closed. Every file's diff is loaded for it, not only expanded ones.
+  const [search, setSearch] = useState<string | null>(null);
+  const [diffs, setDiffs] = useState<Record<string, string>>({});
+  const [hit, setHit] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // Read through a ref so `refresh` stays stable; otherwise expanding a diff re-subscribes
   // the event listeners below, and an event arriving in that gap is lost.
@@ -104,7 +116,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   // Refresh after each file-editing tool result and when the turn ends.
   useEffect(() => {
     const un1 = listen<{ session_id: string; event: any }>("session://event", (e) => {
-      if (e.payload.session_id === sessionId && (e.payload.event.type === "user" || e.payload.event.type === "result")) refresh();
+      if (e.payload.session_id === sessionId && (e.payload.event.type === "tool_result" || e.payload.event.type === "turn_end")) refresh();
     });
     const un2 = listen<{ session_id: string }>("session://exit", (e) => e.payload.session_id === sessionId && refresh());
     return () => {
@@ -158,6 +170,38 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
     });
   };
 
+  // Load the diffs to search when the search opens and whenever the changes do.
+  useEffect(() => {
+    if (search === null || !changes) return;
+    let stale = false;
+    Promise.all(changes.files.map(async (f) => [f.path, await api.sessionFileDiff(vault, sessionId, f.path).catch(() => "")] as const))
+      .then((entries) => !stale && setDiffs(Object.fromEntries(entries)));
+    return () => {
+      stale = true;
+    };
+  }, [search === null, changes, vault, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const query = search?.trim() ?? "";
+  // Files with matches, in list order, and where each one's matches start in the overall count.
+  const found = (() => {
+    if (!query || !changes) return null;
+    let total = 0;
+    const files = changes.files.flatMap((f) => {
+      const n = countMatches(diffs[f.path] ?? "", query);
+      if (!n) return [];
+      const start = total;
+      total += n;
+      return [{ path: f.path, start, n }];
+    });
+    return { files, total };
+  })();
+  const current = found?.total ? ((hit % found.total) + found.total) % found.total : -1;
+  const step = (d: number) => setHit((h) => h + d);
+  const openSearch = () => {
+    setSearch((s) => s ?? "");
+    requestAnimationFrame(() => searchRef.current?.select());
+  };
+
   const uncommitted = changes?.dirty ?? false;
   /** Expanded, even when its diff is empty (an empty file, say). */
   const isOpen = (file: string) => open[file] !== undefined && open[file] !== null;
@@ -179,6 +223,13 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
       setSendingReview(false);
     }
   };
+
+  // ⌘F on the session's tab.
+  useEffect(() => {
+    const on = (e: Event) => (e as CustomEvent<string>).detail === `session:${sessionId}` && openSearch();
+    window.addEventListener(FIND_EVENT, on);
+    return () => window.removeEventListener(FIND_EVENT, on);
+  });
 
   return (
     <div className="changes">
@@ -217,8 +268,25 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
         </div>
         <button className="icon" onClick={() => composeDiff(changes?.files.map((f) => f.path) ?? [])} disabled={!changes?.files.length}
           title="Put the whole diff into the message box"><TextCursorInput size={13} /></button>
+        <button className="icon" onClick={openSearch} disabled={!changes?.files.length} title="Search the diffs (⌘F)"><Search size={13} /></button>
         <button className="icon" onClick={refresh} title="Refresh"><RefreshCw size={13} /></button>
       </div>
+      {search !== null && (
+        <div className="diff-search">
+          <Search size={13} className="muted" />
+          <input ref={searchRef} autoFocus value={search} placeholder="Search the diffs" spellCheck={false}
+            onChange={(e) => { setSearch(e.target.value); setHit(0); }}
+            onKeyDown={(e) => {
+              if (composing(e)) return;
+              if (e.key === "Enter") step(e.shiftKey ? -1 : 1);
+              if (e.key === "Escape") setSearch(null);
+            }} />
+          <span className="muted small">{found ? (found.total ? `${current + 1}/${found.total}` : "No matches") : ""}</span>
+          <button className="icon" onClick={() => step(-1)} disabled={!found?.total} title="Previous (⇧↵)"><ChevronUp size={13} /></button>
+          <button className="icon" onClick={() => step(1)} disabled={!found?.total} title="Next (↵)"><ChevronDown size={13} /></button>
+          <button className="icon" onClick={() => setSearch(null)} title="Close (Esc)"><X size={13} /></button>
+        </div>
+      )}
       <div className="open-in">
         <button className="icon" onClick={() => api.openIn(worktree.path, "finder")} title="Reveal in Finder"><FolderOpen size={14} /></button>
         <button className="icon" title="Terminal in the worktree"
@@ -240,7 +308,24 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
 
       <div className="files">
         {changes?.files.length === 0 && <div className="muted small pad">{checkout ? "No uncommitted changes." : "No changes in the worktree yet."}</div>}
-        {changes?.files.map((f) => (
+        {/* While searching, only files with matches are listed, expanded. */}
+        {found && found.files.map((m) => (
+          <div key={m.path} className="file open">
+            <div className="file-row">
+              <button className="file-head" onClick={() => setHit(m.start)}>
+                <ChevronRight size={12} className="chev" />
+                <span className="fpath ellipsis">{m.path}</span>
+                <span className="muted small">{m.n}</span>
+              </button>
+            </div>
+            <DiffView file={m.path} diff={diffs[m.path]} highlight={query}
+              current={current >= m.start && current < m.start + m.n ? current - m.start : -1}
+              comments={comments.filter((c) => c.file === m.path)}
+              onComment={(c) => setComments((cs) => [...cs, { ...c, id: crypto.randomUUID() }])}
+              onRemoveComment={(id) => setComments((cs) => cs.filter((c) => c.id !== id))} />
+          </div>
+        ))}
+        {!found && changes?.files.map((f) => (
           <div key={f.path} className={`file ${isOpen(f.path) ? "open" : ""}`}>
             <div className="file-row">
               <button className="file-head" onClick={() => toggle(f.path)}>

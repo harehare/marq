@@ -107,6 +107,18 @@ export type CrewState = {
 // Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit.
 export type SessionEvent = { type: string; [k: string]: any };
 
+/** A standing session with a role, defined by a note under `helpers/`. */
+export type Helper = {
+  path: string;
+  name: string;
+  summary: string;
+  model: string | null;
+  agent: string | null;
+  session: string | null;
+};
+
+export type AgentInfo = { id: string; label: string; command: string; args: string[]; installed: boolean };
+
 export const api = {
   listFiles: (vault: string) => invoke<FileEntry[]>("list_files", { vault }),
   readNote: (vault: string, path: string) => invoke<string>("read_note", { vault, path }),
@@ -134,12 +146,19 @@ export const api = {
   listSessions: (vault: string, origin?: string) => invoke<SessionInfo[]>("list_sessions", { vault, origin }),
   /** With `autoTitle`, a small model names the task and `title` is the fallback. */
   newTask: (vault: string, task: {
-    title: string; prompt: string; project: string; permissionMode?: string; model?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
+    title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   }) =>
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
+  /** Agents a task can run on: Claude, and others that speak ACP. */
+  listAgents: () => invoke<AgentInfo[]>("list_agents"),
+  listHelpers: (vault: string) => invoke<Helper[]>("list_helpers", { vault }),
+  createHelper: (vault: string, name: string) => invoke<string>("create_helper", { vault, name }),
+  /** Returns the helper's session id. `from` gets the answer back when `reply`. */
+  sendToHelper: (vault: string, path: string, text: string, from: string | null, reply: boolean, fresh: boolean) =>
+    invoke<string>("send_to_helper", { vault, path, text, from, reply, fresh }),
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {
-    title: string; prompt: string; project: string; permissionMode?: string; model?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
+    title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   }) => invoke<string>("save_task", { vault, task }),
   /** One request on 2 to 4 models, each in its own worktree. */
   newTaskCompare: (vault: string, task: {
@@ -191,7 +210,6 @@ export const api = {
   /** Starts a task as a crew: a crew note with the prompt as its Goal, sent to its lead. */
   terminalOpen: (id: string, cwd: string, cols: number, rows: number, command?: string) =>
     invoke<void>("terminal_open", { id, cwd, cols, rows, command }),
-  probeUrl: (url: string) => invoke<{ status: number; frameable: boolean }>("probe_url", { url }),
   /** `expanded`: each word the glossary or aliases widened, with what it also matched (the word first). */
   searchText: (vault: string, query: string, includeSessions: boolean) =>
     invoke<{ hits: SearchHit[]; expanded: string[][] }>("search_text", { vault, query, includeSessions }),

@@ -22,6 +22,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # default_mode = "preview"        # preview | edit | split; new notes always open in edit
 # autosave = true                 # save notes shortly after typing stops, and when they close
 
+[tabs]
+# pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar, or in a row above the others
+
 [terminal]
 # shell = "/bin/zsh"              # default: $SHELL
 # args = ["-l"]
@@ -30,6 +33,10 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 
 [notifications]
 # enabled = true                  # notify when a session finishes, stops with an error or needs an approval
+
+[agents]                          # agents other than Claude talk ACP (Agent Client Protocol)
+# gemini = { command = "gemini", args = ["--experimental-acp"] }
+# kimi = { label = "Kimi", command = "kimi", args = ["acp"] }   # any other ACP agent
 
 [ollama]
 # url = "http://127.0.0.1:11434"   # default: $OLLAMA_HOST, then this

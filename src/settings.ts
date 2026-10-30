@@ -8,6 +8,7 @@ export type Settings = {
   };
   editor?: { default_mode?: "preview" | "edit" | "split"; autosave?: boolean };
   notifications?: { enabled?: boolean };
+  tabs?: { pinned_layout?: "inline" | "row" };
   terminal?: { font?: string; font_size?: number; ligatures?: boolean; cursor?: "block" | "bar" | "underline" };
 };
 

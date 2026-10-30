@@ -4,11 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
-  Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Globe, Timer, Play, Pause,
+  Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff, Bot,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, FileEntry, Schedule, SessionInfo } from "./api";
+import { api, FileEntry, Helper, Schedule, SessionInfo } from "./api";
 import { ScheduleDialog } from "./AutomationDialogs";
 import { setVaultFiles } from "./wikilinks";
 import { NoteEditor } from "./NoteEditor";
@@ -19,10 +19,9 @@ import { TerminalView } from "./TerminalView";
 import { BoardView } from "./BoardView";
 import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
-import { BrowserView } from "./BrowserView";
 import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
-import { DEFAULT_KEYS, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
+import { DEFAULT_KEYS, FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { QueryContext, RUN_AGENT_EVENT } from "./queryContext";
 import { CompareView } from "./review/CompareView";
@@ -34,12 +33,13 @@ import { SettingsDialog } from "./SettingsDialog";
 import { ContextMenu, MenuItem, MenuState } from "./ContextMenu";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { PALETTES, useTheme } from "./theme";
-import { Settings, setSettings } from "./settings";
+import { Settings, setSettings, useSettings } from "./settings";
 import { notify, summary } from "./notify";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
-type Tab =
+/** Pinned tabs come first in the list, so tab order and Cmd+1… match what is shown. */
+type Tab = { pinned?: boolean } & (
   | { key: string; kind: "note"; path: string; title: string; jump?: { line: number; nonce: number }; fresh?: boolean }
   | { key: string; kind: "session"; id: string; title: string }
   | { key: string; kind: "query"; title: string }
@@ -50,10 +50,8 @@ type Tab =
   | { key: string; kind: "board"; path: string; title: string }
   /** `initial` changes (with a new nonce) when a search is started from elsewhere. */
   | { key: string; kind: "search"; title: string; initial: string; nonce: number }
-  /** `nonce` changes when the same tab is asked to show `url` again. */
-  | { key: string; kind: "browser"; url: string; title: string; nonce?: number }
   /** `named`: renamed by the user, so the shell's title no longer applies. */
-  | { key: string; kind: "terminal"; id: string; cwd: string; title: string; command?: string; named?: boolean };
+  | { key: string; kind: "terminal"; id: string; cwd: string; title: string; command?: string; named?: boolean });
 
 const VAULT_KEY = "marq.vault";
 
@@ -75,6 +73,28 @@ function loadVault(): string | null {
     return localStorage.getItem(VAULT_KEY) ?? localStorage.getItem("kura.vault");
   } catch {
     return null;
+  }
+}
+
+const tabsKey = (vault: string) => `marq.tabs:${vault}`;
+
+// Terminals are not restored: their shell ended with the app. Kinds no longer in the app are dropped too.
+const RESTORED_KINDS = new Set(["note", "session", "query", "compare", "crew", "board", "search"]);
+
+/**
+ * The tabs open when the vault was last shown.
+ * One-off state (a jump to a line, a just-created note) is dropped too.
+ */
+function loadTabs(vault: string | null): { tabs: Tab[]; active: string | null } {
+  try {
+    const v = vault && JSON.parse(localStorage.getItem(tabsKey(vault)) ?? "null");
+    if (!v || !Array.isArray(v.tabs)) return { tabs: [], active: null };
+    const tabs = (v.tabs as Tab[])
+      .filter((t) => t && typeof t.key === "string" && RESTORED_KINDS.has(t.kind))
+      .map((t) => (t.kind === "note" ? { ...t, jump: undefined, fresh: undefined } : t));
+    return { tabs, active: tabs.some((t) => t.key === v.active) ? v.active : tabs[tabs.length - 1]?.key ?? null };
+  } catch {
+    return { tabs: [], active: null };
   }
 }
 
@@ -361,8 +381,17 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [newSchedule, setNewSchedule] = useState(false);
-  const [tabs, setTabs] = useState<Tab[]>([]);
-  const [active, setActive] = useState<string | null>(null);
+  const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(vault).tabs);
+  const [active, setActive] = useState<string | null>(() => loadTabs(vault).active);
+  // Restored note and board tabs are checked against the vault's files once they are listed.
+  const pruneTabs = useRef<string | null>(vault);
+  const [filesVault, setFilesVault] = useState<string | null>(null);
+  useEffect(() => {
+    if (!vault) return;
+    try {
+      localStorage.setItem(tabsKey(vault), JSON.stringify({ tabs, active }));
+    } catch {}
+  }, [vault, tabs, active]);
   const [showNewTask, setShowNewTask] = useState(false);
   const [taskPrompt, setTaskPrompt] = useState("");
   // mq results the New task dialog hands to the agent, from a Run agent button.
@@ -377,6 +406,8 @@ export default function App() {
   const [deleting, setDeleting] = useState<SessionInfo | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const [theme, setTheme, themeFromConfig] = useTheme();
+  // Pinned tabs get a row of their own above the others, or lead the one row.
+  const pinnedRow = useSettings().tabs?.pinned_layout === "row";
   const themeMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
@@ -400,9 +431,23 @@ export default function App() {
     if (!vault) return;
     const [fs, ds, sc] = await Promise.all([api.listFiles(vault), api.listDirs(vault), api.schedulesList(vault)]);
     setFiles(fs);
+    setFilesVault(vault);
     setDirs(ds);
     setSchedules(sc);
   }, [vault]);
+
+  // Helper notes live under helpers/; a send writes the session it started into the note.
+  const [helpers, setHelpers] = useState<Helper[]>([]);
+  const [newHelper, setNewHelper] = useState(false);
+  useEffect(() => {
+    if (vault) api.listHelpers(vault).then(setHelpers).catch(() => {});
+  }, [vault, files, sessions]);
+  /** A helper's conversation, or its note while it has none. */
+  const openHelper = (h: Helper) => {
+    const s = h.session && sessions.find((x) => x.id === h.session);
+    if (s) openSession(s.id, s.title);
+    else openNote(h.path);
+  };
 
   // Board queues and schedules run for the open vault, and only while Marq runs.
   useEffect(() => {
@@ -553,6 +598,17 @@ export default function App() {
   const [openCrews, setOpenCrews] = useState<Set<string>>(new Set());
   const crewMembers = (f: FileEntry) => sessions.filter((s) => s.crew && s.crew.id === f.id);
 
+  // Restored tabs on notes deleted or moved while the vault was closed.
+  useEffect(() => {
+    if (!vault || pruneTabs.current !== vault || filesVault !== vault) return;
+    pruneTabs.current = null;
+    const exists = new Set(files.map((f) => f.path));
+    const keep = tabs.filter((t) => !((t.kind === "note" || t.kind === "board") && !exists.has(t.path)));
+    if (keep.length === tabs.length) return;
+    setTabs(keep);
+    if (!keep.some((t) => t.key === active)) setActive(keep[keep.length - 1]?.key ?? null);
+  }, [vault, files, filesVault, tabs, active]);
+
   // Keep open tabs on notes that moved.
   useEffect(() => {
     const un = listen<{ from: string; to: string }[]>("vault://moved", (e) => {
@@ -613,8 +669,11 @@ export default function App() {
       localStorage.setItem(RECENT_KEY, JSON.stringify([dir, ...loadRecentVaults().filter((v) => v !== dir)].slice(0, 8)));
     } catch {}
     if (dir === vault) return;
+    const saved = loadTabs(dir);
     setVault(dir);
-    setTabs([]);
+    setTabs(saved.tabs);
+    setActive(saved.active);
+    pruneTabs.current = dir;
   };
 
   const pickVault = async () => {
@@ -661,19 +720,6 @@ export default function App() {
       ...(fresh ? { fresh } : {}),
     });
   };
-
-  /** A browser tab; `key` reuses one (e.g. a session's preview tab). */
-  const openBrowser = (url = "", title?: string, key?: string) =>
-    openTab({ key: key ?? `browser:${crypto.randomUUID()}`, kind: "browser", url, title: title ?? "Browser", nonce: Date.now() });
-
-  // open_preview from a session: one preview tab per session, reloaded on each call.
-  useEffect(() => {
-    const un = listen<{ session: string; url: string; title?: string }>("marq://preview", (e) =>
-      openBrowser(e.payload.url, e.payload.title ?? "Preview", `browser:preview:${e.payload.session}`));
-    return () => {
-      un.then((f) => f());
-    };
-  });
 
   const openSearch = (initial: string) =>
     openTab({ key: "search", kind: "search", title: "Search", initial, nonce: Date.now() });
@@ -736,6 +782,33 @@ export default function App() {
 
   const openCrewAt = (rel: string, title: string) => openTab({ key: `crew:${rel}`, kind: "crew", crew: rel, title });
   const openCrew = (f: FileEntry) => openCrewAt(f.rel, fileLabel(f));
+
+  /** Pinned tabs move to the end of the pinned ones; unpinned ones to the start of the rest. */
+  const togglePin = (key: string) => {
+    setTabs((prev) => {
+      const t = prev.find((x) => x.key === key);
+      if (!t) return prev;
+      const moved = { ...t, pinned: !t.pinned };
+      const rest = prev.filter((x) => x.key !== key);
+      const at = rest.filter((x) => x.pinned).length;
+      return [...rest.slice(0, at), moved, ...rest.slice(at)];
+    });
+  };
+
+  /** Puts `key` where `target` is; crossing into or out of the pinned group pins or unpins it. */
+  const moveTab = (key: string, target: string) => {
+    if (key === target) return;
+    setTabs((prev) => {
+      const from = prev.findIndex((x) => x.key === key);
+      const to = prev.findIndex((x) => x.key === target);
+      if (from < 0 || to < 0) return prev;
+      const next = prev.slice();
+      next.splice(from, 1);
+      next.splice(to, 0, { ...prev[from], pinned: prev[to].pinned });
+      return next;
+    });
+  };
+  const [dragTab, setDragTab] = useState<string | null>(null);
 
   const closeTab = (key: string) => {
     setTabs((prev) => {
@@ -998,8 +1071,9 @@ export default function App() {
     "mode.pane": { label: "Pane mode", run: () => setMode("pane") },
     "mode.locked": { label: "Lock: send every key to the focused view", run: () => setMode("locked") },
     palette: { label: "Command palette", run: () => setShowPalette(true) },
-    "file.open": { label: "Open a note…", run: () => setShowQuickOpen(true) },
+    "file.open": { label: "Open a note, board, crew or session…", run: () => setShowQuickOpen(true) },
     "search.open": { label: "Search notes", run: () => openSearch("") },
+    find: { label: "Find in this note or in the changes", run: () => active && window.dispatchEvent(new CustomEvent(FIND_EVENT, { detail: active })) },
     "knowledge.gardening": {
       label: "Knowledge: merge session learnings into knowledge notes (daily schedule)",
       run: () => void api.knowledgeGardening(vault!).then((p) => { refreshFiles(); openNote(p); }),
@@ -1008,12 +1082,13 @@ export default function App() {
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },
     "board.new": { label: "New board", run: () => setNewBoard(true) },
+    "helper.new": { label: "New helper (a standing session with a role, such as a translator)", run: () => setNewHelper(true) },
     "query.open": { label: "mq query", run: () => openTab({ key: "query", kind: "query", title: "mq query" }) },
-    "browser.new": { label: "New browser tab", run: () => openBrowser() },
     "terminal.new": { label: "New terminal", run: () => openTerminal(terminalCwd()) },
     "tab.close": { label: "Close tab", run: () => active && closeTab(active) },
     "tab.next": { label: "Next tab", run: () => cycleTab(1) },
     "tab.prev": { label: "Previous tab", run: () => cycleTab(-1) },
+    "tab.pin": { label: "Pin or unpin tab", run: () => active && togglePin(active) },
     "tab.rename": {
       label: "Rename tab or session",
       run: () => activeTab?.kind === "terminal" ? setRenaming(activeTab.key)
@@ -1069,7 +1144,7 @@ export default function App() {
     const key = eventKey(e);
     if (!key) return;
     // Dialogs and menus keep their own keys.
-    if (showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || menu || renaming || renamingSession || newBoard || showSettings || newSchedule) return;
+    if (showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || menu || renaming || renamingSession || newBoard || newHelper || showSettings || newSchedule) return;
     let cmd: string | undefined;
     if (mode === "normal") {
       // ⌃T, ⌃P, ⌃G… belong to whatever runs in a terminal; the ⌘ shortcuts still work there.
@@ -1106,7 +1181,7 @@ export default function App() {
   }, [treeCursor, treeFocus]);
 
   // Back into the active tab after a dialog or menu closes, and on tab switches.
-  const dialogOpen = !!(showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || renaming || renamingSession || menu || newBoard || showSettings || newSchedule);
+  const dialogOpen = !!(showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || renaming || renamingSession || menu || newBoard || newHelper || showSettings || newSchedule);
   const wasOpen = useRef(false);
   useEffect(() => {
     if (wasOpen.current && !dialogOpen && !treeFocus) requestAnimationFrame(focusContent);
@@ -1139,6 +1214,41 @@ export default function App() {
   }
 
   const current = tabs.find((t) => t.key === active);
+  const pinned = tabs.filter((t) => t.pinned);
+  const unpinned = tabs.filter((t) => !t.pinned);
+
+  const tabMenu = (e: React.MouseEvent, t: Tab) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        t.pinned ? { label: "Unpin", icon: PinOff, onClick: () => togglePin(t.key) } : { label: "Pin", icon: Pin, onClick: () => togglePin(t.key) },
+        { label: "Close", icon: X, onClick: () => closeTab(t.key) },
+      ],
+    });
+  };
+
+  const tabEl = (t: Tab) => (
+    <div key={t.key} className={`tab ${t.key === active ? "on" : ""} ${t.pinned ? "pinned" : ""} ${t.key === dragTab ? "dragging" : ""}`}
+      onClick={() => setActive(t.key)}
+      draggable onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; setDragTab(t.key); }}
+      onDragEnter={() => dragTab && moveTab(dragTab, t.key)}
+      onDragOver={(e) => dragTab && e.preventDefault()}
+      onDrop={(e) => e.preventDefault()}
+      onDragEnd={() => setDragTab(null)}
+      onAuxClick={(e) => e.button === 1 && closeTab(t.key)}
+      onContextMenu={(e) => tabMenu(e, t)}
+      onDoubleClick={() => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }))}>
+      {t.kind === "session" ? <MessageSquare size={15} /> : t.kind === "compare" ? <GitCompare size={15} /> : t.kind === "query" ? <Braces size={15} />
+        : t.kind === "crew" ? <Users size={15} /> : t.kind === "terminal" ? <SquareTerminal size={15} />
+        : t.kind === "board" ? <Columns3 size={15} /> : t.kind === "search" ? <Search size={15} /> : <FileText size={15} />}
+      <span className="ellipsis">{t.title}</span>
+      {t.pinned
+        ? <button className="tab-close tab-pin" title="Unpin" onClick={(e) => { e.stopPropagation(); togglePin(t.key); }}><Pin size={12} /></button>
+        : <button className="tab-close" onClick={(e) => { e.stopPropagation(); closeTab(t.key); }}><X size={13} /></button>}
+    </div>
+  );
 
   return (
     <div className="app-shell">
@@ -1151,7 +1261,7 @@ export default function App() {
           <button className="theme-btn" title="Theme" onClick={themeMenu}><Palette size={14} /></button>
           <button className="theme-btn" title="Settings (⌘,)" onClick={(e) => (e.stopPropagation(), setShowSettings(true))}><SettingsIcon size={14} /></button>
         </div>
-        <button className="side-search" onClick={() => setShowQuickOpen(true)} title="Open a note (⌘P) or search notes (⇧⌘F)">
+        <button className="side-search" onClick={() => setShowQuickOpen(true)} title="Open a note, crew or session (⌘P) or search notes (⇧⌘F)">
           <Search size={13} /> <span>Search</span> <kbd>⌘P</kbd>
         </button>
         <button className="new-task" onClick={() => setShowNewTask(true)}>
@@ -1227,6 +1337,26 @@ export default function App() {
               </a>
             ))}
             {boards.length === 0 && <a className="muted small pad" onClick={() => setNewBoard(true)}>Create a board for your tasks</a>}
+          </Collapsible>
+          <Collapsible title="Helpers" icon={<Bot size={11} />} count={helpers.length}
+            action={<button className="section-action" title="New helper" onClick={() => setNewHelper(true)}><Plus size={13} /></button>}>
+            {helpers.map((h) => {
+              const s = h.session ? sessions.find((x) => x.id === h.session) : undefined;
+              const on = s ? current?.kind === "session" && current.id === s.id : current?.kind === "note" && current.path === h.path;
+              return (
+                <a key={h.path} className={`inbox-row helper-row ${on ? "on" : ""}`} onClick={() => openHelper(h)}
+                  title={`${h.summary}\nClick: ${s ? "open its conversation" : "edit its instructions"}`}>
+                  <Bot size={13} /> <span className="ellipsis">{h.name}</span>
+                  {s && <span className={`dot ${s.status}`} />}
+                  <button className="helper-edit" title="Edit its instructions" onClick={(e) => { e.stopPropagation(); openNote(h.path); }}>
+                    <Pencil size={11} />
+                  </button>
+                </a>
+              );
+            })}
+            {helpers.length === 0 && (
+              <a className="muted small pad" onClick={() => setNewHelper(true)}>Add a helper, such as a translator, to send requests to</a>
+            )}
           </Collapsible>
           <Collapsible title="Crews" icon={<Users size={11} />} count={crews.length}
             action={<button className="section-action" title="New crew" onClick={() => setNaming({ kind: "crew", initial: "" })}>
@@ -1341,25 +1471,23 @@ export default function App() {
       </aside>
       <Resizer axis="x" sign={1} pane={sidebar} />
       <main>
-        <nav className="tabs">
-          {tabs.map((t) => (
-            <div key={t.key} className={`tab ${t.key === active ? "on" : ""}`} onClick={() => setActive(t.key)}
-              onAuxClick={(e) => e.button === 1 && closeTab(t.key)}
-              onDoubleClick={() => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }))}>
-              {t.kind === "session" ? <MessageSquare size={15} /> : t.kind === "compare" ? <GitCompare size={15} /> : t.kind === "query" ? <Braces size={15} />
-                : t.kind === "crew" ? <Users size={15} /> : t.kind === "terminal" ? <SquareTerminal size={15} />
-                : t.kind === "board" ? <Columns3 size={15} /> : t.kind === "search" ? <Search size={15} />
-                : t.kind === "browser" ? <Globe size={15} /> : <FileText size={15} />}
-              <span className="ellipsis">{t.title}</span>
-              <button className="tab-close" onClick={(e) => { e.stopPropagation(); closeTab(t.key); }}><X size={13} /></button>
-            </div>
-          ))}
-        </nav>
+        {pinnedRow ? (
+          <>
+            {pinned.length > 0 && <nav className="tabs pinned-row">{pinned.map(tabEl)}</nav>}
+            <nav className="tabs">{unpinned.map(tabEl)}</nav>
+          </>
+        ) : (
+          <nav className="tabs">
+            {pinned.map(tabEl)}
+            {pinned.length > 0 && unpinned.length > 0 && <span className="tab-sep" />}
+            {unpinned.map(tabEl)}
+          </nav>
+        )}
         <section className="pane">
           {/* Tabs stay mounted so editor state and session streams survive switching. */}
           {tabs.map((t) => (
             <div key={t.key} className="pane-inner" tabIndex={-1} hidden={t.key !== active}>
-              {t.kind === "note" && <NoteEditor vault={vault} path={t.path} jump={t.jump} fresh={t.fresh} onOpenSession={openSession} onOpenFile={openFile}
+              {t.kind === "note" && <NoteEditor vault={vault} path={t.path} active={t.key === active} jump={t.jump} fresh={t.fresh} onOpenSession={openSession} onOpenFile={openFile}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} />}
               {t.kind === "compare" && <CompareView vault={vault} ids={t.ids} sessions={sessions} onOpenSession={openSession} onChanged={refresh} />}
               {t.kind === "session" && <SessionView vault={vault} sessionId={t.id} onOpenOrigin={openNote} onOpenSession={openSession}
@@ -1370,8 +1498,6 @@ export default function App() {
               {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
                 onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
                 onStartTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }} />}
-              {t.kind === "browser" && <BrowserView url={t.url} nonce={t.nonce}
-                onTitle={(title) => setTabs((prev) => prev.map((x) => (x.key === t.key ? { ...x, title } : x)))} />}
               {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active}
                 onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))} />}
               {t.kind === "query" && <QueryView vault={vault} saved={files.filter((f) => f.kind === "query")} onOpenNote={(p) => openNote(p)} />}
@@ -1449,7 +1575,8 @@ export default function App() {
           vault={vault}
           excerpt={sending.excerpt}
           exclude={sending.exclude}
-          onSent={(id, title) => { refresh(); openSession(id, title); }}
+          onSent={(id, title, stay) => { refresh(); if (!stay) openSession(id, title); }}
+          onOpenFile={openFile}
           onNewTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }}
           onClose={() => setSending(null)}
         />
@@ -1466,8 +1593,10 @@ export default function App() {
           onStartedCompare={(ids, title) => openCompare(ids, title)} />
       )}
       {showQuickOpen && (
-        <QuickOpen files={files} recent={recentFiles} onClose={() => setShowQuickOpen(false)}
-          onOpen={(f) => openFile(f.path)} onSearch={openSearch} />
+        <QuickOpen files={files} recent={recentFiles} sessions={sessions} onClose={() => setShowQuickOpen(false)}
+          placeholder="Open a note, board, crew or session…  (⇧↵ searches the text)"
+          onOpen={(f) => (f.kind === "crew" ? openCrew(f) : openFile(f.path))}
+          onOpenSession={(s) => openSession(s.id, s.title)} onSearch={openSearch} />
       )}
       {showPalette && (
         <CommandPalette commands={paletteCommands} onClose={() => setShowPalette(false)}
@@ -1477,6 +1606,12 @@ export default function App() {
         <NameDialog title="New board" label="Board name" placeholder="e.g. sprint-12 or personal" submit="Create"
           hint="Saved as boards/<name>.md with Todo, Doing and Done. Add lists on the board or as ## headings in the Markdown."
           onSubmit={async (v) => openBoard(await api.boardCreate(vault, v))} onClose={() => setNewBoard(false)} />
+      )}
+      {newHelper && (
+        <NameDialog title="New helper" label="Name" placeholder="e.g. 翻訳 or Proofreader" submit="Create"
+          hint="Saved as helpers/<name>.md. Write its role in the note; then pick it in Send to session, or open it here and chat."
+          onSubmit={async (v) => { const p = await api.createHelper(vault, v); await refreshFiles(); openNote(p); }}
+          onClose={() => setNewHelper(false)} />
       )}
       {showSettings && (
         <SettingsDialog onSaved={loadConfig} onClose={() => setShowSettings(false)}

@@ -6,6 +6,9 @@ export function composing(e: { nativeEvent: KeyboardEvent } | KeyboardEvent): bo
   return ev.isComposing || ev.keyCode === 229;
 }
 
+/** ⌘F: the open tab finds in itself. `detail` is the tab's key (`note:<path>`, `session:<id>`). */
+export const FIND_EVENT = "marq:find";
+
 export type Mode = "normal" | "tab" | "pane" | "locked";
 
 /** Mode -> command id -> keys. */
@@ -19,12 +22,12 @@ export const DEFAULT_KEYS: Keymap = {
     palette: ["Cmd+K", "Cmd+Shift+P"],
     "file.open": ["Cmd+P"],
     "search.open": ["Cmd+Shift+F"],
+    find: ["Cmd+F"],
     "task.new": ["Cmd+N"],
     "note.new": ["Cmd+Shift+N"],
     "note.toggleEdit": ["Cmd+E"],
     "query.open": ["Cmd+Shift+Q"],
     "terminal.new": ["Cmd+T"],
-    "browser.new": ["Cmd+Shift+B"],
     "tab.close": ["Cmd+W"],
     "tab.next": ["Cmd+Shift+]", "Ctrl+Tab"],
     "tab.prev": ["Cmd+Shift+[", "Ctrl+Shift+Tab"],
@@ -41,6 +44,7 @@ export const DEFAULT_KEYS: Keymap = {
     "terminal.new": ["N"],
     "tab.close": ["X"],
     "tab.rename": ["R"],
+    "tab.pin": ["P"],
     ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`tab.goto.${n}`, [`${n}`]])),
     "mode.normal": ["Escape", "Enter", "Ctrl+T"],
   },

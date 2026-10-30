@@ -1,7 +1,10 @@
 //! Session logs: `sessions/.raw/<id>.jsonl` and the Markdown rendered from it.
 //!
-//! Besides the Agent SDK messages, the raw log holds marq lines so the Markdown can be rebuilt
-//! from it alone: `marq_meta` (first line), `marq_user` (each prompt), `marq_approval` and `marq_exit`.
+//! The raw log holds the agent's session events in marq's own shape, whichever agent ran (`init`, `text`,
+//! `thinking`, `tool_call`, `tool_result`, `turn_end`; see `sidecar/protocol.ts`), and marq lines so the
+//! Markdown can be rebuilt from it alone: `marq_meta` (first line), `marq_user` (each prompt),
+//! `marq_approval` and `marq_exit`. Logs from before the events had their own shape hold Agent SDK
+//! messages instead; `read_events` translates those.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,6 +31,9 @@ pub struct SessionMeta {
     /// A Claude alias (`sonnet`…) or `ollama:<name>`; None is the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The agent backend the session runs on; None is Claude.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     /// Set when the session works in its own git worktree.
     #[serde(default)]
     pub worktree: Option<git::Worktree>,
@@ -111,15 +117,63 @@ pub fn meta(vault: &Path, id: &str) -> Result<SessionMeta> {
 
 pub fn read_events(vault: &Path, id: &str) -> Result<Vec<Value>> {
     let text = std::fs::read_to_string(raw_path(vault, id)).map_err(|_| Error::SessionNotFound(id.to_string()))?;
-    Ok(text.lines().filter_map(|l| serde_json::from_str(l).ok()).map(upgrade).collect())
+    Ok(text.lines().filter_map(|l| serde_json::from_str(l).ok()).flat_map(upgrade).collect())
 }
 
-/// Maps the old `kura_*` / `comb_*` line types to `marq_*`.
-fn upgrade(mut e: Value) -> Value {
+/// Maps the old `kura_*` / `comb_*` line types to `marq_*`, and Agent SDK messages to session events.
+fn upgrade(mut e: Value) -> Vec<Value> {
     if let Some(t) = e["type"].as_str().and_then(|t| t.strip_prefix("kura_").or_else(|| t.strip_prefix("comb_"))) {
         e["type"] = Value::String(format!("marq_{t}"));
     }
-    e
+    match e["type"].as_str() {
+        Some("system" | "assistant" | "user" | "result" | "stream_event") => from_claude_sdk(&e),
+        _ => vec![e],
+    }
+}
+
+/// The session events for an Agent SDK message, as `sidecar/claude.ts` translates them today.
+fn from_claude_sdk(m: &Value) -> Vec<Value> {
+    use serde_json::json;
+    let blocks = || m["message"]["content"].as_array().into_iter().flatten();
+    match m["type"].as_str().unwrap_or("") {
+        "system" if m["subtype"] == "init" => vec![json!({"type": "init", "agent": "claude", "model": m["model"]})],
+        "assistant" => blocks()
+            .filter_map(|c| match c["type"].as_str()? {
+                "text" => Some(json!({"type": "text", "text": c["text"]})),
+                "thinking" => Some(json!({"type": "thinking", "text": c["thinking"]})),
+                "tool_use" => {
+                    let name = c["name"].as_str().unwrap_or("tool");
+                    Some(json!({"type": "tool_call", "id": c["id"], "name": name, "kind": claude_tool_kind(name), "input": c["input"]}))
+                }
+                _ => None,
+            })
+            .collect(),
+        "user" => blocks()
+            .filter(|c| c["type"] == "tool_result")
+            .map(|c| json!({"type": "tool_result", "id": c["tool_use_id"], "output": tool_result_text(&c["content"]), "is_error": c["is_error"]}))
+            .collect(),
+        "result" => vec![json!({
+            "type": "turn_end",
+            "result": m["result"].as_str().unwrap_or(""),
+            "is_error": m["is_error"] == true,
+            "cost_usd": m["total_cost_usd"],
+            "duration_ms": m["duration_ms"],
+            "num_turns": m["num_turns"],
+        })],
+        _ => vec![],
+    }
+}
+
+/// The kind of a Claude Code tool, as `TOOL_KINDS` in `sidecar/claude.ts`.
+fn claude_tool_kind(name: &str) -> &'static str {
+    match name {
+        "Read" => "read",
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => "edit",
+        "Bash" => "execute",
+        "Grep" | "Glob" => "search",
+        "WebFetch" | "WebSearch" => "fetch",
+        _ => "other",
+    }
 }
 
 /// The first `marq_meta` line, with the latest `marq_worktree`, `marq_model` and `marq_title` lines applied.
@@ -143,10 +197,10 @@ pub fn status_of(events: &[Value]) -> String {
     let last = events
         .iter()
         .rev()
-        .find(|e| matches!(e["type"].as_str(), Some("marq_user" | "marq_exit" | "result")));
+        .find(|e| matches!(e["type"].as_str(), Some("marq_user" | "marq_exit" | "turn_end")));
     match last {
         Some(e) if e["type"] == "marq_user" => "running".to_string(),
-        Some(e) if e["type"] == "result" && e["is_error"] == true => "error".to_string(),
+        Some(e) if e["type"] == "turn_end" && e["is_error"] == true => "error".to_string(),
         Some(e) if e["type"] == "marq_exit" => match e["status"].as_str() {
             Some("error") => "error".to_string(),
             Some("stopped" | "interrupted") => "interrupted".to_string(),
@@ -291,8 +345,7 @@ pub fn write_back(vault: &Path, id: &str) -> Result<Option<String>> {
     if meta.crew.is_some() {
         return Ok(None);
     }
-    let last = events.iter().rev().find(|e| e["type"] == "result");
-    let Some(result) = last.filter(|e| e["is_error"] != true).and_then(|e| e["result"].as_str()) else {
+    let Some(result) = last_result(&events) else {
         return Ok(None);
     };
     let Some(path) = find_origin(vault, &meta) else { return Ok(None) };
@@ -307,6 +360,11 @@ pub fn write_back(vault: &Path, id: &str) -> Result<Option<String>> {
     };
     std::fs::write(&path, text)?;
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// The reply of the last turn, unless it failed.
+pub fn last_result(events: &[Value]) -> Option<&str> {
+    events.iter().rev().find(|e| e["type"] == "turn_end").filter(|e| e["is_error"] != true).and_then(|e| e["result"].as_str())
 }
 
 /// The origin note: `origin_path` if it still holds the id, otherwise a vault scan, so renames are fine.
@@ -353,7 +411,7 @@ pub fn current_worktree(vault: &Path, id: &str) -> Result<Option<git::Worktree>>
 
 /// Whether the agent ever started the session's conversation, so it can be resumed.
 pub fn has_conversation(events: &[Value]) -> bool {
-    events.iter().any(|e| (e["type"] == "system" && e["subtype"] == "init") || e["type"] == "assistant")
+    events.iter().any(|e| matches!(e["type"].as_str(), Some("init" | "text" | "thinking" | "tool_call")))
 }
 
 /// The first prompt of a session.
@@ -485,52 +543,38 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
     };
     for e in events {
         match e["type"].as_str().unwrap_or("") {
-            "system" if e["subtype"] == "init" => model = e["model"].as_str().unwrap_or("").to_string(),
+            "init" => model = e["model"].as_str().unwrap_or("").to_string(),
             "marq_user" => {
                 role(&mut transcript, "user");
                 transcript.push_str(e["text"].as_str().unwrap_or("").trim());
                 transcript.push('\n');
             }
-            "assistant" => {
-                for c in e["message"]["content"].as_array().into_iter().flatten() {
-                    match c["type"].as_str() {
-                        Some("text") => {
-                            role(&mut transcript, "assistant");
-                            transcript.push_str(c["text"].as_str().unwrap_or("").trim());
-                            transcript.push_str("\n\n");
-                        }
-                        Some("tool_use") => {
-                            role(&mut transcript, "assistant");
-                            let name = c["name"].as_str().unwrap_or("tool");
-                            let arg = tool_arg(&c["input"]);
-                            if matches!(name, "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
-                                && !files.contains(&arg)
-                            {
-                                files.push(arg.clone());
-                            }
-                            let f = fence(&arg);
-                            transcript.push_str(&format!("{f}tool:{name}\n{}\n{f}\n\n", arg.trim_end()));
-                        }
-                        _ => {}
-                    }
-                }
+            "text" => {
+                role(&mut transcript, "assistant");
+                transcript.push_str(e["text"].as_str().unwrap_or("").trim());
+                transcript.push_str("\n\n");
             }
-            "user" => {
-                for c in e["message"]["content"].as_array().into_iter().flatten() {
-                    if c["type"] != "tool_result" {
-                        continue;
-                    }
-                    let out = tool_result_text(&c["content"]);
-                    if out.trim().is_empty() {
-                        continue;
-                    }
-                    let f = fence(&out);
-                    let block = format!("{f}text\n{}\n{f}", out.trim_end());
-                    if out.lines().count() > 20 {
-                        transcript.push_str(&format!("<details><summary>result</summary>\n\n{block}\n\n</details>\n\n"));
-                    } else {
-                        transcript.push_str(&format!("{block}\n\n"));
-                    }
+            "tool_call" => {
+                role(&mut transcript, "assistant");
+                let name = e["name"].as_str().unwrap_or("tool");
+                let arg = tool_arg(&e["input"]);
+                if e["kind"] == "edit" && !files.contains(&arg) {
+                    files.push(arg.clone());
+                }
+                let f = fence(&arg);
+                transcript.push_str(&format!("{f}tool:{name}\n{}\n{f}\n\n", arg.trim_end()));
+            }
+            "tool_result" => {
+                let out = e["output"].as_str().unwrap_or("");
+                if out.trim().is_empty() {
+                    continue;
+                }
+                let f = fence(out);
+                let block = format!("{f}text\n{}\n{f}", out.trim_end());
+                if out.lines().count() > 20 {
+                    transcript.push_str(&format!("<details><summary>result</summary>\n\n{block}\n\n</details>\n\n"));
+                } else {
+                    transcript.push_str(&format!("{block}\n\n"));
                 }
             }
             "marq_doc" => {
@@ -547,8 +591,8 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
                     docs.push(path.to_string());
                 }
             }
-            "result" => {
-                cost += e["total_cost_usd"].as_f64().unwrap_or(0.0);
+            "turn_end" => {
+                cost += e["cost_usd"].as_f64().unwrap_or(0.0);
                 last_result = e["result"].as_str();
             }
             _ => {}
@@ -603,6 +647,7 @@ mod tests {
             started: "2026-10-27T10:00:00+09:00".into(),
             permission_mode: None,
             model: None,
+            agent: None,
             worktree: None,
             crew: None,
         }
@@ -615,16 +660,20 @@ mod tests {
         let events = vec![
             m,
             json!({"type": "marq_user", "text": "read a.txt"}),
-            json!({"type": "system", "subtype": "init", "model": "claude-haiku-5-5"}),
-            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "a.txt"}}]}}),
-            json!({"type": "user", "message": {"content": [{"type": "tool_result", "content": "1\tline ```one"}]}}),
-            json!({"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "x"}, {"type": "text", "text": "line one"}]}}),
+            json!({"type": "init", "agent": "claude", "model": "claude-haiku-5-5"}),
+            json!({"type": "tool_call", "id": "t1", "name": "Read", "kind": "read", "input": {"file_path": "a.txt"}}),
+            json!({"type": "tool_result", "id": "t1", "output": "1\tline ```one"}),
+            json!({"type": "tool_call", "id": "t2", "name": "write_file", "kind": "edit", "input": {"path": "b.txt"}}),
+            json!({"type": "thinking", "text": "x"}),
+            json!({"type": "text", "text": "line one"}),
             json!({"type": "marq_doc", "path": "docs/2026-10-27-plan.md", "title": "Plan", "created": true}),
-            json!({"type": "result", "result": "line one", "total_cost_usd": 0.01}),
+            json!({"type": "turn_end", "result": "line one", "is_error": false, "cost_usd": 0.01}),
             json!({"type": "marq_exit", "status": "done", "ended": "2026-10-27T10:01:00+09:00"}),
         ];
         let md = render(&meta(), &events, None);
         assert!(md.contains("status: done\n"));
+        assert!(md.contains("cost_usd: 0.0100\n"));
+        assert!(md.contains("files_changed: [\"b.txt\"]"));
         assert!(md.contains("model: claude-haiku-5-5\n"));
         assert!(md.contains("## Summary\n\nline one\n"));
         assert!(md.contains("```tool:Read\na.txt\n```"));
@@ -648,7 +697,7 @@ mod tests {
         rerender(v, &meta().id).unwrap();
         append_learning(v, &meta().id, "mq select yields None").unwrap();
         append_learning(v, &meta().id, "second").unwrap();
-        append(&raw, &json!({"type": "result", "result": "ok"})).unwrap();
+        append(&raw, &json!({"type": "turn_end", "result": "ok", "is_error": false})).unwrap();
         rerender(v, &meta().id).unwrap();
         let md = std::fs::read_to_string(md_path(v, &meta())).unwrap();
         assert!(md.contains("## Learnings\n\n- mq select yields None\n- second\n"), "{md}");
@@ -681,8 +730,43 @@ mod tests {
         assert!(!has_conversation(&failed));
         assert_eq!(first_prompt(&failed).as_deref(), Some("do it"));
         let mut started = failed.clone();
-        started.insert(2, json!({"type": "system", "subtype": "init"}));
+        started.insert(2, json!({"type": "init", "agent": "claude"}));
         assert!(has_conversation(&started));
+    }
+
+    #[test]
+    fn reads_agent_sdk_messages_as_session_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path();
+        std::fs::create_dir_all(v.join("sessions/.raw")).unwrap();
+        let mut m = serde_json::to_value(meta()).unwrap();
+        m["type"] = json!("marq_meta");
+        let raw = raw_path(v, &meta().id);
+        for line in [
+            m,
+            json!({"type": "marq_user", "text": "edit a.txt"}),
+            json!({"type": "system", "subtype": "init", "model": "claude-haiku-5-5"}),
+            json!({"type": "stream_event", "event": {}}),
+            json!({"type": "assistant", "message": {"content": [
+                {"type": "thinking", "thinking": "x"},
+                {"type": "text", "text": "ok"},
+                {"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": "a.txt"}},
+            ]}}),
+            json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": [{"type": "text", "text": "done"}]}]}}),
+            json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "total_cost_usd": 0.02, "num_turns": 2}),
+        ] {
+            append(&raw, &line).unwrap();
+        }
+        let events = read_events(v, &meta().id).unwrap();
+        let types: Vec<&str> = events.iter().filter_map(|e| e["type"].as_str()).collect();
+        assert_eq!(types, ["marq_meta", "marq_user", "init", "thinking", "text", "tool_call", "tool_result", "turn_end"]);
+        assert_eq!(events[2]["model"], "claude-haiku-5-5");
+        assert_eq!((&events[5]["kind"], &events[5]["name"]), (&json!("edit"), &json!("Edit")));
+        assert_eq!((&events[6]["id"], &events[6]["output"]), (&json!("t1"), &json!("done")));
+        assert_eq!((&events[7]["result"], &events[7]["cost_usd"]), (&json!(""), &json!(0.02)));
+        assert_eq!(status_of(&events), "error");
+        assert!(has_conversation(&events));
+        assert_eq!(last_result(&events), None);
     }
 
     #[test]

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { FolderGit2, FolderSearch, GitCompare, Loader2, Sparkles, Users, X } from "lucide-react";
-import { api } from "./api";
+import { api, type AgentInfo } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
 import { useAutoGrow } from "./useAutoGrow";
 import { ModelSelect } from "./ModelSelect";
@@ -34,6 +34,7 @@ export const MODES = [
 ];
 
 const PROJECT_KEY = "marq.lastProject";
+const AGENT_KEY = "marq.lastAgent";
 const MODEL_KEY = "marq.lastModel";
 const MODE_KEY = "marq.lastMode";
 const TEAM_KEY = "marq.lastTeam";
@@ -55,6 +56,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [project, setProject] = useState(() => stored(PROJECT_KEY, ""));
   const [mode, setMode] = useState(() => stored(MODE_KEY, "auto"));
   const [model, setModel] = useState(() => stored(MODEL_KEY, ""));
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [agent, setAgent] = useState(() => stored(AGENT_KEY, "claude"));
   const [carry, setCarry] = useState(false);
   // More models to run the same task on, to compare the results.
   const [extra, setExtra] = useState<string[]>([]);
@@ -78,6 +81,11 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
 
   useEffect(() => {
     api.recentProjects(vault).then(setProjects);
+    api.listAgents().then((list) => {
+      setAgents(list);
+      // An agent removed from config.toml since it was last used.
+      setAgent((a) => (list.some((x) => x.id === a) ? a : "claude"));
+    }, () => {});
     promptRef.current?.focus();
   }, [vault]);
 
@@ -86,7 +94,10 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     if (typeof dir === "string") setProject(dir);
   };
 
-  const comparing = worktree && !team && extra.length > 0;
+  // Teams, model choice and comparisons are Claude's; other agents (ACP) run one session on their own model.
+  const other = !team && agent !== "claude";
+  const comparing = worktree && !team && !other && extra.length > 0;
+  const runOn = other ? { agent, model: undefined } : { model };
   const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !team && !comparing;
   const splitting = canSplit && perFile;
   // The agent gets the instruction, then the results; a saved request keeps both.
@@ -102,6 +113,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         localStorage.setItem(PROJECT_KEY, project);
         localStorage.setItem(MODE_KEY, mode);
         localStorage.setItem(MODEL_KEY, model);
+        localStorage.setItem(AGENT_KEY, agent);
         localStorage.setItem(TEAM_KEY, String(team));
         localStorage.setItem(WORKTREE_KEY, String(worktree));
       } catch {}
@@ -126,7 +138,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         for (const [i, each] of context.each.entries()) {
           setStage(`Starting session ${i + 1} of ${context.each.length}…`);
           const t = await api.newTask(vault, {
-            title: `${derivedTitle} · ${context.names[i]}`, prompt: withContext(prompt, each), project, permissionMode: mode, model,
+            title: `${derivedTitle} · ${context.names[i]}`, prompt: withContext(prompt, each), project, permissionMode: mode, ...runOn,
             carryChanges: carry, worktree, autoTitle: false,
           });
           first ??= t;
@@ -136,7 +148,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         return;
       }
       const started = await api.newTask(vault, {
-        title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
+        title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, ...runOn, carryChanges: carry, worktree, autoTitle: !title.trim(),
       });
       onStarted(started.session_id, started.title);
       onClose();
@@ -153,7 +165,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     setStage("Saving the request…");
     try {
       const rel = await api.saveTask(vault, {
-        title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, model, carryChanges: carry, worktree, autoTitle: !title.trim(),
+        title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, ...runOn, carryChanges: carry, worktree, autoTitle: !title.trim(),
       });
       onSaved(rel);
       onClose();
@@ -240,15 +252,28 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           </label>
         )}
 
+        {!team && agents.length > 1 && <>
+          <label className="field-label">Agent</label>
+          <select className="model-select" value={agent} onChange={(e) => setAgent(e.target.value)}>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id} disabled={!a.installed && a.id !== agent}>
+                {a.label}{a.installed ? "" : ` (not found: ${a.command})`}
+              </option>
+            ))}
+          </select>
+          {other && <p className="muted small">Runs over ACP on the agent's own default model. Add or change agents under [agents] in config.toml.</p>}
+        </>}
+        {!other && <>
         <label className="field-label">Model</label>
         <ModelSelect value={model} onChange={setModel} />
-        {worktree && extra.map((m, i) => (
+        </>}
+        {worktree && !other && extra.map((m, i) => (
           <div key={i} className="compare-row">
             <ModelSelect value={m} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? v : x)))} />
             <button className="icon" onClick={() => setExtra(extra.filter((_, j) => j !== i))} title="Remove"><X size={13} /></button>
           </div>
         ))}
-        {worktree && extra.length < 3 && (
+        {worktree && !other && extra.length < 3 && (
           <button className="compare-add" onClick={() => setExtra([...extra, model])}>
             <GitCompare size={13} /> Compare with another model
           </button>

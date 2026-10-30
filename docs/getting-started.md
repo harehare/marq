@@ -46,8 +46,4 @@ To work on a repository instead, press ⌘N for **New task**. See [Sessions](ses
 | Boards | Kanban boards stored as Markdown |
 | Query | A query tab with presets (inbox, learnings, Bash commands). See [mq queries](mq.md) |
 
-Find things with **⌘P** (open a note, board or crew by fuzzy title or path; ⇧↵ searches text instead) and **⇧⌘F** (the Search tab: lines that contain every word, grouped by note). ⌘K lists every command with its keys.
-
-## Browser tabs
-
-**⇧⌘B** opens a browser tab: an address bar (a URL, `localhost:5173`, or a file path), back and forward, reload, phone width (390px) and open in the default browser. Sites that refuse framing get a link to open them outside. Agents can show you a dev server or an HTML file they wrote with `open_preview`.
+Find things with **⌘P** (open a note, board, crew or session by fuzzy title or path: crews open in the crew view and sessions in their conversation, sessions at work listed first; ⇧↵ searches text instead) and **⇧⌘F** (the Search tab: lines that contain every word, grouped by note). **⌘F** finds within the open note (in the preview, or in the source when only the editor is shown) or, on a session tab, in the Changes panel's diffs; ↵ and ⇧↵ move between matches. ⌘K lists every command with its keys.

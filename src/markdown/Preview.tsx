@@ -1,4 +1,4 @@
-import { createContext, createElement, ReactNode, useContext } from "react";
+import { createContext, createElement, memo, ReactNode, useContext } from "react";
 import ReactMarkdown, { Components, defaultUrlTransform } from "react-markdown";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import remarkGfm from "remark-gfm";
@@ -193,7 +193,8 @@ const COMPONENTS: Components = {
 
 const PLUGINS = [remarkGfm, remarkWikilinks];
 
-function Segment({ text, line }: { text: string; line: number }) {
+// Parsing is the expensive part, so a segment whose text did not change is not parsed again.
+const Segment = memo(function Segment({ text, line }: { text: string; line: number }) {
   return (
     <OffsetCtx.Provider value={line}>
       <ReactMarkdown remarkPlugins={PLUGINS} components={COMPONENTS} urlTransform={urlTransform}>
@@ -201,9 +202,13 @@ function Segment({ text, line }: { text: string; line: number }) {
       </ReactMarkdown>
     </OffsetCtx.Provider>
   );
-}
+});
 
-export function Preview(props: Props) {
+/**
+ * Renders again only when its props change, so pass callbacks that keep their identity: the app re-renders
+ * on every session event, and parsing a long note each time made everything slow.
+ */
+export const Preview = memo(function Preview(props: Props) {
   const { text, sessions, onEditAt, onOpenSession } = props;
   const segs = segments(text);
 
@@ -238,4 +243,4 @@ export function Preview(props: Props) {
       </article>
     </PreviewCtx.Provider>
   );
-}
+});

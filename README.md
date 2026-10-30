@@ -27,7 +27,7 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 - **Compare models.** Run one task on 2 to 4 models, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
 - **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar.
 - **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed, and you can send follow-ups while an agent is working.
-- **Terminal and browser tabs** next to your sessions, for dev servers and previews.
+- **Terminal tabs** next to your sessions, for dev servers and builds.
 - **Claude and Ollama.** Use your own `claude` login, or a local model served by Ollama.
 
 ### Knowledge base

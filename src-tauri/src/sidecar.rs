@@ -1,4 +1,4 @@
-//! Talks to `sidecar/main.ts`, which runs sessions with the Claude Agent SDK.
+//! Talks to `sidecar/main.ts`, which runs sessions on agent backends (Claude through the Agent SDK).
 //!
 //! One Node process serves every session. Commands go to its stdin as JSON lines and events
 //! come back on stdout. The sidecar keeps a session's process alive between turns, so follow-ups,
@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::agents;
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
@@ -59,6 +60,17 @@ pub struct Runner {
 
 use crate::shell::which;
 
+/// The default agent's executable on the shell's PATH.
+fn executable(agent: Option<&str>) -> String {
+    agents::command(agent).0
+}
+
+/// The id of the agent's own session, which an ACP agent needs to resume it: the last `init` that has one.
+fn agent_session(vault: &Path, id: &str) -> Option<String> {
+    let events = session::read_events(vault, id).ok()?;
+    events.iter().rev().filter(|e| e["type"] == "init").find_map(|e| e["session"].as_str().map(str::to_string))
+}
+
 fn sidecar_script() -> PathBuf {
     std::env::var_os("MARQ_SIDECAR")
         .map(PathBuf::from)
@@ -74,8 +86,7 @@ learnings, use the glossary's preferred terms rather than synonyms, and give doc
 Link notes with [[Title]] (a note's title, file name or alias); read_note accepts the same names, and note_links \
 shows what links to a note and where it is mentioned without a link. \
 The user's tasks are on kanban boards (list_boards, read_board, board_add_card, board_update_card): \
-when working on a card, move it and add notes as you go. \
-To show the user a page (a dev server you started, an HTML file you wrote), call open_preview.\n\n\
+when working on a card, move it and add notes as you go.\n\n\
 Documents you write for the user, such as reports, plans, designs, investigations, summaries, how-tos and meeting \
 notes, belong in the vault: save them with the marq write_doc tool, not as files in the working directory. \
 To revise one, call write_doc again with its path. Only put a document in the repository when the user asks for \
@@ -99,6 +110,7 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         system.push_str(&crew::system_prompt(vault, c));
         dirs = crew::other_dirs(vault, c);
     }
+    let (executable, args) = agents::command(meta.agent.as_deref());
     json!({
         "op": "start",
         "id": meta.id,
@@ -107,16 +119,19 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         "resume": resume,
         "permissionMode": meta.permission_mode,
         "model": meta.model,
-        "claudePath": which("claude"),
+        "agent": meta.agent,
+        "executable": executable,
+        "args": args,
+        "agentSession": if resume { agent_session(vault, &meta.id) } else { None },
         "system": system,
         "crew": meta.crew.is_some(),
         "additionalDirectories": dirs,
     })
 }
 
-/// Resolves `claude` and `node` and starts the sidecar ahead of the first session.
+/// Resolves the default agent and `node` and starts the sidecar ahead of the first session.
 pub fn prewarm(app: &AppHandle) {
-    which("claude");
+    executable(None);
     which("node");
     if let Err(e) = app.state::<Runner>().sender(app) {
         eprintln!("marq: {e}");
@@ -154,6 +169,8 @@ impl Runner {
         session::append(&raw, &json!({"type": "marq_user", "text": prompt, "timestamp": vault::now()}))?;
         session::rerender(&vault, &id)?;
         self.vaults.lock().unwrap().insert(id.clone(), vault.clone());
+        // The session is running again: the session list moves it to Active.
+        let _ = app.emit("sessions://changed", &id);
 
         let cmd = if was_alive {
             // A crew member's model can change between turns.
@@ -215,6 +232,9 @@ impl Runner {
     /// Writes `## Summary` and `## Learnings` from a forked one-turn summary of the session.
     pub async fn summarize(&self, app: &AppHandle, vault: &Path, id: &str) -> Result<String> {
         let meta = session::meta(vault, id)?;
+        let (executable, args) = agents::command(meta.agent.as_deref());
+        // Agents that cannot fork a conversation summarize the session note instead.
+        let transcript = std::fs::read_to_string(session::md_path(vault, &meta)).unwrap_or_default();
         let req_id = vault::new_id();
         let (tx, rx) = oneshot::channel();
         self.summaries.lock().unwrap().insert(req_id.clone(), tx);
@@ -227,7 +247,11 @@ impl Runner {
                 "cwd": vault::expand_home(&meta.cwd),
                 "instruction": SUMMARY_INSTRUCTION,
                 "model": meta.model,
-                "claudePath": which("claude"),
+                "agent": meta.agent,
+                "executable": executable,
+                "args": args,
+                "agentSession": agent_session(vault, id),
+                "transcript": transcript,
             }),
         )?;
         let text = rx.await.map_err(|_| Error::Other("the sidecar exited".into()))?.map_err(Error::Other)?;
@@ -237,7 +261,7 @@ impl Runner {
 }
 
 impl Runner {
-    /// Slash commands and skills Claude Code offers in `cwd`, from the running session if there is one.
+    /// Slash commands and skills the default agent offers in `cwd`, from the running session if there is one.
     pub async fn commands(&self, app: &AppHandle, cwd: &str, session_id: Option<&str>) -> Result<Value> {
         let req_id = vault::new_id();
         let (tx, rx) = oneshot::channel();
@@ -245,7 +269,7 @@ impl Runner {
         let id = session_id.filter(|s| self.is_alive(s));
         self.send(
             app,
-            json!({"op": "commands", "reqId": req_id, "id": id, "cwd": vault::expand_home(cwd), "claudePath": which("claude")}),
+            json!({"op": "commands", "reqId": req_id, "id": id, "cwd": vault::expand_home(cwd), "executable": executable(None)}),
         )?;
         rx.await.map_err(|_| Error::Other("the sidecar exited".into()))?.map_err(Error::Other)
     }
@@ -257,7 +281,7 @@ impl Runner {
         let req_id = vault::new_id();
         let (tx, rx) = oneshot::channel();
         self.replies.lock().unwrap().insert(req_id.clone(), tx);
-        self.send(app, json!({"op": "title", "reqId": req_id, "text": text, "model": model, "claudePath": which("claude")}))?;
+        self.send(app, json!({"op": "title", "reqId": req_id, "text": text, "model": model, "executable": executable(None)}))?;
         let secs = if model.is_some_and(|m| m.starts_with("ollama:")) { 60 } else { 15 };
         let reply = tokio::time::timeout(std::time::Duration::from_secs(secs), rx).await;
         self.replies.lock().unwrap().remove(&req_id);
@@ -266,20 +290,6 @@ impl Runner {
             .map_err(|_| Error::Other("the sidecar exited".into()))?
             .map_err(Error::Other)?;
         clean_title(value.as_str().unwrap_or("")).ok_or_else(|| Error::Other("no title".into()))
-    }
-
-    /// Whether `url` can be shown in an iframe.
-    pub async fn probe_url(&self, app: &AppHandle, url: &str) -> Result<Value> {
-        let req_id = vault::new_id();
-        let (tx, rx) = oneshot::channel();
-        self.replies.lock().unwrap().insert(req_id.clone(), tx);
-        self.send(app, json!({"op": "probe_url", "reqId": req_id, "url": url}))?;
-        let reply = tokio::time::timeout(std::time::Duration::from_secs(6), rx).await;
-        self.replies.lock().unwrap().remove(&req_id);
-        reply
-            .map_err(|_| Error::Other("no answer".into()))?
-            .map_err(|_| Error::Other("the sidecar exited".into()))?
-            .map_err(Error::Other)
     }
 
     /// Pulled Ollama models as `ollama:<name>`.
@@ -387,18 +397,18 @@ async fn handle(app: &AppHandle, ev: Value) {
     let id = ev["id"].as_str().unwrap_or("").to_string();
     let vault = runner.vaults.lock().unwrap().get(&id).cloned();
     match ev["ev"].as_str().unwrap_or("") {
-        "message" => {
+        "event" => {
             let Some(v) = vault else { return };
-            let msg = &ev["msg"];
-            let _ = session::append(&session::raw_path(&v, &id), msg);
-            let _ = app.emit("session://event", json!({"session_id": id, "event": msg}));
-            if msg["type"] == "result" {
+            let event = &ev["event"];
+            let _ = session::append(&session::raw_path(&v, &id), event);
+            let _ = app.emit("session://event", json!({"session_id": id, "event": event}));
+            if event["type"] == "turn_end" {
                 let _ = session::rerender(&v, &id);
                 if let Ok(Some(path)) = session::write_back(&v, &id) {
                     let _ = app.emit("vault://changed", json!({"path": path}));
                 }
                 // The final reply, for the notification.
-                let _ = app.emit("session://turn", json!({"session_id": id, "result": msg["result"].as_str().unwrap_or("")}));
+                let _ = app.emit("session://turn", json!({"session_id": id, "result": event["result"].as_str().unwrap_or("")}));
                 runner.busy.lock().unwrap().remove(&id);
                 // Crew mail that arrived during the turn is delivered now.
                 let app = app.clone();
@@ -501,14 +511,6 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
     let s = |k: &str| p[k].as_str().unwrap_or("").to_string();
     match method {
         "search_notes" => Ok(json!(search(vault, &s("text")))),
-        "open_preview" => {
-            let url = s("url");
-            if url.trim().is_empty() {
-                return Err(Error::Other("url is empty".into()));
-            }
-            let _ = app.emit("marq://preview", json!({"session": session, "url": url, "title": p["title"].as_str()}));
-            Ok(json!({"opened": url, "note": "The user sees it in a tab; ask them what they see if you need feedback."}))
-        }
         "list_boards" => Ok(json!(boards::list(vault))),
         "read_board" => Ok(json!(boards::read(&boards::find(vault, &s("board"))?)?)),
         "board_add_card" => {
@@ -627,7 +629,7 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             let id = s("session_id");
             let events = session::read_events(vault, &id)?;
             let meta = session::meta(vault, &id)?;
-            let last = events.iter().rev().find(|e| e["type"] == "result").and_then(|e| e["result"].as_str());
+            let last = events.iter().rev().find(|e| e["type"] == "turn_end").and_then(|e| e["result"].as_str());
             Ok(json!({"id": id, "title": meta.title, "status": session::status_of(&events), "cwd": meta.cwd,
                 "first_prompt": session::first_prompt(&events), "latest_result": last}))
         }

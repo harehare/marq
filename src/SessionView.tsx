@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowUp, CornerUpLeft, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
@@ -30,17 +30,37 @@ type Props = {
 type Item =
   | { kind: "user"; text: string }
   | { kind: "text"; text: string }
-  | { kind: "tool"; name: string; arg: string; result?: string }
+  | { kind: "tool"; name: string; toolKind: string; arg: string; result?: string }
   | { kind: "info"; text: string; error?: boolean }
   | { kind: "doc"; path: string; title: string; created: boolean }
   | { kind: "crew"; path: string; title: string }
-  /** Markdown files the turn wrote with the Write tool, shown when it ends. */
+  /** Markdown files the turn wrote or edited, shown when it ends. */
   | { kind: "files"; paths: string[] }
   /** A message from or to another session. */
   | { kind: "relay"; dir: "in" | "out" | "reply"; session: string; title: string; reply: boolean; by: string };
 
 /** Tallest the message box grows to before it scrolls, in pixels. */
 const COMPOSER_MAX = 420;
+
+/** Messages sent from any session's box, oldest first, for ↑/↓ recall. */
+const HISTORY_KEY = "marq.inputHistory";
+const HISTORY_MAX = 200;
+function loadHistory(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((t) => typeof t === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function saveHistory(text: string) {
+  try {
+    const list = [...loadHistory().filter((t) => t !== text), text].slice(-HISTORY_MAX);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+  } catch {
+    // Recall is a convenience; without storage it only covers this session.
+  }
+}
 
 function toolArg(input: any): string {
   for (const k of ["file_path", "command", "pattern", "path", "url", "query", "description"]) {
@@ -49,44 +69,34 @@ function toolArg(input: any): string {
   return JSON.stringify(input);
 }
 
-function toolResult(content: any): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((c) => c.text ?? "").join("\n");
-  return "";
-}
-
+/** Icons by tool kind, which every agent backend reports (see `sidecar/protocol.ts`). */
 const TOOL_ICONS: Record<string, typeof Wrench> = {
-  Read: FileText, Edit: FilePen, Write: FilePen, MultiEdit: FilePen, Bash: Terminal,
-  Grep: Search, Glob: Search, WebFetch: Globe, WebSearch: Globe,
+  read: FileText, edit: FilePen, execute: Terminal, search: Search, fetch: Globe,
 };
 
-/** Folds stream-json events into display items, attaching each tool result to its call. */
+/** Folds session events into display items, attaching each tool result to its call. */
 function toItems(events: SessionEvent[]): Item[] {
   const items: Item[] = [];
   const byId = new Map<string, Extract<Item, { kind: "tool" }>>();
   let written: string[] = [];
   for (const e of events) {
     if (e.type === "marq_user") items.push({ kind: "user", text: e.text });
-    else if (e.type === "assistant") {
-      for (const c of e.message?.content ?? []) {
-        if (c.type === "text" && c.text.trim()) items.push({ kind: "text", text: c.text });
-        if (c.type === "tool_use") {
-          const file = c.input?.file_path;
-          if (c.name === "Write" && typeof file === "string" && /\.(md|markdown)$/i.test(file) && !written.includes(file)) written.push(file);
-          const item = { kind: "tool" as const, name: c.name, arg: toolArg(c.input) };
-          byId.set(c.id, item);
-          items.push(item);
-        }
-      }
-    } else if (e.type === "user") {
-      for (const c of e.message?.content ?? []) {
-        const call = c.type === "tool_result" && byId.get(c.tool_use_id);
-        if (call) call.result = toolResult(c.content);
-      }
-    } else if (e.type === "result") {
+    else if (e.type === "text") {
+      if (e.text.trim()) items.push({ kind: "text", text: e.text });
+    } else if (e.type === "tool_call") {
+      const file = toolArg(e.input);
+      if (e.kind === "edit" && /\.(md|markdown)$/i.test(file) && !written.includes(file)) written.push(file);
+      const item = { kind: "tool" as const, name: e.name, toolKind: e.kind, arg: file };
+      byId.set(e.id, item);
+      items.push(item);
+    } else if (e.type === "tool_result") {
+      const call = byId.get(e.id);
+      if (call) call.result = e.output;
+    } else if (e.type === "turn_end") {
       const secs = Math.round((e.duration_ms ?? 0) / 1000);
       const took = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
-      items.push({ kind: "info", text: `${e.is_error ? "Failed" : "Done"} in ${took} · ${e.num_turns} turns`, error: e.is_error });
+      const turns = e.num_turns ? ` · ${e.num_turns} turns` : "";
+      items.push({ kind: "info", text: `${e.is_error ? "Failed" : "Done"} in ${took}${turns}`, error: e.is_error });
       if (written.length) items.push({ kind: "files", paths: written });
       written = [];
     } else if (e.type === "marq_doc") {
@@ -108,7 +118,7 @@ function toItems(events: SessionEvent[]): Item[] {
 
 function ToolRow({ item }: { item: Extract<Item, { kind: "tool" }> }) {
   const [open, setOpen] = useState(false);
-  const Icon = TOOL_ICONS[item.name] ?? Wrench;
+  const Icon = TOOL_ICONS[item.toolKind] ?? Wrench;
   const lines = item.result?.split("\n").length ?? 0;
   return (
     <div className={`tool-row ${open ? "open" : ""}`}>
@@ -191,6 +201,11 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     }
   };
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -237,13 +252,13 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const meta = events.find((e) => e.type === "marq_meta");
   const title: string = info?.title ?? meta?.title ?? "session";
   // A turn is running from a prompt until its result.
-  const last = [...events].reverse().find((e) => ["marq_user", "result", "marq_exit"].includes(e.type));
+  const last = [...events].reverse().find((e) => ["marq_user", "turn_end", "marq_exit"].includes(e.type));
   const running = last?.type === "marq_user";
   const status = approvals.length
     ? "waiting"
     : running
       ? "running"
-      : last?.type === "result" && last.is_error
+      : last?.type === "turn_end" && last.is_error
         ? "error"
         : last?.type === "marq_exit" && last.status === "error"
           ? "error"
@@ -264,7 +279,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       setResuming(false);
     }
   };
-  const model = events.find((e) => e.type === "system" && e.subtype === "init")?.model;
+  const model = events.find((e) => e.type === "init")?.model;
   const worktree: Worktree | undefined = meta?.worktree ?? undefined;
   // A session without a worktree ran in its project; show that checkout's uncommitted changes.
   const [checkout, setCheckout] = useState<Worktree | null>(null);
@@ -323,10 +338,37 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     setEvents(await api.sessionEvents(vault, sessionId));
   };
 
+  // Earlier messages, recalled with ↑/↓ while the box is empty: this session's own, newest last,
+  // after those sent in other sessions.
+  const recall = useRef<{ list: string[]; at: number } | null>(null);
+  const history = () => {
+    const own = events.flatMap((e) => (e.type === "marq_user" ? [e.text] : []));
+    return [...loadHistory().filter((t) => !own.includes(t)), ...own];
+  };
+  const recallKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const r = recall.current;
+    // Only from an empty box or one still showing a recalled message, so ↑/↓ keep moving the caret otherwise.
+    if (input !== (r ? r.list[r.at] ?? "" : "")) {
+      recall.current = null;
+      if (input) return false;
+    }
+    const list = recall.current?.list ?? history();
+    const at = (recall.current?.at ?? list.length) + (e.key === "ArrowUp" ? -1 : 1);
+    if (at < 0 || at > list.length || !list.length) return false;
+    e.preventDefault();
+    recall.current = at === list.length ? null : { list, at };
+    const text = list[at] ?? "";
+    setInput(text);
+    requestAnimationFrame(() => composerRef.current?.setSelectionRange(text.length, text.length));
+    return true;
+  };
+
   const send = async () => {
     if (!input.trim()) return;
     try {
       await api.sendMessage(vault, sessionId, input);
+      saveHistory(input);
+      recall.current = null;
       setInput("");
       setEvents(await api.sessionEvents(vault, sessionId));
     } catch (e) {
@@ -349,7 +391,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   };
 
   // Forward what is typed, with the latest answer as context, to another session.
-  const latest = [...events].reverse().find((e) => e.type === "result")?.result as string | undefined;
+  const latest = [...events].reverse().find((e) => e.type === "turn_end")?.result as string | undefined;
   const forward = () => {
     onSendExcerpt({
       text: latest?.trim() || input,
@@ -404,13 +446,13 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           )
         )}
         {/* Without a worktree the changes panel has no commit and push buttons, so pushing is offered here once a turn ends. */}
-        {info && !worktree && !running && info.review !== "pr" && events.some((e) => e.type === "result") && (
+        {info && !worktree && !running && info.review !== "pr" && events.some((e) => e.type === "turn_end") && (
           <button onClick={push} disabled={pushing} title={`git push the branch checked out in ${meta?.cwd ?? "the project"}`}>
             {pushing ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Push
           </button>
         )}
         <button onClick={openOrigin}><CornerUpLeft size={14} /> Origin note</button>
-        <button onClick={summarize} disabled={summarizing || running || !events.some((e) => e.type === "result")}
+        <button onClick={summarize} disabled={summarizing || running || !events.some((e) => e.type === "turn_end")}
           title="Write Summary and Learnings into the session note (runs on a fork of the conversation)">
           {summarizing ? <Loader2 size={14} className="spin" /> : <NotebookPen size={14} />} Summarize
         </button>
@@ -525,6 +567,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             placeholder={running ? "Queue a follow-up for after this turn…  (⌘↵, Esc to interrupt)" : "Follow up… / for skills and commands  (⌘↵ to send)"}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send();
+              else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey) recallKey(e);
               else if (e.key === "Escape" && running) api.stopSession(sessionId).catch((err) => setError(String(err)));
             }}
           />

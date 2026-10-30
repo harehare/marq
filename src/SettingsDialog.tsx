@@ -39,6 +39,15 @@ const SECTIONS: { title: string; hint?: string; fields: Field[] }[] = [
     ],
   },
   {
+    title: "Tabs",
+    fields: [
+      {
+        key: "tabs.pinned_layout", label: "Pinned tabs", kind: "select", hint: "Pin a tab from its right-click menu",
+        options: [{ value: "", label: "First in the tab bar (default)" }, { value: "row", label: "In a row above the others" }],
+      },
+    ],
+  },
+  {
     title: "Terminal",
     hint: "Applies to terminals opened after saving.",
     fields: [

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Columns3, FileText, MessageSquare, Search, Users } from "lucide-react";
-import { FileEntry } from "./api";
+import { FileEntry, SessionInfo } from "./api";
 import { composing } from "./keys";
 
 /** Subsequence match of `q` in `s`; higher for consecutive runs and matches at word starts. -1 when no match. */
@@ -23,13 +23,35 @@ function fuzzy(q: string, s: string): number {
 const icon = (f: FileEntry) =>
   f.kind === "board" ? Columns3 : f.kind === "crew" ? Users : f.rel.startsWith("sessions/") ? MessageSquare : FileText;
 
-/** ⌘P: open a note, board or crew by title or path; recent ones first. */
-export function QuickOpen({ files, recent, placeholder, onOpen, onSearch, onClose }: {
+/** One row: a file, or a session's conversation. `names` match with a bonus (title, aliases); `path` without. */
+type Entry = { key: string; label: string; detail: string; Icon: typeof FileText; names: string[]; path: string; file?: FileEntry; session?: SessionInfo };
+
+const fileEntry = (f: FileEntry): Entry => ({
+  key: f.path, label: f.title ?? f.rel.split("/").pop()!, detail: f.rel, Icon: icon(f),
+  names: [f.title ?? "", ...(f.aliases ?? [])], path: f.rel, file: f,
+});
+
+const sessionEntry = (s: SessionInfo): Entry => {
+  const where = s.worktree?.branch ?? s.cwd.split("/").pop() ?? "";
+  return {
+    key: `session:${s.id}`, label: s.crew ? `${s.title} · ${s.crew.role}` : s.title,
+    detail: [s.crew ? "crew member" : "session", s.status, where, s.started.slice(0, 10)].filter(Boolean).join(" · "),
+    Icon: s.crew ? Users : MessageSquare, names: [s.title, s.crew?.role ?? ""], path: `${s.cwd} ${where}`, session: s,
+  };
+};
+
+/**
+ * ⌘P: open a note, board or crew by title or path; recent ones first. With `sessions`, conversations are
+ * listed as sessions (opened in their chat view) rather than as their session notes.
+ */
+export function QuickOpen({ files, recent, sessions, placeholder, onOpen, onOpenSession, onSearch, onClose }: {
   files: FileEntry[];
   /** Paths, most recent first. */
   recent: string[];
+  sessions?: SessionInfo[];
   placeholder?: string;
   onOpen: (f: FileEntry) => void;
+  onOpenSession?: (s: SessionInfo) => void;
   /** Search the text of notes instead. */
   onSearch?: (q: string) => void;
   onClose: () => void;
@@ -38,39 +60,46 @@ export function QuickOpen({ files, recent, placeholder, onOpen, onSearch, onClos
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const entries = useMemo(() => {
+    const fs = sessions ? files.filter((f) => !f.rel.startsWith("sessions/")) : files;
+    return { files: fs.map(fileEntry), sessions: (sessions ?? []).map(sessionEntry) };
+  }, [files, sessions]);
+
   const shown = useMemo(() => {
     const query = q.trim().toLowerCase().replace(/\s+/g, "");
     if (!query) {
-      const byPath = new Map(files.map((f) => [f.path, f]));
-      const rec = recent.map((p) => byPath.get(p)).filter((f): f is FileEntry => !!f);
-      const rest = files.filter((f) => !recent.includes(f.path) && !f.rel.startsWith("sessions/"));
-      return [...rec, ...rest].slice(0, 60);
+      const byPath = new Map(entries.files.map((e) => [e.key, e]));
+      const rec = recent.map((p) => byPath.get(p)).filter((e): e is Entry => !!e);
+      // Sessions at work come right after the recent files.
+      const working = entries.sessions.filter((e) => e.session!.status === "running" || e.session!.status === "waiting");
+      const rest = entries.files.filter((e) => !recent.includes(e.key) && !e.path.startsWith("sessions/"));
+      return [...rec, ...working, ...rest].slice(0, 60);
     }
-    return files
+    return [...entries.files, ...entries.sessions]
       // A note's aliases find it like its title.
-      .map((f) => ({
-        f,
+      .map((e) => ({
+        e,
         score: Math.max(
-          fuzzy(query, (f.title ?? "").toLowerCase()) + 2,
-          fuzzy(query, f.rel.toLowerCase()),
-          ...(f.aliases ?? []).map((a) => fuzzy(query, a.toLowerCase()) + 1),
+          fuzzy(query, e.path.toLowerCase()),
+          ...e.names.filter(Boolean).map((n, i) => fuzzy(query, n.toLowerCase()) + (i === 0 ? 2 : 1)),
         ),
       }))
       .filter((x) => x.score >= 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 60)
-      .map((x) => x.f);
-  }, [files, recent, q]);
+      .map((x) => x.e);
+  }, [entries, recent, q]);
 
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
     listRef.current?.children[sel]?.scrollIntoView({ block: "nearest" });
   }, [sel]);
 
-  const open = (f?: FileEntry) => {
-    if (!f) return;
+  const open = (e?: Entry) => {
+    if (!e) return;
     onClose();
-    onOpen(f);
+    if (e.session) onOpenSession?.(e.session);
+    else onOpen(e.file!);
   };
 
   return (
@@ -88,16 +117,13 @@ export function QuickOpen({ files, recent, placeholder, onOpen, onSearch, onClos
             e.preventDefault();
           }} />
         <div className="palette-list" ref={listRef}>
-          {shown.map((f, i) => {
-            const Icon = icon(f);
-            return (
-              <div key={f.path} className={`palette-item ${i === sel ? "on" : ""}`} onMouseMove={() => setSel(i)} onClick={() => open(f)}>
-                <Icon size={14} className="muted" />
-                <span className="ellipsis">{f.title ?? f.rel.split("/").pop()}</span>
-                <span className="palette-path ellipsis">{f.rel}</span>
-              </div>
-            );
-          })}
+          {shown.map((e, i) => (
+            <div key={e.key} className={`palette-item ${i === sel ? "on" : ""}`} onMouseMove={() => setSel(i)} onClick={() => open(e)}>
+              <e.Icon size={14} className="muted" />
+              <span className="ellipsis">{e.label}</span>
+              <span className="palette-path ellipsis">{e.detail}</span>
+            </div>
+          ))}
           {q.trim() && onSearch && (
             <div className="palette-item search-text" onClick={() => { onClose(); onSearch(q); }}>
               <Search size={14} className="muted" /> <span>Search notes for “{q.trim()}”</span> <kbd>⇧↵</kbd>

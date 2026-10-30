@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageSquarePlus, Trash2 } from "lucide-react";
 import { composing } from "../keys";
 
@@ -31,6 +31,21 @@ function parse(diff: string): Line[] {
   return out;
 }
 
+/** Where `q` occurs in `text`, ignoring case: start offsets. */
+function find(text: string, q: string): number[] {
+  const out: number[] = [];
+  if (!q) return out;
+  const t = text.toLowerCase();
+  const n = q.toLowerCase();
+  for (let i = t.indexOf(n); i >= 0; i = t.indexOf(n, i + n.length)) out.push(i);
+  return out;
+}
+
+/** How many times `q` occurs in the diff's code lines, ignoring case. */
+export function countMatches(diff: string, q: string) {
+  return parse(diff).reduce((n, l) => n + (l.kind === "hunk" ? 0 : find(l.text, q).length), 0);
+}
+
 /** Stable across reloads: new-side number, or old-side for deleted lines. */
 const keyOf = (l: Line) => (l.new !== undefined ? `n${l.new}` : `o${l.old}`);
 const sign = (l: Line) => (l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ");
@@ -49,12 +64,19 @@ type Props = {
   comments?: DiffComment[];
   onComment?: (c: Omit<DiffComment, "id">) => void;
   onRemoveComment?: (id: string) => void;
+  /** Text to mark in the code; `current` is the index of the match to scroll to, counted from the top. */
+  highlight?: string;
+  current?: number;
 };
 
 /** A diff; with `onComment`, click + on a line (shift-click to extend) to comment on it. */
-export function DiffView({ file, diff, comments = [], onComment, onRemoveComment }: Props) {
+export function DiffView({ file, diff, comments = [], onComment, onRemoveComment, highlight = "", current = -1 }: Props) {
   const lines = parse(diff);
   const [draft, setDraft] = useState<{ from: number; to: number; text: string } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (current >= 0) ref.current?.querySelector("mark.current")?.scrollIntoView({ block: "center" });
+  }, [current, highlight, diff]);
   if (!lines.length) return <div className="muted diff-empty">No textual changes (empty file, binary or mode change)</div>;
 
   const pick = (i: number, extend: boolean) =>
@@ -78,8 +100,25 @@ export function DiffView({ file, diff, comments = [], onComment, onRemoveComment
     </div>
   );
 
+  // Matches are numbered in order as the lines render.
+  let seen = 0;
+  const code = (text: string) => {
+    const at = find(text, highlight);
+    if (!at.length) return text;
+    const parts: React.ReactNode[] = [];
+    let from = 0;
+    for (const i of at) {
+      parts.push(text.slice(from, i));
+      const n = seen++;
+      parts.push(<mark key={i} className={n === current ? "current" : undefined}>{text.slice(i, i + highlight.length)}</mark>);
+      from = i + highlight.length;
+    }
+    parts.push(text.slice(from));
+    return parts;
+  };
+
   return (
-    <div className="diff">
+    <div className="diff" ref={ref}>
       {lines.map((l, i) => {
         if (l.kind === "hunk") return <div key={i} className="diff-hunk">{l.text}</div>;
         const selected = draft && i >= draft.from && i <= draft.to;
@@ -94,7 +133,7 @@ export function DiffView({ file, diff, comments = [], onComment, onRemoveComment
               <span className="ln">{l.old ?? ""}</span>
               <span className="ln">{l.new ?? ""}</span>
               <span className="sign">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : " "}</span>
-              <span className="code">{l.text}</span>
+              <span className="code">{code(l.text)}</span>
             </div>
             {comments.filter((c) => c.end === keyOf(l)).map(bubble)}
             {draft && draft.to === i && (
