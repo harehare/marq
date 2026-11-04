@@ -11,6 +11,7 @@ import { ChangesPanel } from "./review/ChangesPanel";
 import { OriginNotePanel } from "./review/OriginNotePanel";
 import { Resizer, usePaneSize } from "./Resizer";
 import { SlashTextarea } from "./SlashTextarea";
+import { usePastes } from "./pastes";
 import { useStickToBottom } from "./useStickToBottom";
 import { SelectionPopover } from "./SelectionPopover";
 import type { Excerpt } from "./SendToSessionDialog";
@@ -186,6 +187,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const [side, setSide] = useState<"changes" | "note" | null>(null);
   const [sideOpen, setSideOpen] = useState(!compact);
   const sideWidth = usePaneSize("sessionSide", 480, 300, 2000);
+  const sideRef = useRef<HTMLElement>(null);
   const composerHeight = usePaneSize("composer", 52, 36, COMPOSER_MAX);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [summarizing, setSummarizing] = useState(false);
@@ -208,6 +210,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   }, [notice]);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [input, setInput] = useState("");
+  const pastes = usePastes();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -363,13 +366,39 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     return true;
   };
 
+  // Esc interrupts the turn wherever the focus is in this view, or anywhere when this is the only session on screen.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const runningRef = useRef(false);
+  runningRef.current = running;
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const root = rootRef.current;
+      // defaultPrevented: the app's own Esc bindings (leaving the tree, a key mode) claimed it.
+      if (e.key !== "Escape" || e.isComposing || e.defaultPrevented || !runningRef.current || !root?.offsetParent) return;
+      // Esc closes dialogs and menus first.
+      if (document.querySelector(".modal-backdrop, .context-menu")) return;
+      const at = document.activeElement as HTMLElement | null;
+      const typing = at?.closest("input, textarea, select, [contenteditable=true], .cm-editor, .terminal-view");
+      if (typing && at !== composerRef.current) return;
+      const other = at?.closest(".session");
+      if (other ? other !== root : [...document.querySelectorAll<HTMLElement>(".session")].some((s) => s !== root && s.offsetParent)) return;
+      e.preventDefault();
+      api.stopSession(sessionId).catch((err) => setError(String(err)));
+    };
+    // On the document, so it runs before the window listener that swallows every Esc.
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sessionId]);
+
   const send = async () => {
     if (!input.trim()) return;
+    const text = pastes.expand(input);
     try {
-      await api.sendMessage(vault, sessionId, input);
-      saveHistory(input);
+      await api.sendMessage(vault, sessionId, text);
+      saveHistory(text);
       recall.current = null;
       setInput("");
+      pastes.clear();
       setEvents(await api.sessionEvents(vault, sessionId));
     } catch (e) {
       setError(String(e));
@@ -394,10 +423,10 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const latest = [...events].reverse().find((e) => e.type === "turn_end")?.result as string | undefined;
   const forward = () => {
     onSendExcerpt({
-      text: latest?.trim() || input,
+      text: latest?.trim() || pastes.expand(input),
       source: `latest answer in session: ${title}`,
       from: { id: sessionId, title },
-      instruction: latest?.trim() ? input : "",
+      instruction: latest?.trim() ? pastes.expand(input) : "",
     });
   };
 
@@ -408,7 +437,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   };
 
   return (
-    <div className="session">
+    <div className="session" ref={rootRef}>
       <header className="session-head">
         <div className="session-title">
           {editingTitle !== null ? (
@@ -564,11 +593,11 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             onChange={setInput}
             vault={vault}
             sessionId={sessionId}
+            pastes={pastes}
             placeholder={running ? "Queue a follow-up for after this turn…  (⌘↵, Esc to interrupt)" : "Follow up… / for skills and commands  (⌘↵ to send)"}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send();
               else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey) recallKey(e);
-              else if (e.key === "Escape" && running) api.stopSession(sessionId).catch((err) => setError(String(err)));
             }}
           />
           <button className="icon forward" onClick={forward} disabled={!input.trim() && !latest}
@@ -581,9 +610,10 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
         </div>
       </div>
       </div>
-      {sideOpen && <Resizer axis="x" sign={-1} pane={sideWidth} />}
+      {sideOpen && <Resizer axis="x" sign={-1} pane={sideWidth}
+        preview={(v) => sideRef.current && (sideRef.current.style.width = `${v}px`)} />}
       {sideOpen && (
-        <aside className="session-side" style={{ width: sideWidth.size }}>
+        <aside ref={sideRef} className="session-side" style={{ width: sideWidth.size }}>
           <div className="side-switch">
             {diffable && (
               <button className={panel === "changes" ? "on" : ""} onClick={() => setSide("changes")}>Changes</button>

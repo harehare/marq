@@ -2,6 +2,7 @@ import { forwardRef, KeyboardEvent, TextareaHTMLAttributes, useEffect, useImpera
 import { Loader2 } from "lucide-react";
 import { api, SlashCommand } from "./api";
 import { composing } from "./keys";
+import type { Pastes } from "./pastes";
 
 // Lists per directory, shared by every input, so a command list is fetched once.
 const cache = new Map<string, Promise<SlashCommand[]>>();
@@ -51,11 +52,13 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
   sessionId?: string;
   /** Where the list opens relative to the field. */
   placement?: "above" | "below";
+  /** When given, long pastes show as a placeholder; expand them with `pastes.expand` before sending. */
+  pastes?: Pastes;
 };
 
 /** A textarea that completes `/` commands and skills from Claude Code. */
 export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function SlashTextarea(
-  { value, onChange, vault, cwd, sessionId, placement = "above", onKeyDown, ...rest },
+  { value, onChange, vault, cwd, sessionId, placement = "above", pastes, onKeyDown, onPaste, ...rest },
   outer,
 ) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -137,6 +140,20 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
           update(e.target.value, e.target.selectionStart);
         }}
         onKeyDown={keyDown}
+        onPaste={(e) => {
+          onPaste?.(e);
+          if (e.defaultPrevented || !pastes) return;
+          const label = pastes.collapse(e.clipboardData.getData("text/plain"));
+          if (!label) return;
+          e.preventDefault();
+          const el = e.currentTarget;
+          const start = el.selectionStart;
+          const next = `${value.slice(0, start)}${label}${value.slice(el.selectionEnd)}`;
+          onChange(next);
+          setToken(null);
+          const pos = start + label.length;
+          requestAnimationFrame(() => el.setSelectionRange(pos, pos));
+        }}
         onClick={(e) => update(value, e.currentTarget.selectionStart)}
         onBlur={() => setTimeout(() => setToken(null), 120)}
       />

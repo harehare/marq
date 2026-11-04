@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { FolderGit2, FolderSearch, GitCompare, Loader2, Sparkles, Users, X } from "lucide-react";
 import { api, type AgentInfo } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
+import { usePastes } from "./pastes";
 import { useAutoGrow } from "./useAutoGrow";
 import { ModelSelect } from "./ModelSelect";
 import { QueryContext } from "./queryContext";
@@ -51,6 +52,7 @@ function stored(key: string, fallback: string) {
 /** Starts a task. It is saved as a request note first, so the task stays in the knowledge base. */
 export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSaved, onStartedCompare, initialPrompt = "", context }: Props) {
   const [prompt, setPrompt] = useState(initialPrompt || context?.prompt || "");
+  const pastes = usePastes();
   const [title, setTitle] = useState("");
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState(() => stored(PROJECT_KEY, ""));
@@ -101,8 +103,11 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !team && !comparing;
   const splitting = canSplit && perFile;
   // The agent gets the instruction, then the results; a saved request keeps both.
-  const withContext = (text: string, results = context?.all) => (results ? `${text.trim()}\n\n${results}` : text);
-  const derivedTitle = title.trim() || prompt.trim().split("\n")[0].slice(0, 60);
+  const withContext = (text: string, results = context?.all) => {
+    const full = pastes.expand(text);
+    return results ? `${full.trim()}\n\n${results}` : full;
+  };
+  const derivedTitle = title.trim() || pastes.expand(prompt).trim().split("\n")[0].slice(0, 60);
 
   const start = async () => {
     if (!prompt.trim()) return;
@@ -188,6 +193,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           className="task-prompt"
           value={prompt}
           onChange={setPrompt}
+          pastes={pastes}
           vault={vault}
           cwd={project.trim() || undefined}
           placement="below"
