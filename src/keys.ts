@@ -34,6 +34,7 @@ export const DEFAULT_KEYS: Keymap = {
     "tab.rename": ["Cmd+Shift+R"],
     ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`tab.goto.${n}`, [`Cmd+${n}`]])),
     "tree.focus": ["Cmd+Shift+E"],
+    "sidebar.toggle": ["Cmd+B"],
     "theme.next": [],
     "vault.switch": [],
     "settings.open": ["Cmd+,"],

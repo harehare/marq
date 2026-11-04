@@ -1,10 +1,11 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff, Bot,
+  PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -353,23 +354,55 @@ function useSectionOpen(key: string, defaultOpen = true) {
   return [open, set] as const;
 }
 
-function Collapsible({ title, icon, count, children, defaultOpen = true, action }: {
+/** Past this a section is not capped: it is as tall as its rows. */
+const UNCAPPED = 4000;
+
+function Collapsible({ title, icon, count, children, defaultOpen = true, action, size, fill }: {
   title: string; icon?: React.ReactNode; count?: number; children: React.ReactNode; defaultOpen?: boolean;
+  /** Takes the sidebar's remaining height and scrolls on its own, instead of having a handle. */
+  fill?: boolean;
   /** A button shown at the right of the title. */
   action?: React.ReactNode;
+  /** Where its height is remembered and how tall it starts; by default it is keyed by title and as tall as its rows. */
+  size?: { key: string; initial: number };
 }) {
   const [open, setOpen] = useSectionOpen(title, defaultOpen);
+  // Dragging the handle under a section caps its height, and its rows scroll; double-click lifts the cap again.
+  const height = usePaneSize(size?.key ?? `section.${title}`, size?.initial ?? UNCAPPED, 40, UNCAPPED);
+  const body = useRef<HTMLDivElement>(null);
+  // Once dragged the height is fixed, so a section can also be made taller than its rows;
+  // until then a starting size only caps it.
+  const sectionStyle = fill || height.size >= UNCAPPED ? undefined
+    : height.touched ? { height: height.size } : { maxHeight: height.size };
   return (
-    <div className="section">
+    <div className={`section ${fill ? "fill" : ""} ${open ? "" : "closed"}`}>
       <a className="section-title" onClick={() => setOpen(!open)}>
         <ChevronRight size={11} className={`chev ${open ? "open" : ""}`} /> {icon} {title}
         {count !== undefined && count > 0 && <span className="count">{count}</span>}
         {action && <span className="section-actions" onClick={(e) => e.stopPropagation()}>{action}</span>}
       </a>
-      {open && children}
+      {open && (
+        <>
+          <div ref={body} className="section-body" style={sectionStyle}>{children}</div>
+          {!fill && <Resizer axis="y" sign={1} pane={height} measure={() => body.current?.offsetHeight ?? height.size}
+            preview={(v) => body.current && Object.assign(body.current.style, { height: v < UNCAPPED ? `${v}px` : "", maxHeight: "" })} />}
+        </>
+      )}
     </div>
   );
 }
+
+/**
+ * A tab's content. Hidden tabs keep running (their own streams and listeners update them), but the app's
+ * re-renders skip them until they are shown again or their tab changes: with many tabs open, every
+ * sidebar refresh or tab switch would otherwise re-render all of them.
+ */
+const TabPane = memo(
+  function TabPane({ active, children }: { tab: Tab; vault: string; active: boolean; children: React.ReactNode }) {
+    return <div className="pane-inner" tabIndex={-1} hidden={!active}>{children}</div>;
+  },
+  (a, b) => !a.active && !b.active && a.tab === b.tab && a.vault === b.vault,
+);
 
 const parentOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
 
@@ -398,6 +431,21 @@ export default function App() {
   const [taskContext, setTaskContext] = useState<QueryContext | null>(null);
   const [sending, setSending] = useState<{ excerpt: Excerpt; exclude?: string } | null>(null);
   const sidebar = usePaneSize("sidebar", 300, 200, 600);
+  const sidebarRef = useRef<HTMLElement>(null);
+  // Hidden with ⌘B; remembered across launches.
+  const [sidebarOpen, setSidebarOpenState] = useState(() => {
+    try {
+      return localStorage.getItem("marq.sidebar") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setSidebarOpen = (v: boolean) => {
+    setSidebarOpenState(v);
+    try {
+      localStorage.setItem("marq.sidebar", v ? "1" : "0");
+    } catch {}
+  };
   const [naming, setNaming] = useState<{ kind: "note" | "crew"; initial: string } | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   // New folder, rename and move share one name dialog.
@@ -634,8 +682,7 @@ export default function App() {
   };
   const { active: activeSessions, groups, recent } = useMemo(() => groupSessions(sessions), [sessions]);
   const recentHeight = usePaneSize("recent", 180, 60, 600);
-  // The crew list scrolls on its own, so many crews do not push Notes away.
-  const crewsHeight = usePaneSize("crews", 240, 80, 800);
+  const recentRef = useRef<HTMLDivElement>(null);
   const [recentOpen, setRecentOpen] = useSectionOpen("Recent");
 
   // A session got a new title (named from its prompt, or renamed): its tab follows.
@@ -1034,6 +1081,11 @@ export default function App() {
   const rows = useMemo(() => visibleRows(tree, closedDirs), [tree, closedDirs]);
 
   const focusTree = () => {
+    if (!sidebarOpen) {
+      // The tree is not focusable while the sidebar is hidden.
+      setSidebarOpen(true);
+      requestAnimationFrame(() => treeRef.current?.focus());
+    }
     const keys = rows.map((r) => r.key);
     setTreeCursor((c) => (c && keys.includes(c) ? c : activeNote && keys.includes(activeNote) ? activeNote : keys[0] ?? null));
     setTreeFocus(true);
@@ -1102,6 +1154,7 @@ export default function App() {
       },
     }])),
     "tree.focus": { label: "Focus the notes tree", run: focusTree },
+    "sidebar.toggle": { label: "Show or hide the sidebar", run: () => setSidebarOpen(!sidebarOpen) },
     "content.focus": { label: "Focus the content", run: focusContent },
     "tree.down": { label: "Tree: down", run: () => moveTree(1) },
     "tree.up": { label: "Tree: up", run: () => moveTree(-1) },
@@ -1229,8 +1282,22 @@ export default function App() {
     });
   };
 
-  const tabEl = (t: Tab) => (
-    <div key={t.key} className={`tab ${t.key === active ? "on" : ""} ${t.pinned ? "pinned" : ""} ${t.key === dragTab ? "dragging" : ""}`}
+  // What a tab's sessions are doing, most urgent first: a crew shows its members, a comparison its runs.
+  const tabStatus = (t: Tab): string | undefined => {
+    const ids = t.kind === "session" ? [t.id] : t.kind === "compare" ? t.ids
+      : t.kind === "crew" ? (() => { const f = crews.find((c) => c.rel === t.crew); return f ? crewMembers(f).map((m) => m.id) : []; })() : [];
+    const of = ids.map((id) => sessions.find((x) => x.id === id)?.status);
+    return ["waiting", "running", "error"].find((st) => of.includes(st)) ?? (ids.some((id) => unread.has(id)) ? "unread" : undefined);
+  };
+  const STATUS_LABEL: Record<string, string> = { waiting: "Needs you", running: "Running", error: "Stopped with an error", unread: "New output" };
+
+  const tabEl = (t: Tab) => {
+    const status = tabStatus(t);
+    const Icon = t.kind === "session" ? MessageSquare : t.kind === "compare" ? GitCompare : t.kind === "query" ? Braces
+      : t.kind === "crew" ? Users : t.kind === "terminal" ? SquareTerminal : t.kind === "board" ? Columns3 : t.kind === "search" ? Search : FileText;
+    return (
+    <div key={t.key} className={`tab ${t.key === active ? "on" : ""} ${t.pinned ? "pinned" : ""} ${t.key === dragTab ? "dragging" : ""} ${status ? `is-${status}` : ""}`}
+      title={status ? `${t.title} — ${STATUS_LABEL[status]}` : t.title}
       onClick={() => setActive(t.key)}
       draggable onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; setDragTab(t.key); }}
       onDragEnter={() => dragTab && moveTab(dragTab, t.key)}
@@ -1240,26 +1307,38 @@ export default function App() {
       onAuxClick={(e) => e.button === 1 && closeTab(t.key)}
       onContextMenu={(e) => tabMenu(e, t)}
       onDoubleClick={() => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }))}>
-      {t.kind === "session" ? <MessageSquare size={15} /> : t.kind === "compare" ? <GitCompare size={15} /> : t.kind === "query" ? <Braces size={15} />
-        : t.kind === "crew" ? <Users size={15} /> : t.kind === "terminal" ? <SquareTerminal size={15} />
-        : t.kind === "board" ? <Columns3 size={15} /> : t.kind === "search" ? <Search size={15} /> : <FileText size={15} />}
+      <span className={`tab-icon kind-${t.kind}`}>
+        <Icon size={14} />
+        {status && <span className={`tab-status ${status}`} />}
+      </span>
       <span className="ellipsis">{t.title}</span>
+      {status === "waiting" && <span className="tab-badge">needs you</span>}
       {t.pinned
         ? <button className="tab-close tab-pin" title="Unpin" onClick={(e) => { e.stopPropagation(); togglePin(t.key); }}><Pin size={12} /></button>
         : <button className="tab-close" onClick={(e) => { e.stopPropagation(); closeTab(t.key); }}><X size={13} /></button>}
     </div>
+    );
+  };
+
+  // At the start of the tab bar while the sidebar is hidden.
+  const showSidebar = !sidebarOpen && (
+    <button className="icon sidebar-show" title="Show the sidebar (⌘B)" onClick={() => setSidebarOpen(true)}>
+      <PanelLeftOpen size={15} />
+    </button>
   );
 
   return (
     <div className="app-shell">
     <div className="app">
-      <aside className="sidebar" style={{ width: sidebar.size }}>
+      {/* Kept mounted while hidden, so the tree's scroll and open folders survive. */}
+      <aside ref={sidebarRef} className="sidebar" style={{ width: sidebar.size, display: sidebarOpen ? undefined : "none" }}>
         <div className="vault" title={`${vault}\nClick to switch vaults`} onClick={vaultMenu}>
           <div className="logo small"><LogoMark size={18} /></div>
           <span className="ellipsis">{vault.split("/").pop()}</span>
           <ChevronsUpDown size={12} className="vault-switch" />
           <button className="theme-btn" title="Theme" onClick={themeMenu}><Palette size={14} /></button>
           <button className="theme-btn" title="Settings (⌘,)" onClick={(e) => (e.stopPropagation(), setShowSettings(true))}><SettingsIcon size={14} /></button>
+          <button className="theme-btn" title="Hide the sidebar (⌘B)" onClick={(e) => (e.stopPropagation(), setSidebarOpen(false))}><PanelLeftClose size={14} /></button>
         </div>
         <button className="side-search" onClick={() => setShowQuickOpen(true)} title="Open a note, crew or session (⌘P) or search notes (⇧⌘F)">
           <Search size={13} /> <span>Search</span> <kbd>⌘P</kbd>
@@ -1358,11 +1437,11 @@ export default function App() {
               <a className="muted small pad" onClick={() => setNewHelper(true)}>Add a helper, such as a translator, to send requests to</a>
             )}
           </Collapsible>
-          <Collapsible title="Crews" icon={<Users size={11} />} count={crews.length}
+          {/* Capped from the start, so many crews do not push Notes away. */}
+          <Collapsible title="Crews" icon={<Users size={11} />} count={crews.length} size={{ key: "crews", initial: 240 }}
             action={<button className="section-action" title="New crew" onClick={() => setNaming({ kind: "crew", initial: "" })}>
               <Plus size={13} />
             </button>}>
-            {crews.length > 0 && <div className="crew-list" style={{ maxHeight: crewsHeight.size }}>
             {crews.map((f) => {
               const members = crewMembers(f);
               const open = openCrews.has(f.path);
@@ -1395,8 +1474,6 @@ export default function App() {
                 </div>
               );
             })}
-            </div>}
-            {crews.length > 0 && <Resizer axis="y" sign={1} pane={crewsHeight} />}
             {crews.length === 0 && (
               <div className="muted small" style={{ padding: "2px 12px 6px" }}>
                 Sessions that work on one project together. <a onClick={() => setNaming({ kind: "crew", initial: "" })}>New crew</a>
@@ -1426,7 +1503,7 @@ export default function App() {
               </div>
             )}
           </Collapsible>
-          <Collapsible title="Notes" icon={<FileText size={11} />}
+          <Collapsible title="Notes" icon={<FileText size={11} />} fill
             action={<>
               <button className="section-action" title="Expand all folders" onClick={() => setClosedDirs(new Set())}>
                 <ChevronsUpDown size={13} />
@@ -1446,13 +1523,14 @@ export default function App() {
         </div>
         {recent.length > 0 && (
           <div className="recent-dock">
-            {recentOpen && <Resizer axis="y" sign={-1} pane={recentHeight} />}
+            {recentOpen && <Resizer axis="y" sign={-1} pane={recentHeight}
+              preview={(v) => recentRef.current && (recentRef.current.style.height = `${v}px`)} />}
             <a className="section-title" onClick={() => setRecentOpen(!recentOpen)}>
               <ChevronRight size={11} className={`chev ${recentOpen ? "open" : ""}`} /> Recent
               <span className="count">{recent.length}</span>
             </a>
             {recentOpen && (
-              <div className="recent-list" style={{ height: recentHeight.size }}>
+              <div ref={recentRef} className="recent-list" style={{ height: recentHeight.size }}>
                 {recent.map((s) => (
                   <a key={s.id} className={`recent-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
                     onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
@@ -1469,15 +1547,17 @@ export default function App() {
           </div>
         )}
       </aside>
-      <Resizer axis="x" sign={1} pane={sidebar} />
+      {sidebarOpen && <Resizer axis="x" sign={1} pane={sidebar}
+        preview={(v) => sidebarRef.current && (sidebarRef.current.style.width = `${v}px`)} />}
       <main>
         {pinnedRow ? (
           <>
-            {pinned.length > 0 && <nav className="tabs pinned-row">{pinned.map(tabEl)}</nav>}
-            <nav className="tabs">{unpinned.map(tabEl)}</nav>
+            {pinned.length > 0 && <nav className="tabs pinned-row">{showSidebar}{pinned.map(tabEl)}</nav>}
+            <nav className="tabs">{pinned.length === 0 && showSidebar}{unpinned.map(tabEl)}</nav>
           </>
         ) : (
           <nav className="tabs">
+            {showSidebar}
             {pinned.map(tabEl)}
             {pinned.length > 0 && unpinned.length > 0 && <span className="tab-sep" />}
             {unpinned.map(tabEl)}
@@ -1486,7 +1566,7 @@ export default function App() {
         <section className="pane">
           {/* Tabs stay mounted so editor state and session streams survive switching. */}
           {tabs.map((t) => (
-            <div key={t.key} className="pane-inner" tabIndex={-1} hidden={t.key !== active}>
+            <TabPane key={t.key} tab={t} vault={vault} active={t.key === active}>
               {t.kind === "note" && <NoteEditor vault={vault} path={t.path} active={t.key === active} jump={t.jump} fresh={t.fresh} onOpenSession={openSession} onOpenFile={openFile}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} />}
               {t.kind === "compare" && <CompareView vault={vault} ids={t.ids} sessions={sessions} onOpenSession={openSession} onChanged={refresh} />}
@@ -1504,7 +1584,7 @@ export default function App() {
               {t.kind === "crew" && <CrewView vault={vault} crewKey={t.crew} onOpenNote={openNote} onOpenSession={openSession}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} onOpenCrew={openCrewAt}
                 files={files} recent={recentFiles} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")} />}
-            </div>
+            </TabPane>
           ))}
           {!current && (
             <div className="empty">
