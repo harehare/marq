@@ -3,12 +3,12 @@
 //! ```markdown
 //! ## Doing
 //!
-//! - [ ] **T1** Show types on hover — @me
+//! - [ ] **T1** Show types on hover #ui #bug — @me
 //!   - a note
 //! ```
 //!
 //! Each `## ` heading is a list; moving an item under another heading moves it. Items written by
-//! hand without `**T<n>**` get an id on the next save.
+//! hand without `**T<n>**` get an id on the next save. `#words` at the end of the title are labels.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -30,6 +30,8 @@ pub struct Card {
     pub title: String,
     pub done: bool,
     pub owner: Option<String>,
+    /// Without the `#`.
+    pub labels: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -129,10 +131,39 @@ pub struct Change {
     pub owner: Option<String>,
     pub title: Option<String>,
     pub done: Option<bool>,
+    /// Replaces the card's labels.
+    pub labels: Option<Vec<String>>,
     /// Appended as a nested item.
     pub note: Option<String>,
     /// Index of a nested item to remove; applied before `note`.
     pub remove_note: Option<usize>,
+}
+
+/// A label as written after `#`: no spaces or `#`, and not a bare number such as an issue (`#12`).
+fn label(s: &str) -> Option<String> {
+    let l = s.trim().trim_start_matches('#').split_whitespace().collect::<Vec<_>>().join("-");
+    (!l.is_empty() && !l.contains('#') && !l.chars().all(|c| c.is_ascii_digit())).then_some(l)
+}
+
+fn labels_of<S: AsRef<str>>(labels: impl IntoIterator<Item = S>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for l in labels.into_iter().filter_map(|l| label(l.as_ref())) {
+        if !out.iter().any(|o| o.eq_ignore_ascii_case(&l)) {
+            out.push(l);
+        }
+    }
+    out
+}
+
+/// Splits the `#labels` off the end of a title.
+pub fn split_labels(title: &str) -> (String, Vec<String>) {
+    let mut words: Vec<&str> = title.split_whitespace().collect();
+    let mut labels = vec![];
+    while words.len() > 1 && let Some(w) = words.last().filter(|w| w.starts_with('#') && label(w).is_some_and(|l| l.len() + 1 == w.len())) {
+        labels.insert(0, *w);
+        words.pop();
+    }
+    (words.join(" "), labels_of(labels))
 }
 
 fn parse_card(item: &str, done: bool) -> Card {
@@ -144,7 +175,8 @@ fn parse_card(item: &str, done: bool) -> Card {
         Some((t, o)) if !o.contains(' ') => (t.trim(), Some(o.trim().to_string())),
         _ => (rest, None),
     };
-    Card { id, title: title.to_string(), done, owner, notes: vec![] }
+    let (title, labels) = split_labels(title);
+    Card { id, title, done, owner, labels, notes: vec![] }
 }
 
 pub fn parse(text: &str) -> Board {
@@ -189,7 +221,8 @@ pub fn render(b: &Board) -> String {
         }
         for c in &l.cards {
             let owner = c.owner.as_ref().map(|o| format!(" — @{o}")).unwrap_or_default();
-            out.push_str(&format!("\n- [{}] **{}** {}{owner}", if c.done { "x" } else { " " }, c.id, c.title));
+            let labels: String = c.labels.iter().map(|l| format!(" #{l}")).collect();
+            out.push_str(&format!("\n- [{}] **{}** {}{labels}{owner}", if c.done { "x" } else { " " }, c.id, c.title));
             for n in &c.notes {
                 out.push_str(&format!("\n  - {}", n.replace('\n', " ")));
             }
@@ -236,8 +269,8 @@ pub fn read(path: &Path) -> Result<Board> {
     Ok(parse(&std::fs::read_to_string(path)?))
 }
 
-/// Creates `boards/<name>.md` with Todo, Doing and Done. Returns its path.
-pub fn create(vault: &Path, name: &str) -> Result<PathBuf> {
+/// Creates `boards/<name>.md` with `lists` (Todo, Doing and Done when empty). Returns its path.
+pub fn create(vault: &Path, name: &str, lists: &[String]) -> Result<PathBuf> {
     let name = name.trim().trim_end_matches(".md");
     if name.is_empty() {
         return Err(Error::Other("a board needs a name".into()));
@@ -259,7 +292,12 @@ pub fn create(vault: &Path, name: &str) -> Result<PathBuf> {
             serde_json::to_string(&title).unwrap(),
             vault::now()
         ),
-        lists: DEFAULT_LISTS.iter().map(|n| List { name: n.to_string(), cards: vec![] }).collect(),
+        lists: {
+            let given: Vec<&str> = lists.iter().map(|n| n.trim()).filter(|n| !n.is_empty()).collect();
+            let names = if given.is_empty() { DEFAULT_LISTS.to_vec() } else { given };
+            let mut seen = std::collections::HashSet::new();
+            names.into_iter().filter(|n| seen.insert(n.to_lowercase())).map(|n| List { name: n.to_string(), cards: vec![] }).collect()
+        },
         queue: None,
     };
     std::fs::write(&path, render(&b))?;
@@ -302,7 +340,7 @@ pub fn find(vault: &Path, board: &str) -> Result<PathBuf> {
 
 /// Adds a card to `list` (the first list when absent).
 pub fn add(path: &Path, title: &str, list: Option<&str>, owner: Option<&str>, note: Option<&str>) -> Result<Card> {
-    let title = title.trim().replace('\n', " ");
+    let (title, labels) = split_labels(&title.replace('\n', " "));
     if title.is_empty() {
         return Err(Error::Other("a card needs a title".into()));
     }
@@ -317,6 +355,7 @@ pub fn add(path: &Path, title: &str, list: Option<&str>, owner: Option<&str>, no
             title,
             done: false,
             owner: owner.map(str::trim).filter(|o| !o.is_empty()).map(str::to_string),
+            labels,
             notes: note.map(str::trim).filter(|n| !n.is_empty()).map(|n| vec![n.to_string()]).unwrap_or_default(),
         };
         b.lists[li].cards.push(card.clone());
@@ -341,8 +380,13 @@ pub fn update(path: &Path, id: &str, change: Change) -> Result<Card> {
         if let Some(o) = &change.owner {
             c.owner = Some(o.trim().to_string()).filter(|o| !o.is_empty());
         }
-        if let Some(t) = change.title.as_deref().map(|t| t.trim().replace('\n', " ")).filter(|t| !t.is_empty()) {
-            c.title = t;
+        if let Some(t) = change.title.as_deref().map(|t| split_labels(&t.replace('\n', " "))).filter(|(t, _)| !t.is_empty()) {
+            c.title = t.0;
+            // `#labels` typed at the end of a title are added.
+            c.labels = labels_of(c.labels.iter().chain(&t.1));
+        }
+        if let Some(l) = &change.labels {
+            c.labels = labels_of(l);
         }
         if let Some(i) = change.remove_note.filter(|&i| i < c.notes.len()) {
             c.notes.remove(i);
@@ -426,19 +470,43 @@ mod tests {
         let b = parse("# B\n\n## Ideas\n\n- [ ] **T3** Old — @me\n  - n\n- [ ] new one\n\n## Done\n\n- [x] finished\n");
         assert_eq!(b.lists.len(), 2);
         assert_eq!(b.lists[0].cards[1].id, "T4");
-        assert_eq!(b.lists[1].cards[0], Card { id: "T5".into(), title: "finished".into(), done: true, owner: None, notes: vec![] });
+        assert_eq!(b.lists[1].cards[0], Card { id: "T5".into(), title: "finished".into(), done: true, owner: None, labels: vec![], notes: vec![] });
         assert_eq!(parse(&render(&b)), b);
+    }
+
+    #[test]
+    fn labels_end_the_title() {
+        let b = parse("## Todo\n\n- [ ] **T1** Fix #12 crash #bug #ui — @me\n- [ ] #only\n");
+        let c = &b.lists[0].cards[0];
+        assert_eq!((c.title.as_str(), c.labels.as_slice(), c.owner.as_deref()), ("Fix #12 crash", &["bug".to_string(), "ui".into()][..], Some("me")));
+        assert_eq!(b.lists[0].cards[1].title, "#only");
+        assert_eq!(parse(&render(&b)).lists, b.lists);
+        assert_eq!(split_labels("Ship it #v2 #12"), ("Ship it #v2 #12".into(), vec![]));
+        assert_eq!(labels_of(["#Bug", "bug", " needs review ", "7"]), ["Bug", "needs-review"]);
+    }
+
+    #[test]
+    fn creates_a_board_with_given_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = &dir.path().canonicalize().unwrap();
+        let lists = ["Backlog", " ", "Review", "backlog", "Shipped"].map(String::from);
+        let p = create(v, "release", &lists).unwrap();
+        let names: Vec<_> = read(&p).unwrap().lists.into_iter().map(|l| l.name).collect();
+        assert_eq!(names, ["Backlog", "Review", "Shipped"]);
+        assert!(create(v, "release", &[]).is_err());
     }
 
     #[test]
     fn creates_finds_and_edits_a_board() {
         let dir = tempfile::tempdir().unwrap();
         let v = &dir.path().canonicalize().unwrap();
-        let p = create(v, "work").unwrap();
+        let p = create(v, "work", &[]).unwrap();
         assert_eq!(find(v, "").unwrap(), p);
         assert_eq!(find(v, "Work").unwrap(), p);
-        let t = add(&p, "Write docs", None, Some("me"), Some("start with SPEC")).unwrap();
-        assert_eq!(t.id, "T1");
+        let t = add(&p, "Write docs #docs", None, Some("me"), Some("start with SPEC")).unwrap();
+        assert_eq!((t.id.as_str(), t.title.as_str(), t.labels.as_slice()), ("T1", "Write docs", &["docs".to_string()][..]));
+        let t = update(&p, "T1", Change { labels: Some(vec![]), ..Default::default() }).unwrap();
+        assert!(t.labels.is_empty());
         add_list(&p, "Review").unwrap();
         move_list(&p, "Review", -1).unwrap();
         let t = update(&p, "t1", Change { list: Some("done".into()), ..Default::default() }).unwrap();

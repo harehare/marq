@@ -23,6 +23,7 @@ pub struct Task {
     pub title: String,
     pub status: String,
     pub owner: Option<String>,
+    pub labels: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -61,7 +62,7 @@ pub fn parse(text: &str) -> TaskList {
         .iter()
         .filter_map(|l| Some((status_of(&l.name)?, &l.cards)))
         .flat_map(|(status, cards)| {
-            cards.iter().map(move |c| Task { id: c.id.clone(), title: c.title.clone(), status: status.into(), owner: c.owner.clone(), notes: c.notes.clone() })
+            cards.iter().map(move |c| Task { id: c.id.clone(), title: c.title.clone(), status: status.into(), owner: c.owner.clone(), labels: c.labels.clone(), notes: c.notes.clone() })
         })
         .collect();
     TaskList { head, tasks, lists }
@@ -78,6 +79,7 @@ pub fn render(list: &TaskList) -> String {
                 title: t.title.replace('\n', " "),
                 done: st == "done",
                 owner: t.owner.clone(),
+                labels: t.labels.clone(),
                 notes: t.notes.clone(),
             })
             .collect()
@@ -136,7 +138,7 @@ mod tests {
         let text = "---\ntype: crew-tasks\n---\n# X — Tasks\n\nIntro.\n\n## Todo\n\n- [ ] **T2** Write tests — @tester\n  - after T1\n\n## Doing\n\n- [ ] **T1** Hover types — @impl\n\n## Done\n\n- [x] **T3** Design\n";
         let list = parse(text);
         assert_eq!(list.tasks.len(), 3);
-        assert_eq!(list.tasks[0], Task { id: "T2".into(), title: "Write tests".into(), status: "todo".into(), owner: Some("tester".into()), notes: vec!["after T1".into()] });
+        assert_eq!(list.tasks[0], Task { id: "T2".into(), title: "Write tests".into(), status: "todo".into(), owner: Some("tester".into()), labels: vec![], notes: vec!["after T1".into()] });
         assert_eq!(list.tasks[2].owner, None);
         assert_eq!(list.next_id(), "T4");
         let again = parse(&render(&list));

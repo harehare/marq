@@ -704,7 +704,7 @@ fn on_board<T>(app: &AppHandle, vault: &str, path: &str, f: impl FnOnce(&Path) -
 
 #[tauri::command]
 fn board_create(app: AppHandle, vault: String, name: String) -> Result<String> {
-    let p = boards::create(Path::new(&vault), &name)?;
+    let p = boards::create(Path::new(&vault), &name, &[])?;
     let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
     Ok(p.to_string_lossy().into_owned())
 }

@@ -525,6 +525,12 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             changed(app, &path);
             Ok(json!(c))
         }
+        "create_board" => {
+            let lists: Vec<String> = p["lists"].as_array().map(|l| l.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let path = boards::create(vault, &s("name"), &lists)?;
+            changed(app, &path);
+            Ok(json!({"created": path.strip_prefix(vault).unwrap_or(&path).to_string_lossy(), "lists": boards::read(&path)?.lists.iter().map(|l| l.name.clone()).collect::<Vec<_>>()}))
+        }
         "board_add_list" => {
             let path = boards::find(vault, &s("board"))?;
             boards::add_list(&path, &s("name"))?;

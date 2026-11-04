@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowLeft, ArrowRight, Bot, Check, Columns3, FilePlus2, FileText, Link2, List as ListIcon, ListTodo, Pencil, Plus, Sparkles, Trash2, X,
+  AlignLeft, ArrowLeft, ArrowRight, Bot, Check, ChevronDown, Columns3, FilePlus2, FileText, Link2, List as ListIcon, ListTodo, Pencil, Plus, Search, Sparkles, Tag,
+  Trash2, User, X,
 } from "lucide-react";
 import { QueueDialog } from "./AutomationDialogs";
 import { api, Board, Card, FileEntry } from "./api";
@@ -9,6 +10,7 @@ import { composing } from "./keys";
 import { linkTo, noteLink, resolveLink } from "./links";
 import { NameDialog } from "./NameDialog";
 import { QuickOpen } from "./QuickOpen";
+import { useAutoGrow } from "./useAutoGrow";
 
 type Props = {
   vault: string;
@@ -36,6 +38,39 @@ const linksOf = (c: Card) =>
     return l ? [{ ...l, index: i }] : [];
   });
 
+/** Hues far enough apart to tell labels apart: green, yellow, orange, red, purple, blue, sky, lime, pink, teal. */
+const HUES = [140, 45, 25, 2, 272, 218, 195, 85, 325, 168];
+/** A hue for a label or owner, the same wherever it appears. */
+const hue = (name: string) => {
+  let h = 0;
+  for (const ch of name.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return HUES[h % HUES.length];
+};
+const hueStyle = (name: string) => ({ "--h": hue(name) }) as React.CSSProperties;
+
+function LabelChip({ name, on, onClick, onRemove }: { name: string; on?: boolean; onClick?: () => void; onRemove?: () => void }) {
+  return (
+    <span className={`board-label ${on ? "on" : ""} ${onClick ? "clickable" : ""}`} style={hueStyle(name)} onClick={onClick}>
+      {name}
+      {onRemove && <button className="board-label-remove" title="Remove label" onClick={(e) => { e.stopPropagation(); onRemove(); }}><X size={10} /></button>}
+    </span>
+  );
+}
+
+/** A select drawn like the app's controls instead of the platform's. */
+function Select({ value, onChange, children, className = "" }: { value: string; onChange: (v: string) => void; children: React.ReactNode; className?: string }) {
+  return (
+    <span className={`board-select ${className}`}>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>{children}</select>
+      <ChevronDown size={12} />
+    </span>
+  );
+}
+
+function Avatar({ name }: { name: string }) {
+  return <span className="board-avatar" style={hueStyle(name)} title={`@${name}`}>{name.slice(0, 2)}</span>;
+}
+
 /** A kanban board stored as Markdown. */
 export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFile, onCreateNote, onStartTask, crew }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
@@ -49,6 +84,9 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   const [linking, setLinking] = useState<Card | null>(null);
   const [creating, setCreating] = useState<Card | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  // Cards shown: those with every picked label and the text in their title, id or owner.
+  const [filterLabels, setFilterLabels] = useState<string[]>([]);
+  const [filterText, setFilterText] = useState("");
   const listEls = useRef(new Map<string, HTMLElement>());
   // List positions before a reorder, to slide them from there.
   const before = useRef<Map<string, DOMRect> | null>(null);
@@ -146,6 +184,16 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
 
   if (!board) return <div className="board muted pad">{error ?? "Loading…"}</div>;
   const title = path.split("/").pop()!.replace(/\.md$/, "");
+  const allLabels = [...new Map(board.lists.flatMap((l) => l.cards.flatMap((c) => c.labels)).map((x) => [x.toLowerCase(), x])).values()]
+    .sort((a, b) => a.localeCompare(b));
+  const text = filterText.trim().toLowerCase();
+  const filtering = filterLabels.length > 0 || text !== "";
+  const shows = (c: Card) =>
+    filterLabels.every((f) => c.labels.some((x) => x.toLowerCase() === f.toLowerCase()))
+    && (!text || [c.title, c.id, c.owner ?? ""].some((v) => v.toLowerCase().includes(text)));
+  const toggleFilter = (x: string) =>
+    setFilterLabels((fs) => (fs.some((f) => f.toLowerCase() === x.toLowerCase()) ? fs.filter((f) => f.toLowerCase() !== x.toLowerCase()) : [...fs, x]));
+  const openCard = open ? board.lists.flatMap((l) => l.cards.map((c) => ({ c, list: l.name }))).find((x) => x.c.id === open) : undefined;
 
   return (
     <div className={`board ${crew ? "crew-board" : ""}`}>
@@ -155,6 +203,12 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
           <button className={`mode ${view === "kanban" ? "on" : ""}`} onClick={() => setView("kanban")}><Columns3 size={13} /> Board</button>
           <button className={`mode ${view === "list" ? "on" : ""}`} onClick={() => setView("list")}><ListIcon size={13} /> List</button>
         </div>
+        <span className="board-filter">
+          <Search size={13} />
+          <input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Filter cards"
+            onKeyDown={(e) => e.key === "Escape" && setFilterText("")} />
+          {filtering && <button className="icon" title="Clear the filter" onClick={() => { setFilterText(""); setFilterLabels([]); }}><X size={12} /></button>}
+        </span>
         <span className="spacer" />
         <NewList onAdd={(name) => listOp("add", name)} />
         {!crew && <button className={board.queue ? "on" : ""} onClick={() => setQueueOpen(true)}
@@ -164,6 +218,12 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
         <button onClick={onOpenMarkdown} title="Edit the board as Markdown"><FileText size={14} /> Markdown</button>
       </header>
       {error && <div className="banner error" onClick={() => setError(null)}>{error}</div>}
+      {allLabels.length > 0 && (
+        <div className="board-label-bar">
+          <Tag size={12} className="muted" />
+          {allLabels.map((x) => <LabelChip key={x} name={x} on={filterLabels.some((f) => f.toLowerCase() === x.toLowerCase())} onClick={() => toggleFilter(x)} />)}
+        </div>
+      )}
       {/* Lists are reordered with CSS `order` while dragging, so the dragged element stays put in the DOM. */}
       <div className={view === "kanban" ? "board-columns" : "board-rows"}
         onDragOver={(e) => dragList && e.preventDefault()}
@@ -200,14 +260,15 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
               e.preventDefault();
               drop(l.name, drag?.over?.list === l.name ? drag.over.index : l.cards.length);
             }}>
-            <ListHeader onDragStart={() => setDragList({ name: l.name })} onDragEnd={() => { snapshot(); setDragList(null); }} name={l.name} queue={board.queue?.list.toLowerCase() === l.name.toLowerCase()} count={l.cards.length} first={li === 0} last={li === board.lists.length - 1}
+            <ListHeader onDragStart={() => setDragList({ name: l.name })} onDragEnd={() => { snapshot(); setDragList(null); }} name={l.name} queue={board.queue?.list.toLowerCase() === l.name.toLowerCase()} count={l.cards.length} shown={filtering ? l.cards.filter(shows).length : undefined} first={li === 0} last={li === board.lists.length - 1}
               onRename={(to) => listOp("rename", l.name, to)} onMove={(d) => listOp(d < 0 ? "left" : "right", l.name)}
               onRemove={() => listOp("remove", l.name)} />
             <div className="board-cards">
               {l.cards.map((c, ci) => (
-                <div key={c.id}
-                  className={`board-card ${c.done ? "done" : ""} ${open === c.id ? "open" : ""} ${drag?.id === c.id ? "dragging" : ""} ${target(l.name, ci) ? "drop-before" : ""} ${ci === l.cards.length - 1 && target(l.name, ci + 1) ? "drop-after" : ""}`}
-                  draggable={open !== c.id}
+                <div key={c.id} hidden={!shows(c)}
+                  className={`board-card ${c.done ? "done" : ""} ${drag?.id === c.id ? "dragging" : ""} ${target(l.name, ci) ? "drop-before" : ""} ${ci === l.cards.length - 1 && target(l.name, ci + 1) ? "drop-after" : ""}`}
+                  draggable
+                  onClick={() => setOpen(c.id)}
                   onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDrag({ id: c.id }); }}
                   onDragEnd={() => setDrag(null)}
                   onDragOver={(e) => {
@@ -224,19 +285,19 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
                     e.stopPropagation();
                     drop(l.name, drag?.over?.index ?? ci);
                   }}>
-                  <div className="board-card-main" onClick={() => setOpen(open === c.id ? null : c.id)}>
+                  {c.labels.length > 0 && (
+                    <div className="board-card-labels">
+                      {c.labels.map((x) => <LabelChip key={x} name={x} />)}
+                    </div>
+                  )}
+                  <div className="board-card-main">
                     <button className={`board-check ${c.done ? "on" : ""}`} title={c.done ? "Mark as not done" : "Mark as done"}
                       onClick={(e) => { e.stopPropagation(); update(c.id, { done: !c.done }); }}>
                       {c.done && <Check size={11} />}
                     </button>
                     <span className="board-card-title">{c.title}</span>
-                    {c.owner && <span className="board-owner">@{c.owner}</span>}
-                    {c.notes.length > linksOf(c).length && open !== c.id && (
-                      <span className="muted small">{c.notes.length - linksOf(c).length}</span>
-                    )}
-                    <span className="board-id muted small">{c.id}</span>
                   </div>
-                  {open !== c.id && linksOf(c).length > 0 && (
+                  {linksOf(c).length > 0 && (
                     <div className="board-card-links">
                       {linksOf(c).map((k) => (
                         <button key={k.index} className="note-chip" title={k.href} draggable={false}
@@ -246,11 +307,14 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
                       ))}
                     </div>
                   )}
-                  {open === c.id && (
-                    <CardDetail card={c} members={crew?.members} onUpdate={(ch) => update(c.id, ch)} onStart={crew ? undefined : () => start(c, l.name)}
-                      onOpenLink={openLink} onLinkNote={() => setLinking(c)} onNewNote={() => setCreating(c)}
-                      onRemove={() => run(api.boardRemove(vault, path, c.id))} />
-                  )}
+                  <div className="board-card-foot">
+                    <span className="board-id">{c.id}</span>
+                    {c.notes.length > linksOf(c).length && (
+                      <span className="board-badge" title="Notes"><AlignLeft size={11} /> {c.notes.length - linksOf(c).length}</span>
+                    )}
+                    <span className="spacer" />
+                    {c.owner && <Avatar name={c.owner} />}
+                  </div>
                 </div>
               ))}
               {l.cards.length === 0 && drag?.over?.list === l.name && <div className="board-drop-hint" />}
@@ -259,6 +323,13 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
           </section>
         ))}
       </div>
+      {openCard && (
+        <CardDialog card={openCard.c} list={openCard.list} lists={board.lists.map((l) => l.name)} labels={allLabels} members={crew?.members}
+          onUpdate={(ch) => update(openCard.c.id, ch)} onStart={crew ? undefined : () => { start(openCard.c, openCard.list); setOpen(null); }}
+          onOpenLink={openLink} onLinkNote={() => setLinking(openCard.c)} onNewNote={() => setCreating(openCard.c)}
+          onRemove={() => { setOpen(null); run(api.boardRemove(vault, path, openCard.c.id)); }}
+          onClose={() => setOpen(null)} />
+      )}
       {queueOpen && <QueueDialog vault={vault} path={path} board={board} onClose={() => { setQueueOpen(false); load(); }} />}
       {linking && (
         <QuickOpen recent={recent} placeholder={`Link a note to ${linking.id}…`}
@@ -282,9 +353,11 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   );
 }
 
-function ListHeader({ name, queue, count, first, last, onRename, onMove, onRemove, onDragStart, onDragEnd }: {
+function ListHeader({ name, queue, count, shown, first, last, onRename, onMove, onRemove, onDragStart, onDragEnd }: {
   /** The board's queue list: its cards start sessions. */
   queue?: boolean;
+  /** Cards the filter shows, while filtering. */
+  shown?: number;
   name: string; count: number; first: boolean; last: boolean;
   onRename: (to: string) => void; onMove: (d: number) => void; onRemove: () => void;
   onDragStart: () => void; onDragEnd: () => void;
@@ -318,7 +391,7 @@ function ListHeader({ name, queue, count, first, last, onRename, onMove, onRemov
       onDoubleClick={() => { setValue(name); setEditing(true); }}>
       <span className="board-list-name ellipsis">{name}</span>
       {queue && <span className="board-queue-badge" title="Cards put here start a session while Marq runs"><Bot size={11} /> queue</span>}
-      <span className="count">{count}</span>
+      <span className="count">{shown !== undefined ? `${shown}/${count}` : count}</span>
       <span className="board-list-actions">
         <button className="icon" title="Rename" onClick={() => { setValue(name); setEditing(true); }}><Pencil size={12} /></button>
         <button className="icon" title="Move left" disabled={first} onClick={() => onMove(-1)}><ArrowLeft size={12} /></button>
@@ -331,59 +404,140 @@ function ListHeader({ name, queue, count, first, last, onRename, onMove, onRemov
   );
 }
 
-function CardDetail({ card, members, onUpdate, onStart, onOpenLink, onLinkNote, onNewNote, onRemove }: {
-  card: Card; onUpdate: (c: { title?: string; owner?: string; note?: string; remove_note?: number }) => void; onStart?: () => void;
+function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
+  card: Card; list: string; lists: string[];
+  /** Every label on the board, offered when adding one. */
+  labels: string[];
+  onUpdate: (c: Parameters<typeof api.boardUpdate>[3]) => void; onStart?: () => void;
   /** Crew roles to pick the owner from, instead of typing one. */
   members?: string[];
-  onOpenLink: (href: string) => void; onLinkNote: () => void; onNewNote: () => void; onRemove: () => void;
+  onOpenLink: (href: string) => void; onLinkNote: () => void; onNewNote: () => void; onRemove: () => void; onClose: () => void;
 }) {
   const [title, setTitle] = useState(card.title);
   const [owner, setOwner] = useState(card.owner ?? "");
   const [note, setNote] = useState("");
+  const [label, setLabel] = useState("");
+  const titleEl = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(titleEl, title, 200);
   useEffect(() => {
     setTitle(card.title);
     setOwner(card.owner ?? "");
   }, [card.title, card.owner]);
-  const enter = (f: () => void) => (e: React.KeyboardEvent) => !composing(e) && e.key === "Enter" && f();
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+  const has = (x: string) => card.labels.some((l) => l.toLowerCase() === x.toLowerCase());
+  const addLabel = (x: string) => {
+    const v = x.trim().replace(/^#+/, "");
+    if (v && !has(v)) onUpdate({ labels: [...card.labels, v] });
+    setLabel("");
+  };
+  const saveTitle = () => title.trim() && title !== card.title && onUpdate({ title });
+  const blurOnEsc = (e: React.KeyboardEvent<HTMLElement>) => e.key === "Escape" && e.currentTarget.blur();
+  const links = linksOf(card);
+  const texts = card.notes.map((n, i) => ({ n, i })).filter(({ n }) => !noteLink(n));
   return (
-    <div className="board-card-detail" onClick={(e) => e.stopPropagation()}>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
-        onBlur={() => title.trim() && title !== card.title && onUpdate({ title })} onKeyDown={(e) => !composing(e) && e.key === "Enter" && e.currentTarget.blur()} />
-      {members ? (
-        <select value={card.owner ?? ""} onChange={(e) => onUpdate({ owner: e.target.value })}>
-          <option value="">No owner</option>
-          {members.map((m) => <option key={m} value={m}>@{m}</option>)}
-        </select>
-      ) : (
-        <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Owner (e.g. me)"
-          onBlur={() => owner !== (card.owner ?? "") && onUpdate({ owner })} />
-      )}
-      {card.notes.length > 0 && (
-        <ul className="board-notes">
-          {card.notes.map((n, i) => {
-            const l = noteLink(n);
-            return (
-              <li key={i}>
-                {l ? (
-                  <button className="note-chip" title={l.href} onClick={() => onOpenLink(l.href)}>
-                    <FileText size={11} /> <span className="ellipsis">{l.title || l.href}</span>
-                  </button>
-                ) : n}
-                <button className="icon board-note-remove" title={l ? "Unlink" : "Remove"} onClick={() => onUpdate({ remove_note: i })}>
-                  <X size={11} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…  ↵"
-        onKeyDown={enter(() => { if (note.trim()) { onUpdate({ note }); setNote(""); } })} />
-      <div className="board-card-actions">
-        {onStart && <button className="primary" onClick={onStart}><Sparkles size={13} /> Start a session</button>}
-        <button className="square" onClick={onLinkNote} title="Link an existing note"><Link2 size={13} /></button>
-        <button className="square" onClick={onNewNote} title="Create a note and link it"><FilePlus2 size={13} /></button>
-        <button className="square danger" onClick={onRemove} title="Delete the card"><Trash2 size={13} /></button>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal board-dialog">
+        <div className="board-dialog-head">
+          <button className={`board-check ${card.done ? "on" : ""}`} title={card.done ? "Mark as not done" : "Mark as done"}
+            onClick={() => onUpdate({ done: !card.done })}>
+            {card.done && <Check size={11} />}
+          </button>
+          <textarea ref={titleEl} className="board-dialog-title" rows={1} value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
+            onKeyDown={(e) => {
+              if (composing(e)) return;
+              if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+              blurOnEsc(e);
+            }} />
+          <button className="icon" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="board-dialog-sub muted small">
+          <span className="board-id">{card.id}</span> in list
+          <Select className="pill" value={list} onChange={(v) => onUpdate({ list: v })}>
+            {lists.map((l) => <option key={l} value={l}>{l}</option>)}
+          </Select>
+        </div>
+        <div className="board-dialog-body">
+          <div className="board-dialog-main">
+            <div className="board-dialog-row">
+              <div className="board-dialog-field">
+                <label className="field-label"><Tag size={11} /> Labels</label>
+                <div className="board-dialog-labels">
+                  {card.labels.map((x) => <LabelChip key={x} name={x} onRemove={() => onUpdate({ labels: card.labels.filter((l) => l !== x) })} />)}
+                  <input className="board-label-input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="+ Label" list="board-labels"
+                    onBlur={() => label.trim() && addLabel(label)}
+                    onKeyDown={(e) => {
+                      if (composing(e)) return;
+                      if (e.key === "Enter") addLabel(label);
+                      if (e.key === "Backspace" && !label && card.labels.length) onUpdate({ labels: card.labels.slice(0, -1) });
+                      blurOnEsc(e);
+                    }} />
+                  <datalist id="board-labels">{labels.filter((x) => !has(x)).map((x) => <option key={x} value={x} />)}</datalist>
+                </div>
+                {labels.some((x) => !has(x)) && (
+                  <div className="board-dialog-labels suggest">
+                    {labels.filter((x) => !has(x)).map((x) => <LabelChip key={x} name={x} onClick={() => addLabel(x)} />)}
+                  </div>
+                )}
+              </div>
+              <div className="board-dialog-field">
+                <label className="field-label"><User size={11} /> Owner</label>
+                {members ? (
+                  <Select value={card.owner ?? ""} onChange={(v) => onUpdate({ owner: v })}>
+                    <option value="">No owner</option>
+                    {members.map((m) => <option key={m} value={m}>@{m}</option>)}
+                  </Select>
+                ) : (
+                  <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="e.g. me"
+                    onBlur={() => owner !== (card.owner ?? "") && onUpdate({ owner })}
+                    onKeyDown={(e) => { if (!composing(e) && e.key === "Enter") e.currentTarget.blur(); blurOnEsc(e); }} />
+                )}
+              </div>
+            </div>
+            <label className="field-label"><AlignLeft size={11} /> Notes</label>
+            {texts.length > 0 && (
+              <ul className="board-notes">
+                {texts.map(({ n, i }) => (
+                  <li key={i}>
+                    {n}
+                    <button className="icon board-note-remove" title="Remove" onClick={() => onUpdate({ remove_note: i })}><X size={11} /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…  ↵"
+              onKeyDown={(e) => {
+                if (composing(e)) return;
+                if (e.key === "Enter" && note.trim()) { onUpdate({ note }); setNote(""); }
+                blurOnEsc(e);
+              }} />
+            {links.length > 0 && (
+              <>
+                <label className="field-label"><FileText size={11} /> Linked notes</label>
+                <div className="board-dialog-links">
+                  {links.map((k) => (
+                    <span key={k.index} className="board-dialog-link">
+                      <button className="note-chip" title={k.href} onClick={() => onOpenLink(k.href)}>
+                        <FileText size={11} /> <span className="ellipsis">{k.title || k.href}</span>
+                      </button>
+                      <button className="icon board-note-remove" title="Unlink" onClick={() => onUpdate({ remove_note: k.index })}><X size={11} /></button>
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="board-dialog-side">
+            <label className="field-label">Actions</label>
+            {onStart && <button className="primary" onClick={onStart}><Sparkles size={13} /> Start a session</button>}
+            <button onClick={onLinkNote}><Link2 size={13} /> Link a note</button>
+            <button onClick={onNewNote}><FilePlus2 size={13} /> New note</button>
+            <button className="danger" onClick={onRemove}><Trash2 size={13} /> Delete</button>
+          </div>
+        </div>
       </div>
     </div>
   );

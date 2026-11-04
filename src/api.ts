@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type SearchHit = { path: string; rel: string; title: string | null; lines: [number, string][]; more: number };
-export type Card = { id: string; title: string; done: boolean; owner: string | null; notes: string[] };
+export type Card = { id: string; title: string; done: boolean; owner: string | null; labels: string[]; notes: string[] };
 export type Board = { lists: { name: string; cards: Card[] }[]; queue: Queue | null };
 /** A list marq works through: each card put there starts a session (see automation.rs). */
 export type Queue = {
@@ -84,7 +84,7 @@ export type CrewMessage = {
   released: boolean;
   delivered: boolean;
 };
-export type CrewTask = { id: string; title: string; status: string; owner: string | null; notes: string[] };
+export type CrewTask = { id: string; title: string; status: string; owner: string | null; labels: string[]; notes: string[] };
 export type CrewDoc = { path: string; rel: string; title: string | null };
 export type CrewState = {
   id: string;
@@ -230,7 +230,7 @@ export const api = {
   boardRead: (vault: string, path: string) => invoke<Board>("board_read", { vault, path }),
   boardAdd: (vault: string, path: string, title: string, list?: string) => invoke<Card>("board_add", { vault, path, title, list }),
   boardUpdate: (vault: string, path: string, id: string,
-    change: { list?: string; index?: number; owner?: string; title?: string; done?: boolean; note?: string; remove_note?: number }) =>
+    change: { list?: string; index?: number; owner?: string; title?: string; done?: boolean; labels?: string[]; note?: string; remove_note?: number }) =>
     invoke<Card>("board_update", { vault, path, id, change }),
   boardRemove: (vault: string, path: string, id: string) => invoke<void>("board_remove", { vault, path, id }),
   /** `op`: add, rename (to `to`), left, right, move (to index `to`) or remove. */

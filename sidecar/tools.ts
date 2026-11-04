@@ -67,14 +67,20 @@ function boardTools(sessionId: string) {
       {}, async () => text(await rpc("list_boards", { session: sessionId }))),
     tool("read_board", "Read a kanban board: its lists in order, each with cards (id, title, done, owner, notes).",
       { board }, async (a) => text(await rpc("read_board", { ...a, session: sessionId }))),
-    tool("board_add_card", "Add a card (task) to a board, in `list` (default: the first list).",
+    tool("board_add_card", "Add a card (task) to a board, in `list` (default: the first list). #words at the end of the title become labels.",
       { board, title: z.string(), list: z.string().optional(), owner: z.string().optional(), note: z.string().optional() },
       async (a) => text(await rpc("board_add_card", { ...a, session: sessionId }))),
     tool("board_update_card",
-      "Update a card: move it to another `list` (e.g. Doing, Done), set owner, title or done, or append a note.",
+      "Update a card: move it to another `list` (e.g. Doing, Done), set owner, title, done or labels (replaces them; without #), or append a note.",
       { board, id: z.string(), list: z.string().optional(), owner: z.string().optional(), title: z.string().optional(),
-        done: z.boolean().optional(), note: z.string().optional() },
+        done: z.boolean().optional(), labels: z.array(z.string()).optional(), note: z.string().optional() },
       async (a) => text(await rpc("board_update_card", { ...a, session: sessionId }))),
+    tool("create_board",
+      "Create a kanban board as boards/<name>.md. `lists` are its columns in order (default: Todo, Doing, Done). " +
+        "Check list_boards first so you do not make a second board for the same thing.",
+      { name: z.string().describe("File name under boards/, e.g. \"release-1.2\"; it is also the title"),
+        lists: z.array(z.string()).optional() },
+      async (a) => text(await rpc("create_board", { ...a, session: sessionId }))),
     tool("board_add_list", "Add a list (column) to the end of a board.",
       { board, name: z.string() }, async (a) => text(await rpc("board_add_list", { ...a, session: sessionId }))),
   ];
@@ -143,5 +149,5 @@ export function vaultServer(sessionId: string, crew: boolean) {
 // crew_add_member asks, since every member is another session to pay for.
 export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
-  "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list"]
+  "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list", "create_board"]
   .map((t) => `mcp__marq__${t}`);

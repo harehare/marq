@@ -362,11 +362,13 @@ pub fn task_add(app: &AppHandle, vault: &Path, crew_id: &str, by: &str, title: &
         return Err(Error::Other("the task needs a title".into()));
     }
     let (path, mut list) = read_tasks(vault, &crew)?;
+    let (title, labels) = crate::boards::split_labels(&title.replace('\n', " "));
     let task = Task {
         id: list.next_id(),
-        title: title.trim().replace('\n', " "),
+        title,
         status: "todo".into(),
         owner: owner.map(str::to_string),
+        labels,
         notes: note.map(str::trim).filter(|n| !n.is_empty()).map(|n| vec![n.to_string()]).unwrap_or_default(),
     };
     list.tasks.push(task.clone());
