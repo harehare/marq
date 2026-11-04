@@ -66,7 +66,7 @@ const SECTIONS: Section[] = [
       { key: "terminal.args", label: "Arguments", kind: "list", placeholder: "-l", desc: "Separated by spaces" },
       { key: "terminal.font", label: "Font", kind: "text", placeholder: "Monospace font", desc: "Defaults to the monospace font" },
       { key: "terminal.font_size", label: "Font size", kind: "number", placeholder: "13", desc: "In px" },
-      { key: "terminal.ligatures", label: "Ligatures", kind: "bool", desc: "Draw -> != |> … as ligatures, with fonts that have them" },
+      { key: "terminal.ligatures", label: "Ligatures", kind: "bool", desc: "Draw -> != |> … as ligatures, with fonts that have them. Off draws with the GPU, which is much faster on heavy output" },
       {
         key: "terminal.cursor", label: "Cursor", kind: "select",
         options: [{ value: "", label: "Block (default)" }, { value: "bar", label: "Bar" }, { value: "underline", label: "Underline" }],

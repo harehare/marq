@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "./api";
 import { getSettings, quote, useSettings, type Settings } from "./settings";
@@ -30,6 +31,22 @@ function fontFamily(t: Settings["terminal"]) {
   return t?.font ? `${quote(t.font)}, ui-monospace, Menlo, monospace` : getComputedStyle(document.documentElement).getPropertyValue("--font-mono");
 }
 
+/**
+ * Draws with the GPU, much faster than the DOM renderer on heavy output, when ligatures are off: the WebGL
+ * renderer draws glyph by glyph, so it cannot shape them. Falls back to the DOM if WebGL is unavailable or lost.
+ */
+function attachRenderer(term: Terminal, ligatures: boolean): () => void {
+  if (ligatures) return () => {};
+  try {
+    const gl = new WebglAddon();
+    gl.onContextLoss(() => gl.dispose());
+    term.loadAddon(gl);
+    return () => gl.dispose();
+  } catch {
+    return () => {};
+  }
+}
+
 /** A login shell (or `command`) in `cwd`. It lives as long as the tab. */
 export function TerminalView({ id, cwd, command, active, onTitle }: {
   id: string; cwd: string; command?: string; active: boolean; onTitle: (title: string) => void;
@@ -39,6 +56,9 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
   const host = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  // Disposes the WebGL renderer, if one is attached.
+  const rendererRef = useRef<() => void>(() => {});
+  const ligaturesRef = useRef(getSettings().terminal?.ligatures !== false);
   const [exited, setExited] = useState(false);
 
   useEffect(() => {
@@ -56,6 +76,7 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
     term.loadAddon(fit);
     term.open(host.current!);
     fit.fit();
+    rendererRef.current = attachRenderer(term, t?.ligatures !== false);
     termRef.current = term;
     fitRef.current = fit;
 
@@ -97,6 +118,8 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
       unData.then((f) => f());
       unExit.then((f) => f());
       api.terminalClose(pty);
+      rendererRef.current();
+      rendererRef.current = () => {};
       term.dispose();
     };
   }, [id, cwd, command]);
@@ -109,6 +132,12 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
     term.options.fontFamily = fontFamily(settings.terminal);
     term.options.fontSize = settings.terminal?.font_size ?? 13;
     term.options.cursorStyle = settings.terminal?.cursor ?? "block";
+    const ligatures = settings.terminal?.ligatures !== false;
+    if (ligatures !== ligaturesRef.current) {
+      ligaturesRef.current = ligatures;
+      rendererRef.current();
+      rendererRef.current = attachRenderer(term, ligatures);
+    }
     fitRef.current?.fit();
   }, [settings]);
 

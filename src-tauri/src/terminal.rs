@@ -56,6 +56,22 @@ impl Terminals {
         let writer = pty.master.take_writer().map_err(|e| Error::Other(e.to_string()))?;
 
         let (app, tid) = (app.clone(), id.to_string());
+        // Output goes to the webview from its own thread: while one event is being sent, what the shell writes
+        // meanwhile piles up and goes in the next, so heavy output means fewer, larger events. Nothing waits
+        // for more, so a keystroke's echo is not delayed.
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            while let Ok(mut data) = rx.recv() {
+                while data.len() < 512 * 1024 {
+                    match rx.try_recv() {
+                        Ok(more) => data.push_str(&more),
+                        Err(_) => break,
+                    }
+                }
+                let _ = app.emit("terminal://data", json!({"id": tid, "data": data}));
+            }
+            let _ = app.emit("terminal://exit", json!({"id": tid}));
+        });
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             // Bytes of a UTF-8 character split across reads.
@@ -72,9 +88,10 @@ impl Terminals {
                 };
                 let data = String::from_utf8_lossy(&rest[..valid]).into_owned();
                 rest.drain(..valid);
-                let _ = app.emit("terminal://data", json!({"id": tid, "data": data}));
+                if !data.is_empty() && tx.send(data).is_err() {
+                    break;
+                }
             }
-            let _ = app.emit("terminal://exit", json!({"id": tid}));
         });
 
         self.0.lock().unwrap().insert(id.to_string(), Term { master: pty.master, writer, child });
