@@ -41,6 +41,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [ollama]
 # url = "http://127.0.0.1:11434"   # default: $OLLAMA_HOST, then this
 
+[sandbox]
+# unattended = "on"               # on | strict: Claude Code's sandbox for board queues and schedules that do not set one
+
 # Keys: a command id = "Key" or ["Key", ...]; "" unbinds. Modifiers: Ctrl, Alt, Shift, Cmd.
 # All commands and their keys: ⌘K (command palette).
 [keys]

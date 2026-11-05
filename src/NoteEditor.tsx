@@ -2,7 +2,8 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import CodeMirror, { EditorView, ReactCodeMirrorRef, type ViewUpdate } from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { listen } from "@tauri-apps/api/event";
-import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X } from "lucide-react";
+import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X, KanbanSquare } from "lucide-react";
+import { parseFrontmatter } from "./markdown/segments";
 import { api, SessionInfo } from "./api";
 import { Preview } from "./markdown/Preview";
 import { editorHighlight, editorTheme } from "./editorTheme";
@@ -48,6 +49,15 @@ type Props = {
   /** Breadcrumbs before the file name, for a note shown inside another view; they replace its folders. */
   parents?: { label: string; onClick: () => void }[];
 };
+
+/** What the toolbar offers for a spec or a request in phases, from the note's frontmatter. */
+function workflowOf(text: string | null) {
+  const fm = new Map(parseFrontmatter(text ?? "").fields);
+  const phases = (fm.get("phases") ?? "").replace(/^\[|\]$/g, "").split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+  const set = (fm.get("phase") ?? "").trim().toLowerCase();
+  const phase = fm.get("type") === "request" && phases.length ? (phases.includes(set) ? set : phases[0]) : null;
+  return { spec: fm.get("type") === "spec", phase, phases };
+}
 
 /** `[editor] default_mode`, preview unless set. */
 function initialMode(): Mode {
@@ -205,6 +215,16 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     if (textRef.current === content) setDirty(false);
     setError(null);
   }, [vault, path]);
+  const flow = useMemo(() => workflowOf(text), [text]);
+  const breakDown = async () => {
+    try {
+      await save();
+      const r = await api.specToBoard(vault, path);
+      onOpenFile(r.board);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   // `[editor] autosave`: shortly after typing stops, and when the note closes.
   const autosave = getSettings().editor?.autosave !== false;
@@ -422,12 +442,19 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
         <button className={`icon ${showLinks ? "on" : ""}`} onClick={() => setShowLinks(!showLinks)} title="Sessions and links panel">
           <PanelRight size={14} />
         </button>
+        {flow.spec && (
+          <button onClick={breakDown} title="Put the open items under ## Tasks on this spec's board, as cards linked to the spec">
+            <KanbanSquare size={14} /> Break down
+          </button>
+        )}
         <button
           className="primary"
           onClick={(e) => askAt(mode === "preview" ? 0 : cursorLine(), e.altKey)}
-          title="Whole note for a request, otherwise the section at the cursor (⌘↵)"
+          title={flow.phase
+            ? `Start the ${flow.phase} phase (${flow.phases.indexOf(flow.phase) + 1} of ${flow.phases.length}) in a new session (⌘↵)`
+            : "Whole note for a request, otherwise the section at the cursor (⌘↵)"}
         >
-          <Sparkles size={14} /> Ask
+          <Sparkles size={14} /> {flow.phase ? `Start ${flow.phase}` : "Ask"}
         </button>
       </div>
       {find !== null && (

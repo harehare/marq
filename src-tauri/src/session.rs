@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::{git, vault};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: String,
     pub title: String,
@@ -40,6 +40,22 @@ pub struct SessionMeta {
     /// Set when the session is a member of a crew.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crew: Option<crate::crew::CrewRef>,
+    /// `on` or `strict`: Bash runs in Claude Code's OS sandbox (see `workflow::sandbox_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    /// How the work is checked after each turn, taken from the request when the session started,
+    /// so the session cannot change its own check by editing the note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<crate::workflow::Verify>,
+    /// Set on an acceptance check: the session whose work it checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verifies: Option<String>,
+    /// The request's phase this session works on, for a request with `phases:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// Directories beyond `cwd` the agent may read and edit, from a workspace or the request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirs: Vec<crate::workspace::ExtraDir>,
 }
 
 impl SessionMeta {
@@ -182,6 +198,13 @@ fn meta_of(events: &[Value]) -> Option<SessionMeta> {
         events.first().filter(|e| e["type"] == "marq_meta").and_then(|e| serde_json::from_value(e.clone()).ok())?;
     if let Some(wt) = events.iter().rev().find(|e| e["type"] == "marq_worktree") {
         meta.worktree = serde_json::from_value(wt["worktree"].clone()).ok();
+    }
+    // A worktree of another directory whose branch changed, latest first.
+    for e in events.iter().filter(|e| e["type"] == "marq_dir_worktree") {
+        let Ok(wt) = serde_json::from_value::<git::Worktree>(e["worktree"].clone()) else { continue };
+        if let Some(d) = meta.dirs.iter_mut().find(|d| d.worktree.as_ref().is_some_and(|w| w.repo == wt.repo)) {
+            d.worktree = Some(wt);
+        }
     }
     if let Some(m) = events.iter().rev().find(|e| e["type"] == "marq_model") {
         meta.model = m["model"].as_str().map(str::to_string);
@@ -341,8 +364,9 @@ pub fn append(path: &Path, value: &Value) -> Result<()> {
 pub fn write_back(vault: &Path, id: &str) -> Result<Option<String>> {
     let events = read_events(vault, id)?;
     let Some(meta) = meta_of(&events) else { return Ok(None) };
-    // A crew member's results go to the crew's timeline, not into the crew note.
-    if meta.crew.is_some() {
+    // A crew member's results go to the crew's timeline, not into the crew note, and an acceptance
+    // check's verdict goes to the session it checks.
+    if meta.crew.is_some() || meta.verifies.is_some() {
         return Ok(None);
     }
     let Some(result) = last_result(&events) else {
@@ -396,6 +420,25 @@ pub fn set_title(vault: &Path, id: &str, title: &str) -> Result<()> {
 /// so this is safe while the session is running and writing to it.
 pub fn update_worktree(vault: &Path, id: &str, wt: &git::Worktree) -> Result<()> {
     append(&raw_path(vault, id), &serde_json::json!({"type": "marq_worktree", "worktree": wt}))?;
+    rerender(vault, id)
+}
+
+/// The worktree of `repo` (the session's own, or one of its other directories') with its current
+/// branch, recording the branch when it changed. `None` for the session's own.
+pub fn worktree_for(vault: &Path, id: &str, repo: Option<&str>) -> Result<Option<git::Worktree>> {
+    let meta = meta(vault, id)?;
+    let Some(repo) = repo.filter(|r| meta.worktree.as_ref().is_none_or(|w| w.repo != *r)) else { return current_worktree(vault, id) };
+    let Some(wt) = meta.dirs.into_iter().find_map(|d| d.worktree.filter(|w| w.repo == repo)) else { return Ok(None) };
+    let synced = git::sync_branch(&wt)?;
+    if synced.branch != wt.branch {
+        update_dir_worktree(vault, id, &synced)?;
+    }
+    Ok(Some(synced))
+}
+
+/// Records a changed worktree of one of the session's other directories.
+pub fn update_dir_worktree(vault: &Path, id: &str, wt: &git::Worktree) -> Result<()> {
+    append(&raw_path(vault, id), &serde_json::json!({"type": "marq_dir_worktree", "worktree": wt}))?;
     rerender(vault, id)
 }
 
@@ -577,6 +620,32 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
                     transcript.push_str(&format!("{block}\n\n"));
                 }
             }
+            "marq_verify" if e["passed"].is_boolean() => {
+                role(&mut transcript, "assistant");
+                let what = match e["command"].as_str() {
+                    Some(c) => format!("Check `{c}`"),
+                    None => "Acceptance check".to_string(),
+                };
+                let (mark, verdict) = if e["passed"] == true { ("✅", "passed") } else { ("❌", "failed") };
+                let attempt = match (e["attempt"].as_u64(), e["of"].as_u64()) {
+                    (Some(a), Some(n)) if e["passed"] == false => format!(" (attempt {a} of {n})"),
+                    _ => String::new(),
+                };
+                transcript.push_str(&format!("{mark} {what} {verdict}{attempt}\n\n"));
+                let out = e["output"].as_str().unwrap_or("").trim_end();
+                if !out.is_empty() {
+                    let f = fence(out);
+                    transcript.push_str(&format!("<details><summary>output</summary>\n\n{f}text\n{out}\n{f}\n\n</details>\n\n"));
+                }
+            }
+            "marq_phase" => {
+                role(&mut transcript, "assistant");
+                transcript.push_str(&format!(
+                    "⏭ Phase {} done. Next: {}\n\n",
+                    e["done"].as_str().unwrap_or(""),
+                    e["next"].as_str().unwrap_or("")
+                ));
+            }
             "marq_doc" => {
                 role(&mut transcript, "assistant");
                 let path = e["path"].as_str().unwrap_or("");
@@ -650,6 +719,7 @@ mod tests {
             agent: None,
             worktree: None,
             crew: None,
+            ..Default::default()
         }
     }
 

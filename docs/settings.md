@@ -32,6 +32,9 @@ pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar
 [ollama]
 url = "http://127.0.0.1:11434"  # default: $OLLAMA_HOST, then this
 
+[sandbox]
+unattended = "on"               # on | strict: sandbox board queues and schedules that do not set one
+
 [agents]
 gemini = { command = "gemini", args = ["--experimental-acp"] }
 kimi = { label = "Kimi", command = "kimi", args = ["acp"] }

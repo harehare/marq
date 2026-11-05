@@ -110,6 +110,19 @@ function toItems(events: SessionEvent[]): Item[] {
       items.push({ kind: "crew", path: e.path, title: e.title });
     } else if (e.type === "marq_approval") {
       items.push({ kind: "info", text: `${e.allow ? (e.always ? "Always allowed" : "Allowed") : "Denied"} ${e.tool}`, error: !e.allow });
+    } else if (e.type === "marq_verify") {
+      const of = e.of ? ` (attempt ${e.attempt} of ${e.of})` : "";
+      if (e.stage === "handoff") {
+        items.push({ kind: "info", text: e.why === "phase" ? "The next phase continues in a new session" : "Retrying in a new session with a fresh context" });
+      } else if (e.status === "running") {
+        items.push({ kind: "info", text: e.stage === "acceptance" ? "Acceptance check started in a separate session…" : `Checking: ${e.command}…` });
+      } else {
+        const what = e.stage === "acceptance" ? "Acceptance check" : `Check \`${e.command}\``;
+        items.push({ kind: "tool", name: e.stage === "acceptance" ? "acceptance" : "verify", toolKind: "execute", arg: e.command ?? "verdict", result: e.output });
+        items.push({ kind: "info", text: `${what} ${e.passed ? "passed" : "failed"}${e.passed ? "" : of}`, error: !e.passed });
+      }
+    } else if (e.type === "marq_phase") {
+      items.push({ kind: "info", text: `Phase ${e.done} done. Next: ${e.next}${e.auto ? ", starting now" : " (Start on the request runs it)"}` });
     } else if (e.type === "marq_exit" && e.status === "error") {
       items.push({ kind: "info", text: `error${e.stderr ? `: ${e.stderr}` : ""}`, error: true });
     }
@@ -292,8 +305,14 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     setCheckout(null);
     if (hasMeta && !hasWorktree) api.sessionCheckout(vault, sessionId).then(setCheckout, () => {});
   }, [vault, sessionId, hasMeta, hasWorktree]);
+  // Worktrees of the workspace's other directories get a tab each in the Changes panel.
+  const dirTrees: Worktree[] = (meta?.dirs ?? []).flatMap((d: { worktree?: Worktree | null }) => (d.worktree ? [d.worktree] : []));
+  const [repoTab, setRepoTab] = useState<string | null>(null);
+  useEffect(() => setRepoTab(null), [sessionId]);
+  const otherTree = repoTab ? dirTrees.find((w) => w.repo === repoTab) : undefined;
   const diffable = worktree ?? checkout ?? undefined;
   const panel = side ?? (diffable ? "changes" : "note");
+  const repoName = (w: Worktree) => w.repo.replace(/\/+$/, "").split("/").pop();
 
   const summarize = async () => {
     setSummarizing(true);
@@ -621,8 +640,19 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             <button className={panel === "note" ? "on" : ""} onClick={() => setSide("note")}>Note</button>
           </div>
           <div className="side-content">
+            {panel === "changes" && diffable && dirTrees.length > 0 && (
+              <div className="repo-tabs">
+                <button className={!otherTree ? "on" : ""} onClick={() => setRepoTab(null)} title={diffable.path}>{repoName(diffable)}</button>
+                {dirTrees.map((w) => (
+                  <button key={w.repo} className={otherTree?.repo === w.repo ? "on" : ""} onClick={() => setRepoTab(w.repo)} title={w.path}>
+                    {repoName(w)}
+                  </button>
+                ))}
+              </div>
+            )}
             {panel === "changes" && diffable ? (
-              <ChangesPanel key={sessionId} vault={vault} sessionId={sessionId} worktree={diffable} checkout={!worktree}
+              <ChangesPanel key={`${sessionId}:${otherTree?.repo ?? ""}`} vault={vault} sessionId={sessionId}
+                worktree={otherTree ?? diffable} repo={otherTree?.repo} checkout={!otherTree && !worktree}
                 title={meta?.title ?? ""} running={running}
                 onCompose={compose} onSend={sendText} />
             ) : (

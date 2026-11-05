@@ -81,6 +81,18 @@ function boardTools(sessionId: string) {
       { name: z.string().describe("File name under boards/, e.g. \"release-1.2\"; it is also the title"),
         lists: z.array(z.string()).optional() },
       async (a) => text(await rpc("create_board", { ...a, session: sessionId }))),
+    tool("write_spec",
+      "Save a spec in the vault (specs/): what to build, before anyone builds it. content is Markdown without frontmatter, with the " +
+        "sections ## Requirements (testable statements), ## Design, ## Tasks (a checklist, one item per piece of work one session can do) " +
+        "and ## Acceptance (how to tell it is done; the agents doing the tasks are not shown it, a separate session checks their work). " +
+        "verify is a shell command that checks each task's work, e.g. \"pnpm test\". To revise a spec, pass its path.",
+      { title: z.string(), content: z.string(), path: z.string().optional(), verify: z.string().optional() },
+      async (a) => text(await rpc("write_spec", { ...a, session: sessionId }))),
+    tool("spec_to_board",
+      "Put a spec's open ## Tasks on its board as cards linked to the spec (a new board the first time). Cards already there are skipped. " +
+        "A board queue then runs each card with the spec as context and its verify command and acceptance check.",
+      { spec: z.string().describe("The spec: path, id or title") },
+      async (a) => text(await rpc("spec_to_board", { ...a, session: sessionId }))),
     tool("board_add_list", "Add a list (column) to the end of a board.",
       { board, name: z.string() }, async (a) => text(await rpc("board_add_list", { ...a, session: sessionId }))),
   ];
@@ -149,5 +161,5 @@ export function vaultServer(sessionId: string, crew: boolean) {
 // crew_add_member asks, since every member is another session to pay for.
 export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
-  "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list", "create_board"]
+  "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);

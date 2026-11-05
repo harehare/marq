@@ -36,6 +36,8 @@ Moving never overwrites, never leaves the vault, and refuses `sessions/` and dot
 | `board_add_card(…)` | no | Add a card to a list |
 | `board_update_card(…)` | no | Move a card, change its owner or title, check it, or add a note |
 | `board_add_list(…)` | no | Add a list |
+| `write_spec(title, content, path?, verify?)` | no | Save a spec in `specs/`, or revise one; see [Workflows](workflows.md#specs) |
+| `spec_to_board(spec)` | no | Put a spec's open tasks on its board as cards linked to the spec |
 
 A board is named by its name, title or path, or left out when there is only one.
 

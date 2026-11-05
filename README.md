@@ -21,9 +21,11 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 ### Agent IDE
 
 - **Parallel tasks in git worktrees.** Each task gets its own worktree and branch, so several agents can work on one repository at once.
+- **Workspaces.** Give a task several directories, with a worktree for each repository you choose, and save the set as a workspace to pick again.
 - **Review in the app.** The **Changes** panel shows the diff against the base commit. Comment on diff lines and send the review back to the agent, then commit, push and create a PR.
 - **Run an agent from a note.** Hover a heading and choose **Ask**. The session is linked to the heading, and the result comes back as a card under the section.
 - **Crews.** Several sessions work on one project as a team by role, with a shared task list. Kanban boards are Markdown too.
+- **Checks, phases and specs.** A request can run a command after each turn and send failures back to the agent (or to a fresh session), have a separate session check hidden acceptance criteria, run as research → plan → implement with a fresh context per phase, and run in Claude Code's sandbox. Specs break down into board cards that a queue runs with those checks.
 - **Compare models.** Run one task on 2 to 4 models, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
 - **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar.
 - **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed, and you can send follow-ups while an agent is working.
@@ -89,6 +91,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | [Sessions](docs/sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume, sending text |
 | [mq queries](docs/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
 | [Crews and boards](docs/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
+| [Workflows](docs/workflows.md) | Checks after each turn, acceptance criteria, phases, the sandbox, specs, skills |
 | [Agents and models](docs/agents.md) | Claude, Ollama, permission modes, how sessions run |
 | [Vault tools for agents](docs/tools.md) | The MCP tools agents use to read and organize the vault |
 | [Settings and keys](docs/settings.md) | `~/.marq/config.toml`, keybindings, shell environment |

@@ -14,6 +14,8 @@ import { composing, FIND_EVENT } from "../keys";
 
 type Props = {
   vault: string; sessionId: string; worktree: Worktree; title: string; running: boolean;
+  /** One of the session's other directories' repositories, instead of its own worktree. */
+  repo?: string;
   /** The project's own checkout rather than a worktree: uncommitted changes only, nothing to rename, commit or remove. */
   checkout?: boolean;
   /** Puts text into the session's message box. */
@@ -32,30 +34,31 @@ function diffBlock(file: string, diff: string) {
 }
 
 /** Review comments as one message: where, the code, and what to do. */
-function reviewMessage(comments: DiffComment[]) {
+function reviewMessage(comments: DiffComment[], where?: string) {
   const parts = comments.map((c) => `**${c.file} ${c.label}**\n\`\`\`diff\n${c.code.join("\n")}\n\`\`\`\n${c.text}`);
-  return `Review comments on your changes. Address each one:\n\n${parts.join("\n\n")}`;
+  const dir = where ? ` in ${where}` : "";
+  return `Review comments on your changes${dir}. Address each one:\n\n${parts.join("\n\n")}`;
 }
 
-const reviewKey = (sessionId: string) => `marq.review.${sessionId}`;
+const reviewKey = (sessionId: string, repo?: string) => `marq.review.${sessionId}${repo ? `:${repo}` : ""}`;
 
 type Action = "commit" | "push" | "pr" | "remove" | "rename";
 
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
 
-export function ChangesPanel({ vault, sessionId, worktree: initial, title, running, checkout = false, onCompose, onSend }: Props) {
+export function ChangesPanel({ vault, sessionId, worktree: initial, title, running, repo, checkout = false, onCompose, onSend }: Props) {
   // Review comments, kept until sent.
   const [comments, setComments] = useState<DiffComment[]>(() => {
     try {
-      return JSON.parse(localStorage.getItem(reviewKey(sessionId)) ?? "[]");
+      return JSON.parse(localStorage.getItem(reviewKey(sessionId, repo)) ?? "[]");
     } catch {
       return [];
     }
   });
   useEffect(() => {
     try {
-      if (comments.length) localStorage.setItem(reviewKey(sessionId), JSON.stringify(comments));
-      else localStorage.removeItem(reviewKey(sessionId));
+      if (comments.length) localStorage.setItem(reviewKey(sessionId, repo), JSON.stringify(comments));
+      else localStorage.removeItem(reviewKey(sessionId, repo));
     } catch {}
   }, [comments, sessionId]);
   const [sendingReview, setSendingReview] = useState(false);
@@ -92,11 +95,11 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   const refresh = useCallback(async () => {
     const mine = ++generation.current;
     try {
-      const c = await api.sessionChanges(vault, sessionId);
+      const c = await api.sessionChanges(vault, sessionId, repo);
       // Reload diffs that are expanded, since the files may have changed.
       const expanded = Object.keys(openRef.current).filter((f) => openRef.current[f] !== null);
       const entries = (
-        await Promise.all(expanded.map(async (f) => [f, await api.sessionFileDiff(vault, sessionId, f).catch(() => null)] as const))
+        await Promise.all(expanded.map(async (f) => [f, await api.sessionFileDiff(vault, sessionId, f, repo).catch(() => null)] as const))
       ).filter((e): e is readonly [string, string] => e[1] !== null);
       if (mine !== generation.current) return;
       setChanges(c);
@@ -107,11 +110,11 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
     } catch (e) {
       if (mine === generation.current) setNotice({ ok: false, text: String(e) });
     }
-  }, [vault, sessionId]);
+  }, [vault, sessionId, repo]);
 
   useEffect(() => {
     refresh();
-  }, [vault, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [vault, sessionId, repo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh after each file-editing tool result and when the turn ends.
   useEffect(() => {
@@ -130,7 +133,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
       setOpen((o) => ({ ...o, [file]: null }));
       return;
     }
-    const diff = await api.sessionFileDiff(vault, sessionId, file);
+    const diff = await api.sessionFileDiff(vault, sessionId, file, repo);
     setOpen((o) => ({ ...o, [file]: diff }));
   };
 
@@ -148,12 +151,12 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   };
 
   const commit = () =>
-    act("commit", "Committing…", async () => ({ text: `Committed ${await api.sessionCommit(vault, sessionId, message || title)}` }));
+    act("commit", "Committing…", async () => ({ text: `Committed ${await api.sessionCommit(vault, sessionId, message || title, repo)}` }));
   const push = () =>
-    act("push", `Pushing ${worktree.branch} to the remote…`, async () => ({ text: `Pushed to ${await api.sessionPush(vault, sessionId)}` }));
+    act("push", `Pushing ${worktree.branch} to the remote…`, async () => ({ text: `Pushed to ${await api.sessionPush(vault, sessionId, repo)}` }));
   const pr = () =>
     act("pr", `Pushing ${worktree.branch} and creating a pull request…`, async () => {
-      const url = await api.sessionCreatePr(vault, sessionId, message || title);
+      const url = await api.sessionCreatePr(vault, sessionId, message || title, repo);
       return { text: "Pull request created", url };
     });
   /** The button's icon, or a spinner while its action runs. */
@@ -165,7 +168,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
     });
     if (!ok) return;
     act("remove", "Removing the worktree…", async () => {
-      await api.sessionRemoveWorktree(vault, sessionId);
+      await api.sessionRemoveWorktree(vault, sessionId, repo);
       return { text: "Worktree removed. The branch is kept." };
     });
   };
@@ -174,7 +177,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   useEffect(() => {
     if (search === null || !changes) return;
     let stale = false;
-    Promise.all(changes.files.map(async (f) => [f.path, await api.sessionFileDiff(vault, sessionId, f.path).catch(() => "")] as const))
+    Promise.all(changes.files.map(async (f) => [f.path, await api.sessionFileDiff(vault, sessionId, f.path, repo).catch(() => "")] as const))
       .then((entries) => !stale && setDiffs(Object.fromEntries(entries)));
     return () => {
       stale = true;
@@ -207,14 +210,14 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   const isOpen = (file: string) => open[file] !== undefined && open[file] !== null;
 
   const composeDiff = async (files: string[]) => {
-    const blocks = await Promise.all(files.map(async (f) => diffBlock(f, open[f] ?? (await api.sessionFileDiff(vault, sessionId, f)))));
+    const blocks = await Promise.all(files.map(async (f) => diffBlock(f, open[f] ?? (await api.sessionFileDiff(vault, sessionId, f, repo)))));
     onCompose(`${files.length > 1 ? "These changes" : "This change"} (${checkout ? "uncommitted" : `against ${worktree.base_branch}`}):\n\n${blocks.join("\n\n")}\n\n`);
   };
 
   const sendReview = async () => {
     setSendingReview(true);
     try {
-      await onSend(reviewMessage(comments));
+      await onSend(reviewMessage(comments, repo ? worktree.path : undefined));
       setComments([]);
       setNotice({ ok: true, text: `Sent ${comments.length} comment${comments.length === 1 ? "" : "s"} to the session` });
     } catch (e) {
@@ -254,7 +257,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
                   setEditingBranch(null);
                   if (!name || name === worktree.branch) return;
                   act("rename", `Renaming the branch to ${name}…`, async () => {
-                    setWorktree(await api.sessionRenameBranch(vault, sessionId, name));
+                    setWorktree(await api.sessionRenameBranch(vault, sessionId, name, repo));
                     return { text: `Renamed the branch to ${name}` };
                   });
                 }
@@ -356,7 +359,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
           <span>{comments.length} comment{comments.length === 1 ? "" : "s"}</span>
           <span className="spacer" />
           <button className="icon" title="Discard all comments" onClick={() => setComments([])}><Trash2 size={13} /></button>
-          <button onClick={() => { onCompose(reviewMessage(comments) + "\n\n"); setComments([]); }} title="Put them into the message box to add instructions">
+          <button onClick={() => { onCompose(reviewMessage(comments, repo ? worktree.path : undefined) + "\n\n"); setComments([]); }} title="Put them into the message box to add instructions">
             <TextCursorInput size={13} /> Edit first
           </button>
           <button className="primary" onClick={sendReview} disabled={sendingReview}

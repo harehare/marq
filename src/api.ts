@@ -7,7 +7,27 @@ export type Board = { lists: { name: string; cards: Card[] }[]; queue: Queue | n
 export type Queue = {
   list: string; doing: string; review: string; max: number; project: string;
   model: string | null; permission_mode: string | null; worktree: boolean;
+  /** A command that checks each card's work after its turn. */
+  verify?: string | null;
+  /** A workspace note whose directories each card's session gets. */
+  workspace?: string | null;
+  /** `on` or `strict`: Bash runs in Claude Code's sandbox. */
+  sandbox?: string | null;
 };
+/** How a request's work is checked and run; see docs/workflows.md. */
+export type TaskChecks = {
+  verify?: string; verifyRetry?: "fresh"; verifyRetries?: number; sandbox?: string; phases?: string[]; acceptance?: string;
+  /** A workspace note, for its directories (and project when none is given). */
+  workspace?: string;
+  /** Directories beyond the project, when not from a workspace. */
+  directories?: DirSpec[];
+};
+/** A directory beyond the project; `worktree` gives a git repository its own worktree on the session's branch. */
+export type DirSpec = { path: string; worktree: boolean };
+/** A saved set of directories: `workspaces/<name>.md`. */
+export type Workspace = { path: string; rel: string; title: string; project: string | null; directories: DirSpec[]; notes: string };
+/** A directory a session got beyond its own: `path` is where the agent works (its worktree, if it has one). */
+export type ExtraDir = { path: string; source: string; worktree?: Worktree | null };
 export type NoteRef = { path: string; rel: string; title: string | null; line: number; text: string };
 /** Links into a note, mentions of it that are not links, what it links to, and its `[[links]]` to no note. */
 export type NoteLinks = { linked: NoteRef[]; mentions: NoteRef[]; outgoing: string[]; missing: string[] };
@@ -32,6 +52,8 @@ export type SessionInfo = {
   status: string;
   path: string;
   worktree: Worktree | null;
+  /** Directories beyond `cwd`, from a workspace or the request. */
+  dirs?: ExtraDir[];
   additions: number | null;
   deletions: number | null;
   /** `done` or `pr` once reviewed. */
@@ -147,7 +169,7 @@ export const api = {
   /** With `autoTitle`, a small model names the task and `title` is the fallback. */
   newTask: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
-  }) =>
+  } & TaskChecks) =>
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
   /** Agents a task can run on: Claude, and others that speak ACP. */
   listAgents: () => invoke<AgentInfo[]>("list_agents"),
@@ -159,11 +181,11 @@ export const api = {
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
-  }) => invoke<string>("save_task", { vault, task }),
+  } & TaskChecks) => invoke<string>("save_task", { vault, task }),
   /** One request on 2 to 4 models, each in its own worktree. */
   newTaskCompare: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
-  }, models: string[]) =>
+  } & TaskChecks, models: string[]) =>
     invoke<{ request: string; sessions: { session_id: string; title: string }[] }>("new_task_compare", { vault, task, models }),
   answerApproval: (requestId: string, allow: boolean, always: boolean, message?: string) =>
     invoke<void>("answer_approval", { requestId, allow, always, message }),
@@ -172,22 +194,26 @@ export const api = {
     invoke<SlashCommand[]>("list_commands", { vault, ...opts }),
   summarizeSession: (vault: string, sessionId: string) => invoke<string>("summarize_session", { vault, sessionId }),
   sessionCheckout: (vault: string, sessionId: string) => invoke<Worktree | null>("session_checkout", { vault, sessionId }),
-  sessionChanges: (vault: string, sessionId: string) => invoke<Changes>("session_changes", { vault, sessionId }),
-  sessionFileDiff: (vault: string, sessionId: string, file: string) =>
-    invoke<string>("session_file_diff", { vault, sessionId, file }),
-  sessionCommit: (vault: string, sessionId: string, message: string) =>
-    invoke<string>("session_commit", { vault, sessionId, message }),
+  sessionChanges: (vault: string, sessionId: string, repo?: string) => invoke<Changes>("session_changes", { vault, sessionId, repo }),
+  sessionFileDiff: (vault: string, sessionId: string, file: string, repo?: string) =>
+    invoke<string>("session_file_diff", { vault, sessionId, file, repo }),
+  sessionCommit: (vault: string, sessionId: string, message: string, repo?: string) =>
+    invoke<string>("session_commit", { vault, sessionId, message, repo }),
   setSessionReview: (vault: string, sessionId: string, state: "done" | "open") =>
     invoke<void>("set_session_review", { vault, sessionId, state }),
-  sessionPush: (vault: string, sessionId: string) => invoke<string>("session_push", { vault, sessionId }),
+  sessionPush: (vault: string, sessionId: string, repo?: string) => invoke<string>("session_push", { vault, sessionId, repo }),
   /** For a session without a worktree: pushes its project's current branch. */
   sessionPushCwd: (vault: string, sessionId: string) => invoke<string>("session_push_cwd", { vault, sessionId }),
   /** The first line of `message` is the PR title, the rest its body. */
-  sessionCreatePr: (vault: string, sessionId: string, message: string) =>
-    invoke<string>("session_create_pr", { vault, sessionId, message }),
-  sessionRenameBranch: (vault: string, sessionId: string, branch: string) =>
-    invoke<Worktree>("session_rename_branch", { vault, sessionId, branch }),
-  sessionRemoveWorktree: (vault: string, sessionId: string) => invoke<void>("session_remove_worktree", { vault, sessionId }),
+  sessionCreatePr: (vault: string, sessionId: string, message: string, repo?: string) =>
+    invoke<string>("session_create_pr", { vault, sessionId, message, repo }),
+  sessionRenameBranch: (vault: string, sessionId: string, branch: string, repo?: string) =>
+    invoke<Worktree>("session_rename_branch", { vault, sessionId, branch, repo }),
+  sessionRemoveWorktree: (vault: string, sessionId: string, repo?: string) => invoke<void>("session_remove_worktree", { vault, sessionId, repo }),
+  listWorkspaces: (vault: string) => invoke<Workspace[]>("list_workspaces", { vault }),
+  /** Saves the directories as `workspaces/<title>.md`; returns its path. */
+  createWorkspace: (vault: string, title: string, project: string, directories: DirSpec[]) =>
+    invoke<string>("create_workspace", { vault, title, project, directories }),
   openIn: (path: string, app: "finder" | "vscode" | "reveal") => invoke<void>("open_in", { path, app }),
   deleteSession: (vault: string, sessionId: string, removeWorktree: boolean, deleteBranch: boolean) =>
     invoke<void>("delete_session", { vault, sessionId, removeWorktree, deleteBranch }),
@@ -219,6 +245,11 @@ export const api = {
   knowledgeReview: (vault: string, path: string) => invoke<void>("knowledge_review", { vault, path }),
   /** The daily schedule that merges learnings into knowledge notes; created the first time. */
   knowledgeGardening: (vault: string) => invoke<string>("knowledge_gardening", { vault }),
+  /** The weekly schedule that writes reviewed knowledge into a project's CLAUDE.md and skills; off until its project is set. */
+  knowledgePromotion: (vault: string) => invoke<string>("knowledge_promotion", { vault }),
+  newSpec: (vault: string, title: string) => invoke<string>("new_spec", { vault, title }),
+  /** Puts a spec's open tasks on its board; returns the board's path and how many cards were added. */
+  specToBoard: (vault: string, path: string) => invoke<{ board: string; added: number }>("spec_to_board", { vault, path }),
   noteLinks: (vault: string, path: string) => invoke<NoteLinks>("note_links", { vault, path }),
   /** The note a `[[target]]` names; with `create`, a new note under notes/ when there is none. */
   wikilinkOpen: (vault: string, target: string, create: boolean) => invoke<string | null>("wikilink_open", { vault, target, create }),
@@ -257,7 +288,7 @@ export const api = {
   terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
   /** `ollama:<name>` for each model the local Ollama has; rejects when Ollama is not running. */
   ollamaModels: () => invoke<string[]>("ollama_models"),
-  newCrew: (vault: string, task: { title: string; prompt: string; project: string; autoTitle: boolean }) =>
+  newCrew: (vault: string, task: { title: string; prompt: string; project: string; autoTitle: boolean; workspace?: string; directories?: DirSpec[] }) =>
     invoke<{ rel: string; title: string }>("new_crew", { vault, ...task }),
   /** An empty owner unassigns the task. */
   crewTaskUpdate: (vault: string, crewId: string, id: string, change: { status?: string; owner?: string }) =>

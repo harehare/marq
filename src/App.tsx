@@ -446,7 +446,7 @@ export default function App() {
       localStorage.setItem("marq.sidebar", v ? "1" : "0");
     } catch {}
   };
-  const [naming, setNaming] = useState<{ kind: "note" | "crew"; initial: string } | null>(null);
+  const [naming, setNaming] = useState<{ kind: "note" | "crew" | "spec" | "workspace"; initial: string } | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   // New folder, rename and move share one name dialog.
   const [pathDialog, setPathDialog] = useState<{ mode: "folder" | "rename" | "move"; from?: string; initial: string } | null>(null);
@@ -872,7 +872,13 @@ export default function App() {
     return path;
   };
 
-  const createNamed = async (kind: "note" | "crew", name: string) => {
+  const createNamed = async (kind: "note" | "crew" | "spec" | "workspace", name: string) => {
+    if (kind === "spec" || kind === "workspace") {
+      const path = kind === "spec" ? await api.newSpec(vault!, name) : await api.createWorkspace(vault!, name, "", []);
+      openNote(path, undefined, true);
+      refreshFiles();
+      return;
+    }
     const slug = name.replace(/\.md$/, "").replace(/[\s/]+/g, "-");
     const rel = kind === "crew" ? `crews/${slug}.md` : name.endsWith(".md") ? name : `${name}.md`;
     await create(rel.replace(/^\/+/, ""), kind);
@@ -1130,6 +1136,12 @@ export default function App() {
       label: "Knowledge: merge session learnings into knowledge notes (daily schedule)",
       run: () => void api.knowledgeGardening(vault!).then((p) => { refreshFiles(); openNote(p); }),
     },
+    "knowledge.promotion": {
+      label: "Knowledge: write reviewed knowledge into a project's CLAUDE.md and skills (weekly schedule)",
+      run: () => void api.knowledgePromotion(vault!).then((p) => { refreshFiles(); openNote(p); }),
+    },
+    "workspace.new": { label: "New workspace (a project and other directories to pick for tasks)", run: () => setNaming({ kind: "workspace", initial: "" }) },
+    "spec.new": { label: "New spec (requirements, design, tasks and acceptance, broken down into a board)", run: () => setNaming({ kind: "spec", initial: "" }) },
     "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },
@@ -1638,13 +1650,16 @@ export default function App() {
       )}
       {naming && (
         <NameDialog
-          title={naming.kind === "crew" ? "New crew" : "New note"}
-          label={naming.kind === "crew" ? "What will the crew work on? (a short name)" : "Path, relative to the vault"}
+          title={{ crew: "New crew", spec: "New spec", workspace: "New workspace", note: "New note" }[naming.kind]}
+          label={{ crew: "What will the crew work on? (a short name)", spec: "What is it for? (its title)", workspace: "Name", note: "Path, relative to the vault" }[naming.kind]}
           initial={naming.initial}
-          placeholder={naming.kind === "crew" ? "e.g. checkout-redesign" : "e.g. notes/meeting-2026-10"}
-          hint={naming.kind === "crew"
-            ? "Saved as crews/<name>.md with a lead, an implementer and a reviewer. Next, set the project and the goal in the note, then open the crew from the sidebar."
-            : "Folders are created as needed. .md is added if you leave it out."}
+          placeholder={{ crew: "e.g. checkout-redesign", spec: "e.g. Show types on hover", workspace: "e.g. mq + docs", note: "e.g. notes/meeting-2026-10" }[naming.kind]}
+          hint={{
+            crew: "Saved as crews/<name>.md with a lead, an implementer and a reviewer. Next, set the project and the goal in the note, then open the crew from the sidebar.",
+            spec: "Saved in specs/ with Requirements, Design, Tasks and Acceptance to fill in (or ask an agent: /marq:spec). Break down puts the tasks on a board.",
+            workspace: "Saved in workspaces/. Set its project and directories in the note, or save them from the New task dialog instead.",
+            note: "Folders are created as needed. .md is added if you leave it out.",
+          }[naming.kind]}
           submit="Create"
           onSubmit={(v) => createNamed(naming.kind, v)}
           onClose={() => setNaming(null)}

@@ -179,7 +179,8 @@ function Link({ href, children }: any) {
   if (file) {
     return <a href={href} className="note-link" onClick={(e) => { e.preventDefault(); onOpenFile!(file); }}>{children as ReactNode}</a>;
   }
-  return <a href={href} target="_blank" rel="noreferrer">{children as ReactNode}</a>;
+  // Web links open in the default browser (see main.tsx).
+  return <a href={href} rel="noreferrer" title={href}>{children as ReactNode}</a>;
 }
 
 const COMPONENTS: Components = {

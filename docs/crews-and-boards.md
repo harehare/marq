@@ -26,6 +26,11 @@ title: Improve mq LSP
 project: ~/dev/git/mq       # where members work
 max_hops: 20                # see Hops below
 model: sonnet               # the members' model unless they set their own
+routes:                     # see Routes below
+  - from: impl
+    to: reviewer
+restart: 2                  # see Restarts below
+sandbox: on                 # on | strict, for every member unless it sets its own
 members:
   - role: lead
     worktree: false         # work in the project directory
@@ -54,6 +59,17 @@ members:
 - A member gets its own worktree on `marq/<role>-<short id>` when the project is a git repository, unless `worktree: false`. Members can read each other's directories.
 - The note is read whenever a message is sent or a member starts, so edits apply from then on.
 
+### Workspaces
+
+A crew can work across several directories, like a [request](sessions.md#workspaces) can. Add `workspace:` (a workspace note) or `directories:` to the crew note, or choose them in the New task dialog with **Team**. A crew that a session starts with `start_crew` gets that session's directories.
+
+```yaml
+project: ~/dev/git/mq          # or the workspace's project when empty
+workspace: workspaces/mq-docs.md
+```
+
+Every member can read and edit the directories. A member with its own worktree also gets a worktree on its branch in each repository marked `worktree: true`, so implementers working in parallel do not overwrite each other. Members with `worktree: false`, such as the lead and reviewers, use the directories as they are. Members can also read the other members' copies of the directories, as they can read each other's worktrees. The workspace note's text is added to every member's instructions.
+
 ### Models
 
 Each member runs on its own `model`, else the crew's `model`, else Claude Code's default. Use `opus`, `sonnet`, `haiku` or a full Claude model name; crews do not run on Ollama.
@@ -69,6 +85,14 @@ A message to several members starts a discussion. Members speak once per round a
 ### Hops
 
 Every message from you has hop 0. A message a member sends has the hop of the last batch it received plus one. A message to a member with a hop over `max_hops` (default 20) is **held**: it is logged but not delivered, and the timeline shows it with **Let it through**. This keeps members from messaging each other forever without you.
+
+### Routes
+
+`routes` forward a member's reply automatically. When `from` ends a turn, its final reply goes to `to` as a message from `from`. For example, every implementation result reaches the reviewer without the implementer having to send it. Routed messages count hops like any other message.
+
+### Restarts
+
+With `restart: N`, a member whose process ends with an error is started again on its own, up to N times per role. It continues its conversation and is told to check its work and the task list. Each restart shows in the timeline.
 
 ### Task list and documents
 
@@ -92,7 +116,7 @@ Moving a card to another list changes its status; lists you add that are not a s
 - **Header**: the project, **Kick off** and **Edit crew note**. A banner names members waiting for an approval.
 - **Tasks** shows the task list as a board: drag cards between statuses, add cards, link notes, and pick the owner from the members (the new owner is told). Crew boards are not listed under Boards in the sidebar. **Docs** lists the crew's documents.
 
-Not yet: a budget limit, routing rules (for example, every impl result goes to reviewer), and restarting failed members.
+Each member can also set `sandbox:` in `members`; see [Workflows](workflows.md#sandbox).
 
 ## Boards
 
@@ -119,6 +143,8 @@ The board tab shows the lists as columns (**Board**) or stacked (**List**). Drag
 
 Every 30 seconds Marq takes the cards at the top of the queue list, up to the limit: each moves to the working list, gets a link to the request note it started, and runs like **Start a session**, in its own worktree unless you turn that off. When the session's turn ends the card moves to the review list, unless the session or you moved it elsewhere already. Nothing moves a card to Done: you decide that after checking the result. A card that fails to start goes to the review list with the reason.
 
-The settings are frontmatter keys on the board note (`queue`, `queue_doing`, `queue_review`, `queue_max`, `queue_project`, `queue_model`, `queue_permission_mode`, `queue_worktree`). Nobody watches these sessions start, so with **Ask** permissions they wait for your approval; **Accept edits** or **Auto** lets them get on with it.
+**Check** runs a command after each card's turn, and **Sandbox** sandboxes the queue's sessions. A card moves to the review list only after its check has passed or given up. Cards linked to a [spec](workflows.md#specs) also get the spec as context, plus its check, sandbox and acceptance criteria.
+
+The settings are frontmatter keys on the board note (`queue`, `queue_doing`, `queue_review`, `queue_max`, `queue_project`, `queue_model`, `queue_permission_mode`, `queue_worktree`, `queue_verify`, `queue_sandbox`). Nobody watches these sessions start, so with **Ask** permissions they wait for your approval; **Accept edits** or **Auto** lets them get on with it.
 
 Agents read and change boards with `list_boards`, `read_board`, `board_add_card`, `board_update_card` and `board_add_list`. See [Vault tools for agents](tools.md).

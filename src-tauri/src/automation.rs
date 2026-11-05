@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::boards::{self, Change, Queue};
 use crate::error::{Error, Result};
-use crate::{mq, vault, NewTask, RunOptions};
+use crate::{mq, vault, workflow, NewTask, RunOptions};
 
 const TICK: Duration = Duration::from_secs(30);
 
@@ -61,15 +61,32 @@ pub fn start(app: &AppHandle) {
             let _ = tauri::async_runtime::spawn_blocking(move || tick(&app)).await;
         }
     });
-    for (event, failed) in [("session://turn", false), ("session://exit", true)] {
-        let handle = app.clone();
-        app.listen(event, move |e| {
-            let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
-            let Some(id) = v["session_id"].as_str() else { return };
-            let failed = failed && v["status"].as_str() == Some("error");
-            on_turn_end(&handle, id, failed);
-        });
-    }
+    // A turn's work counts as finished once it is checked (see `workflow`), not when the turn ends.
+    let handle = app.clone();
+    app.listen("workflow://settled", move |e| {
+        let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
+        let Some(id) = v["session_id"].as_str() else { return };
+        on_turn_end(&handle, id, v["note"].as_str().map(str::to_string));
+    });
+    let handle = app.clone();
+    app.listen("session://exit", move |e| {
+        let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
+        let Some(id) = v["session_id"].as_str() else { return };
+        if v["status"].as_str() == Some("error") {
+            on_turn_end(&handle, id, Some("⚠ The session ended with an error".into()));
+        }
+    });
+    // A retry or the next phase in a new session carries on the same card or schedule run.
+    let handle = app.clone();
+    app.listen("workflow://handoff", move |e| {
+        let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
+        let (Some(from), Some(to)) = (v["from"].as_str(), v["to"].as_str()) else { return };
+        let runs = &handle.state::<Automation>().runs;
+        let mut runs = runs.lock().unwrap();
+        if let Some(run) = runs.remove(from) {
+            runs.insert(to.to_string(), run);
+        }
+    });
 }
 
 fn tick(app: &AppHandle) {
@@ -108,7 +125,20 @@ fn start_card(app: &AppHandle, vault: &Path, board: &Path, queue: &Queue, card: 
     // Moved first, so a card that fails to start is not picked up again on the next tick.
     boards::update(board, &card.id, Change { list: Some(queue.doing.clone()), ..Default::default() })?;
     let board_rel = rel(vault, board);
-    let prompt = card_prompt(vault, board, card, &queue.doing);
+    let mut prompt = card_prompt(vault, board, card, &queue.doing);
+    // A card from a spec gets the spec as context, and its check, sandbox and acceptance criteria.
+    let spec = card.notes.iter().filter_map(|n| note_link(n)).find_map(|(_, href)| {
+        let dir = board.parent().unwrap_or(vault);
+        workflow::from_spec(vault, &normalize(&dir.join(href)))
+    });
+    let (extra, acceptance) = match spec {
+        Some(s) => {
+            prompt.push_str(&format!("\n\n{}", s.context));
+            (s.frontmatter, s.acceptance)
+        }
+        None => (vec![], None),
+    };
+    let inherited = |k: &str| extra.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
     let task = NewTask {
         title: card.title.clone(),
         prompt,
@@ -119,6 +149,12 @@ fn start_card(app: &AppHandle, vault: &Path, board: &Path, queue: &Queue, card: 
         carry_changes: false,
         worktree: queue.worktree,
         auto_title: false,
+        verify: queue.verify.clone().or_else(|| inherited("verify")),
+        sandbox: queue.sandbox.clone().or_else(|| inherited("sandbox")).or_else(workflow::unattended_sandbox),
+        acceptance,
+        extra,
+        workspace: queue.workspace.clone(),
+        ..Default::default()
     };
     let v = vault.to_string_lossy();
     let started = crate::write_request(&v, task)
@@ -193,12 +229,12 @@ fn rel(vault: &Path, p: &Path) -> String {
 }
 
 /// A link from the note at `from` to the note at `to`, both vault-relative.
-fn link(from: &str, title: &str, to: &str) -> String {
+pub fn link(from: &str, title: &str, to: &str) -> String {
     let up = from.matches('/').count();
     format!("[{title}]({}{})", "../".repeat(up), to.replace(' ', "%20"))
 }
 
-fn on_turn_end(app: &AppHandle, session: &str, failed: bool) {
+fn on_turn_end(app: &AppHandle, session: &str, note: Option<String>) {
     let Some(run) = app.state::<Automation>().runs.lock().unwrap().remove(session) else { return };
     let Run::Card { board, card, doing, review } = run else { return };
     // Left alone if the session or the user already moved it.
@@ -207,7 +243,6 @@ fn on_turn_end(app: &AppHandle, session: &str, failed: bool) {
     if !still_doing {
         return;
     }
-    let note = failed.then(|| "⚠ The session ended with an error".to_string());
     if let Err(e) = boards::update(&board, &card, Change { list: Some(review), note, ..Default::default() }) {
         eprintln!("marq: could not move {card} to review: {e}");
     }
@@ -318,6 +353,15 @@ pub fn run_schedule(app: &AppHandle, vault: &Path, path: &Path) -> Result<Option
             carry_changes: false,
             worktree: get("worktree").as_deref() == Some("true"),
             auto_title: false,
+            verify: get("verify"),
+            verify_retry: get("verify_retry"),
+            verify_retries: get("verify_retries").and_then(|v| v.parse().ok()),
+            sandbox: get("sandbox").or_else(workflow::unattended_sandbox),
+            phases: vault::fm_list(&text, "phases"),
+            extra: ["verify_timeout", "verify_model", "phase_gate"].iter().filter_map(|k| Some((k.to_string(), get(k)?))).collect(),
+            workspace: get("workspace"),
+            directories: crate::workspace::dirs_of(&text),
+            ..Default::default()
         };
         let request = crate::write_request(&v, task)?;
         let started = crate::start_from_note(app.clone(), &v, &request, 0, RunOptions::default())?;

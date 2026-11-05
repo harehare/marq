@@ -1,0 +1,5 @@
+{
+  "name": "marq",
+  "description": "Workflows for sessions run from Marq: write a spec and break it into cards, and look back on a task.",
+  "version": "0.1.0"
+}

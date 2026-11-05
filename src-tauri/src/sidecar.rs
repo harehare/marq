@@ -19,7 +19,7 @@ use crate::agents;
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
-use crate::{boards, crew, knowledge, links, mq, organize, relay, vault};
+use crate::{boards, crew, knowledge, links, mq, organize, relay, vault, workflow, workspace};
 
 /// How a turn reaches the agent.
 #[derive(Clone, Copy, PartialEq)]
@@ -110,6 +110,8 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         system.push_str(&crew::system_prompt(vault, c));
         dirs = crew::other_dirs(vault, c);
     }
+    system.push_str(&workspace::system_prompt(&meta.dirs, None));
+    dirs.extend(meta.dirs.iter().map(|d| d.path.clone()));
     let (executable, args) = agents::command(meta.agent.as_deref());
     json!({
         "op": "start",
@@ -126,6 +128,7 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         "system": system,
         "crew": meta.crew.is_some(),
         "additionalDirectories": dirs,
+        "sandbox": meta.sandbox,
     })
 }
 
@@ -390,6 +393,17 @@ fn finish(app: &AppHandle, id: &str, status: &str, error: Option<&str>) {
         let _ = session::rerender(v, id);
     }
     let _ = app.emit("session://exit", json!({"session_id": id, "status": status, "stderr": error.unwrap_or("")}));
+    // A crew member that failed may be started again.
+    if status == "error"
+        && let Some(v) = runner.vaults.lock().unwrap().get(id).cloned()
+    {
+        let (app, id) = (app.clone(), id.to_string());
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = crew::on_exit(&app, &v, &id) {
+                eprintln!("marq: could not restart the crew member: {e}");
+            }
+        });
+    }
 }
 
 async fn handle(app: &AppHandle, ev: Value) {
@@ -420,6 +434,8 @@ async fn handle(app: &AppHandle, ev: Value) {
                     if let Err(e) = relay::on_turn_end(&app, &v, &id) {
                         eprintln!("marq: reply failed: {e}");
                     }
+                    // Checks the work, moves a phased request on, and settles the session for the queue.
+                    workflow::on_turn_end(&app, &v, &id);
                 });
             }
         }
@@ -524,6 +540,19 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             let c = boards::update(&path, &s("id"), serde_json::from_value(p.clone()).unwrap_or_default())?;
             changed(app, &path);
             Ok(json!(c))
+        }
+        "write_spec" => {
+            let meta = session::meta(vault, session)?;
+            let rel = workflow::write_spec(vault, &s("title"), &s("content"), p["path"].as_str(), meta.project(), p["verify"].as_str())?;
+            changed(app, &vault.join(&rel));
+            Ok(json!({"saved": rel, "next": "The user reviews the spec. spec_to_board puts its open tasks on a board."}))
+        }
+        "spec_to_board" => {
+            let spec = find_any(vault, &s("spec"))?;
+            let (board, added) = workflow::spec_to_board(vault, &spec)?;
+            changed(app, &board);
+            changed(app, &spec);
+            Ok(json!({"board": board.strip_prefix(vault).unwrap_or(&board).to_string_lossy(), "cards_added": added}))
         }
         "create_board" => {
             let lists: Vec<String> = p["lists"].as_array().map(|l| l.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
@@ -655,7 +684,13 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             }
             // The crew works on the repository itself, not on this session's worktree.
             let project = meta.worktree.as_ref().map(|w| w.repo.clone()).unwrap_or(meta.cwd.clone());
-            let c = crew::start(app, vault, &s("title"), &s("goal"), &project)?;
+            // Likewise the other directories: the repositories, with a worktree where this session had one.
+            let dirs: Vec<workspace::DirSpec> = meta
+                .dirs
+                .iter()
+                .map(|d| workspace::DirSpec { path: d.worktree.as_ref().map_or(d.source.clone(), |w| w.repo.clone()), worktree: d.worktree.is_some() })
+                .collect();
+            let c = crew::start(app, vault, &s("title"), &s("goal"), &project, &workspace::render_dirs(&dirs))?;
             let line = json!({"type": "marq_crew", "path": c.rel, "title": c.title});
             session::append(&session::raw_path(vault, session), &line)?;
             let _ = app.emit("session://event", json!({"session_id": session, "event": line}));

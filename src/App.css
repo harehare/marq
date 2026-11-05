@@ -947,7 +947,23 @@ a.crumb.link:hover { color: var(--accent); text-decoration: underline; }
 .preview h4, .preview h5, .preview h6 { font-size: 1em; margin: 1.2em 0 0.3em; }
 .preview p { margin: 0.6em 0; }
 .preview a.note-link { cursor: pointer; }
-.preview a[href] { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--accent-soft); }
+/* Links in rendered Markdown (notes, chat, mq output): accent colour and a visible underline, so they read as
+   clickable at a glance. Hovering a web link shows ↗, since it leaves Marq for the browser; it sits over the
+   corner of the link so the text after it does not move. */
+.preview a[href], .md a[href] {
+  color: var(--accent); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 3px; transition: text-decoration-color 0.1s, background 0.1s;
+}
+.preview a[href]:hover, .md a[href]:hover { text-decoration-color: currentColor; background: var(--accent-soft); }
+.preview a[href]:focus-visible, .md a[href]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.preview a[href^="http"], .md a[href^="http"], .preview a[href^="mailto:"], .md a[href^="mailto:"] { position: relative; }
+.preview a[href^="http"]::after, .md a[href^="http"]::after, .preview a[href^="mailto:"]::after, .md a[href^="mailto:"]::after {
+  content: "↗"; position: absolute; top: -0.45em; right: -0.7em; font-size: 0.7em; line-height: 1; text-decoration: none;
+  pointer-events: none; opacity: 0; transition: opacity 0.1s;
+}
+.preview a[href^="http"]:hover::after, .md a[href^="http"]:hover::after, .preview a[href^="mailto:"]:hover::after, .md a[href^="mailto:"]:hover::after,
+.preview a[href^="http"]:focus-visible::after, .md a[href^="http"]:focus-visible::after { opacity: 0.85; }
 .preview ul, .preview ol { padding-left: 1.5em; }
 .preview li { margin: 0.2em 0; }
 .preview li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.3em; }
@@ -1157,6 +1173,9 @@ button.icon.danger { color: var(--err); }
 }
 .side-switch button:hover { background: transparent !important; color: var(--fg); }
 .side-switch button.on { color: var(--fg-strong); box-shadow: inset 0 -2px var(--accent); }
+.repo-tabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.repo-tabs button { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.repo-tabs button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .side-content { flex: 1; overflow: auto; min-height: 0; }
 .origin-note .preview { padding: 16px 22px 60px; font-size: 14px; }
 .origin-head {
@@ -1254,6 +1273,12 @@ button.icon.danger { color: var(--err); }
 .field-label { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 4px; }
 .project-row { display: flex; align-items: center; gap: 8px; }
 .project-row input { flex: 1; font-family: var(--font-mono); font-size: 12px; }
+.dir-row .check { margin: 0; white-space: nowrap; font-size: 12px; }
+.task-side .project-row input { min-width: 0; text-overflow: ellipsis; }
+.task-side .dir-row { gap: 6px; padding-left: 22px; }
+.dir-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.dir-actions .project-row input { font-family: inherit; }
+.modal textarea.acceptance { width: 100%; min-height: 48px; font: inherit; font-size: 13px; resize: vertical; }
 .modal p { margin: -4px 0 0; }
 .modes { display: flex; gap: 6px; flex-wrap: wrap; }
 .mode.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
@@ -1404,6 +1429,44 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; -webkit-user
 .settings-actions { display: inline-flex; align-items: center; gap: 6px; }
 .settings-actions > .muted { margin-right: 6px; }
 .modal.ask { width: min(560px, calc(100vw - 32px)); }
+
+/* New task: what you write on the left, how it runs on the right */
+.modal.task-modal { width: min(1000px, calc(100vw - 32px)); height: min(660px, 84vh); }
+.task-body { display: flex; gap: 16px; min-height: 0; flex: 1; }
+.task-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+/* The prompt takes whatever height the column has left. */
+.task-main .slash-wrap { flex: 1; min-height: 0; }
+.task-main .slash-wrap > textarea.task-prompt { flex: 1; min-height: 160px; height: auto; overflow-y: auto; }
+.task-side {
+  flex: none; width: 400px; display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto;
+  padding-left: 16px; border-left: 1px solid var(--border);
+}
+.task-section { display: flex; flex-direction: column; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.task-section:last-of-type { border-bottom: none; }
+.task-section-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 0; text-align: left;
+  background: transparent !important; border: none; box-shadow: none; color: var(--fg);
+}
+.task-section-head .field-label { margin: 0; flex: none; }
+.task-section-head .chev { flex: none; color: var(--muted); transition: transform 0.12s; }
+.task-section.open .chev { transform: rotate(90deg); }
+.task-section-head:hover .field-label { color: var(--fg); }
+.task-section-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg); }
+.task-section.disabled .task-section-summary { color: var(--muted); font-style: italic; }
+.task-section.disabled .chev { opacity: 0.3; }
+.task-section-body { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 4px 19px; }
+.task-section-body .modes .mode { padding: 3px 8px; font-size: 12px; }
+.task-section-body .check { font-size: 12.5px; }
+.task-section-body p { margin: 0; }
+button.link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 12px; background: transparent; border: none; color: var(--muted); }
+button.link:hover:not(:disabled) { color: var(--accent); background: transparent; }
+.task-warn { margin: 0; padding: 6px 8px; border-radius: 6px; color: var(--fg); background: var(--accent-soft); }
+@media (max-width: 760px) {
+  .task-body { flex-direction: column; }
+  .task-side { width: auto; padding-left: 0; border-left: none; border-top: 1px solid var(--border); padding-top: 8px; }
+  .modal.task-modal { height: auto; max-height: 90vh; }
+  .task-main .slash-wrap > textarea.task-prompt { flex: none; height: 200px; }
+}
 .ask-input { min-height: 72px; font: inherit; resize: none; }
 .ask-excerpt {
   margin: 0; max-height: 120px; overflow: auto; padding: 6px 10px; white-space: pre-wrap; font-size: 12.5px;

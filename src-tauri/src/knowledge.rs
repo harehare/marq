@@ -256,6 +256,30 @@ pub fn ensure_gardening(vault: &Path) -> Result<PathBuf> {
     }
 }
 
+/// The prompt of the promotion schedule: reviewed knowledge goes back into the repository, where every
+/// agent reads it, not only sessions started from marq.
+pub const PROMOTION_PROMPT: &str = "Write what this project's knowledge notes say back into the repository, so every coding agent working on it starts from it.
+
+1. List the knowledge notes (list_notes with folder \"knowledge\") and read the ones for this project whose status is reviewed. Leave drafts out: nobody has checked them yet.
+2. Read the repository's agent instructions: CLAUDE.md, AGENTS.md and .claude/skills/*/SKILL.md, whichever exist.
+3. Fold in what is missing or out of date. Short, specific rules belong in CLAUDE.md (or AGENTS.md if that is what the project uses); a procedure with several steps that only matters for one kind of task belongs in a skill (.claude/skills/<name>/SKILL.md with name and description frontmatter). Keep the files short: drop what the code already makes obvious, and do not copy the notes wholesale.
+4. If nothing needs to change, say so and stop. Otherwise commit on this branch and open a pull request with gh, listing the knowledge notes each change came from.";
+
+/// The promotion schedule, created on first use, turned off until its project is set. Returns its path.
+pub fn ensure_promotion(vault: &Path) -> Result<PathBuf> {
+    let existing = vault::list_files(vault).into_iter().find(|f| {
+        f.kind.as_deref() == Some("schedule") && std::fs::read_to_string(&f.path).is_ok_and(|t| t.contains("Fold in what is missing"))
+    });
+    if let Some(f) = existing {
+        return Ok(PathBuf::from(f.path));
+    }
+    let path = crate::automation::create(vault, "Promote knowledge", "1w", PROMOTION_PROMPT, "", "")?;
+    let text = std::fs::read_to_string(&path)?;
+    let text = vault::fm_set(&vault::fm_set(&text, "worktree", "true"), "enabled", "false");
+    std::fs::write(&path, vault::fm_set(&text, "permission_mode", "acceptEdits"))?;
+    Ok(path)
+}
+
 pub fn list_json(items: Vec<SessionLearnings>) -> Value {
     json!({ "sessions": items, "note": "Pass these session ids as write_knowledge sources once their learnings are merged (or dropped)." })
 }

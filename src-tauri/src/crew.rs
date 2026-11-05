@@ -21,7 +21,7 @@ use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::sidecar::{Runner, Turn};
 use crate::tasks::{self, Task, TaskList};
-use crate::{git, vault};
+use crate::{git, vault, workspace};
 
 /// The user's address in a crew.
 pub const USER: &str = "user";
@@ -47,6 +47,15 @@ pub struct Member {
     pub model: Option<String>,
     /// The `### <role>` section under `## Roles`.
     pub instructions: String,
+    /// Its own sandbox (`on` or `strict`); the crew's otherwise.
+    pub sandbox: Option<String>,
+}
+
+/// `routes:` in the crew note: when `from` ends a turn, its reply goes to `to` as a message.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Route {
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +72,15 @@ pub struct Crew {
     pub model: Option<String>,
     pub members: Vec<Member>,
     pub goal: String,
+    pub routes: Vec<Route>,
+    /// How many times a member whose process fails is started again on its own.
+    pub restart: u32,
+    pub sandbox: Option<String>,
+    /// Directories beyond the project, from `workspace:` or `directories:`; see `workspace`.
+    pub dirs: Vec<workspace::DirSpec>,
+    /// The workspace note's text for the members, with its path.
+    #[serde(skip)]
+    pub workspace_notes: Option<(String, String)>,
 }
 
 impl Crew {
@@ -81,6 +99,12 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
     let fm = vault::split_frontmatter(text).0?;
     let doc = YamlLoader::load_from_str(fm).ok()?.into_iter().next()?;
     let sections = sections(vault::split_frontmatter(text).1);
+    // A missing workspace leaves the crew without its directories rather than unreadable.
+    let ws = workspace::resolve(vault, text).unwrap_or(workspace::Resolved {
+        project: vault::fm_get(text, "project").filter(|s| !s.is_empty()),
+        dirs: vec![],
+        notes: None,
+    });
     let section = |h2: &str, h3: Option<&str>| {
         sections
             .iter()
@@ -98,6 +122,7 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
                 permission_mode: m["permission_mode"].as_str().map(str::to_string).filter(|s| !s.is_empty()),
                 worktree: m["worktree"].as_bool().unwrap_or(true),
                 model: m["model"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+                sandbox: m["sandbox"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
                 instructions: section("Roles", Some(&role)),
                 role,
             })
@@ -110,11 +135,25 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
         }),
         path: path.to_string_lossy().into_owned(),
         rel: path.strip_prefix(vault).unwrap_or(path).to_string_lossy().into_owned(),
-        // Read like a request's `project:`, as the raw text.
-        project: vault::fm_get(text, "project").filter(|s| !s.is_empty()),
+        // Read like a request's `project:`, as the raw text; else the workspace's.
+        project: ws.project.filter(|s| !s.is_empty()),
+        dirs: ws.dirs,
+        workspace_notes: ws.notes,
         max_hops: doc["max_hops"].as_i64().map(|n| n.max(1) as u64).unwrap_or(DEFAULT_MAX_HOPS),
         model: doc["model"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
         members,
+        routes: doc["routes"]
+            .as_vec()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                let from = r["from"].as_str()?.trim().to_string();
+                let to = r["to"].as_str()?.trim().to_string();
+                (!from.is_empty() && !to.is_empty() && from != to).then_some(Route { from, to })
+            })
+            .collect(),
+        restart: doc["restart"].as_i64().map(|n| n.clamp(0, 10) as u32).unwrap_or(0),
+        sandbox: doc["sandbox"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
         // With its `###` subsections.
         goal: sections
             .iter()
@@ -576,8 +615,52 @@ pub fn on_turn_end(app: &AppHandle, vault: &Path, session_id: &str) -> Result<()
     if member_session(&events(vault, &crew.id), &c.role).as_deref() != Some(session_id) {
         return Ok(());
     }
+    route(app, vault, &crew, &c.role, session_id)?;
     deliver(app, vault, &crew, &c.role)
 }
+
+/// Sends the reply of the turn that just ended to the roles the crew note routes `role` to.
+/// Callers hold `MAIL`.
+fn route(app: &AppHandle, vault: &Path, crew: &Crew, role: &str, session_id: &str) -> Result<()> {
+    let to: Vec<&str> = crew.routes.iter().filter(|r| r.from == role).map(|r| r.to.as_str()).collect();
+    if to.is_empty() {
+        return Ok(());
+    }
+    let events = session::read_events(vault, session_id)?;
+    let Some(result) = session::last_result(&events).map(str::trim).filter(|r| !r.is_empty()) else { return Ok(()) };
+    let text = format!("(Routed to you by the crew note: {role}'s latest reply.)\n\n{result}");
+    post(app, vault, crew, Outgoing { from: role, to: &to.join(","), kind: "tell", text: &text, reply_to: None })?;
+    Ok(())
+}
+
+/// Called when a member's process ends with an error: starts it again, up to the crew's `restart`.
+pub fn on_exit(app: &AppHandle, vault: &Path, session_id: &str) -> Result<()> {
+    let Some(c) = session::meta(vault, session_id)?.crew else { return Ok(()) };
+    let _lock = MAIL.lock().unwrap();
+    let crew = find(vault, &c.id)?;
+    let events = events(vault, &crew.id);
+    if member_session(&events, &c.role).as_deref() != Some(session_id) {
+        return Ok(());
+    }
+    let done = events.iter().filter(|e| e["type"] == "crew_restart" && e["role"] == c.role.as_str()).count() as u32;
+    if done >= crew.restart {
+        return Ok(());
+    }
+    log(app, vault, &crew.id, json!({"type": "crew_restart", "role": c.role, "session": session_id, "at": vault::now()}))?;
+    let text = format!("{} failed and was restarted ({} of {})", c.role, done + 1, crew.restart);
+    log(app, vault, &crew.id, json!({"type": "crew_event", "text": text, "at": vault::now()}))?;
+    let meta = session::meta(vault, session_id)?;
+    let log = session::read_events(vault, session_id)?;
+    let (prompt, turn) = if session::has_conversation(&log) {
+        (RESTART_PROMPT.to_string(), Turn::Resume)
+    } else {
+        (session::first_prompt(&log).unwrap_or_default(), Turn::Restart)
+    };
+    app.state::<Runner>().start(app.clone(), vault.to_path_buf(), meta, prompt, turn)
+}
+
+const RESTART_PROMPT: &str = "Your previous run stopped with an error and the crew restarted you. \
+Check the state of your work and the task list, then carry on.";
 
 /// Starts a turn for `role` with all its pending mail, unless it is in a turn already.
 /// The role's session is created on its first message. Callers hold `MAIL`.
@@ -854,6 +937,11 @@ fn new_member(app: &AppHandle, crew: &Crew, member: &Member) -> Result<SessionMe
         },
         _ => None,
     };
+    // A member with its own worktree gets one in each workspace repository that asks for it, on its
+    // branch; the others (lead, reviewers) use the directories as they are.
+    let branch = worktree.as_ref().map(|w| w.branch.as_str());
+    let project = crew.project.as_deref().map(vault::expand_home);
+    let dirs = workspace::prepare(&crew.dirs, &session_id, branch, project.as_deref())?;
     let cwd = match &worktree {
         Some(wt) => wt.path.clone(),
         None => crew.project.clone().unwrap_or_else(|| Path::new(&crew.path).parent().unwrap().to_string_lossy().into_owned()),
@@ -870,6 +958,9 @@ fn new_member(app: &AppHandle, crew: &Crew, member: &Member) -> Result<SessionMe
         agent: None,
         worktree,
         crew: Some(CrewRef { id: crew.id.clone(), role: member.role.clone() }),
+        sandbox: member.sandbox.clone().or_else(|| crew.sandbox.clone()),
+        dirs,
+        ..Default::default()
     })
 }
 
@@ -882,17 +973,23 @@ pub fn other_dirs(vault: &Path, crew_ref: &CrewRef) -> Vec<String> {
         .filter(|m| m.role != crew_ref.role)
         .filter_map(|m| member_session(&events, &m.role))
         .filter_map(|s| session::meta(vault, &s).ok())
-        .map(|m| vault::expand_home(&m.cwd).to_string_lossy().into_owned())
-        .collect()
+        .flat_map(|m| std::iter::once(vault::expand_home(&m.cwd).to_string_lossy().into_owned()).chain(m.dirs.into_iter().map(|d| d.path)))
+        .fold(vec![], |mut out: Vec<String>, d| {
+            if !out.contains(&d) {
+                out.push(d);
+            }
+            out
+        })
 }
 
 /// The part of a member's system prompt that tells it about its crew.
 /// Creates a crew note in `crews/` for `goal` and sends the goal to its lead.
-pub fn start(app: &AppHandle, vault: &Path, title: &str, goal: &str, project: &str) -> Result<Crew> {
+/// `setup` is extra frontmatter, such as a workspace's directories.
+pub fn start(app: &AppHandle, vault: &Path, title: &str, goal: &str, project: &str, setup: &str) -> Result<Crew> {
     let rel = vault::unique_path(vault, "crews", title);
     std::fs::create_dir_all(vault.join("crews"))?;
     let path = vault.join(&rel);
-    std::fs::write(&path, template(&vault::new_id(), title, &vault::now(), project, goal))?;
+    std::fs::write(&path, template(&vault::new_id(), title, &vault::now(), project, goal, setup))?;
     let _ = app.emit("vault://changed", json!({"path": path}));
     let crew = find(vault, &rel)?;
     // A crew that cannot start is not left behind, so trying again does not make a second one.
@@ -968,7 +1065,7 @@ and who is busy.\n\
         title = crew.title,
         goal = if crew.goal.is_empty() { "(not written yet)" } else { crew.goal.trim() },
         own = if own.is_empty() { "(no instructions; ask the user if unsure)" } else { own },
-    )
+    ) + &crew.workspace_notes.as_ref().map(|(src, n)| format!("\n\nAbout the workspace ({src}):\n{n}")).unwrap_or_default()
 }
 
 #[derive(Debug, Serialize)]
@@ -1099,7 +1196,7 @@ const GOAL_PLACEHOLDER: &str = "What the crew should build or fix, and how you w
 
 /// The note written by New crew. It starts with only a lead, who designs the team.
 /// An empty `goal` leaves a placeholder for the user to fill in.
-pub fn template(id: &str, title: &str, now: &str, project: &str, goal: &str) -> String {
+pub fn template(id: &str, title: &str, now: &str, project: &str, goal: &str, setup: &str) -> String {
     let q = serde_json::to_string(title).unwrap();
     let project = if project.is_empty() { String::new() } else { format!(" {project}") };
     let goal = if goal.trim().is_empty() { GOAL_PLACEHOLDER.to_string() } else { demote(goal.trim()) };
@@ -1111,6 +1208,8 @@ title: {q}
 created: {now}
 updated: {now}
 project:{project}
+{setup}# Other directories the members get: workspace: <a workspace note>, or directories: like a request's.
+#   Members with their own worktree get one in each repository marked worktree: true; the others use them as they are.
 # Member-to-member messages allowed after each message from you before the crew pauses for you.
 max_hops: 20
 # role: the member's address. worktree: false works in the project directory instead of its own worktree.
@@ -1155,6 +1254,25 @@ You run the crew and do not edit code yourself.
 mod tests {
     use super::*;
 
+    #[test]
+    fn takes_a_workspace() {
+        let v = std::env::temp_dir().join(format!("marq-crew-ws-{}", vault::new_id()));
+        std::fs::create_dir_all(&v).unwrap();
+        let dirs = [workspace::DirSpec { path: "~/dev/docs".into(), worktree: true }];
+        workspace::create(&v, "mq + docs", "~/dev/mq", &dirs, "docs are the site").unwrap();
+        let setup = "workspace: \"mq + docs\"\n";
+        let text = template("c9", "W", "2026-11-05T10:00:00+09:00", "", "Build", setup);
+        let crew = parse(&text, &v.join("crews/w.md"), &v).unwrap();
+        assert_eq!(crew.project.as_deref(), Some("~/dev/mq"), "the workspace's project when the crew has none");
+        assert_eq!(crew.dirs, dirs);
+        assert_eq!(crew.workspace_notes.unwrap().1, "docs are the site");
+        // Directories listed in the note itself, without a workspace.
+        let text = template("c8", "D", "2026-11-05T10:00:00+09:00", "~/dev/a", "Build", &workspace::render_dirs(&dirs));
+        let crew = parse(&text, &v.join("crews/d.md"), &v).unwrap();
+        assert_eq!((crew.project.as_deref(), crew.dirs), (Some("~/dev/a"), dirs.to_vec()));
+        let _ = std::fs::remove_dir_all(v);
+    }
+
     const CREW: &str = "---\nid: c1\ntype: crew\ntitle: Hover\nproject: ~/dev/mq\nmembers:\n  - role: lead\n    worktree: false\n  - role: impl\n---\n# Hover\n\n## Goal\n\nShow types.\n\n## Roles\n\n### lead\n\nPlan.\n\n### impl\n\nBuild it.\n\n## Decisions\n\n- 2026-10-28 (lead): use LSP\n";
 
     #[test]
@@ -1168,7 +1286,7 @@ mod tests {
         assert_eq!(roles, [("lead", false), ("impl", true)]);
         assert_eq!(crew.members[1].instructions, "Build it.");
         assert_eq!(crew.goal, "Show types.");
-        let t = template("c2", "New", "2026-10-28T10:00:00+09:00", "~/dev/x", "Build it\n\nwell");
+        let t = template("c2", "New", "2026-10-28T10:00:00+09:00", "~/dev/x", "Build it\n\nwell", "");
         let crew = parse(&t, Path::new("/v/crews/n.md"), Path::new("/v")).unwrap();
         assert_eq!(crew.members.len(), 1);
         assert!(crew.members[0].instructions.contains("crew_add_member"));
@@ -1208,7 +1326,7 @@ mod tests {
 
     #[test]
     fn keeps_goal_headings_inside_the_goal() {
-        let t = template("c3", "X", "2026-10-29T10:00:00+09:00", "", "## 目的\n\nやる\n\n## 完了条件\n\n- 動く\n\n```\n# not a heading\n```");
+        let t = template("c3", "X", "2026-10-29T10:00:00+09:00", "", "## 目的\n\nやる\n\n## 完了条件\n\n- 動く\n\n```\n# not a heading\n```", "");
         let crew = parse(&t, Path::new("/v/crews/x.md"), Path::new("/v")).unwrap();
         assert_eq!(crew.goal, "### 目的\n\nやる\n\n### 完了条件\n\n- 動く\n\n```\n# not a heading\n```");
         assert_eq!(crew.members[0].instructions.lines().next(), Some("You run the crew and do not edit code yourself."));

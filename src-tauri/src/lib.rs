@@ -9,6 +9,7 @@ mod helpers;
 mod knowledge;
 mod links;
 mod mq;
+mod navigation;
 mod organize;
 mod relay;
 mod session;
@@ -18,6 +19,8 @@ mod terminal;
 mod thesaurus;
 mod sidecar;
 mod vault;
+mod workflow;
+mod workspace;
 
 use std::path::{Path, PathBuf};
 
@@ -70,7 +73,7 @@ fn create_note(vault: String, rel: String, kind: String) -> Result<String> {
     let title = p.file_stem().unwrap_or_default().to_string_lossy().into_owned();
     let now = vault::now();
     if kind == "crew" {
-        std::fs::write(&p, crew::template(&vault::new_id(), &title, &now, "", ""))?;
+        std::fs::write(&p, crew::template(&vault::new_id(), &title, &now, "", "", ""))?;
         return Ok(p.to_string_lossy().into_owned());
     }
     let mut fm = format!("---\nid: {}\ntype: {kind}\ntitle: {title}\ncreated: {now}\nupdated: {now}\n", vault::new_id());
@@ -138,6 +141,18 @@ pub struct RunOptions {
     instruction: Option<String>,
     /// Selected lines to ask about instead of the whole section.
     excerpt: Option<Excerpt>,
+    /// Work in this worktree instead of creating one: a retry or the next phase of a request.
+    #[serde(skip)]
+    reuse: Option<git::Worktree>,
+    /// The check to run, carried over from the session this one retries.
+    #[serde(skip)]
+    verify: Option<workflow::Verify>,
+    /// What went wrong in the previous attempt, for a retry in a fresh session.
+    #[serde(skip)]
+    previous: Option<String>,
+    /// The other directories of the session this one carries on, reused as they are.
+    #[serde(skip)]
+    reuse_dirs: Option<Vec<workspace::ExtraDir>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -173,7 +188,9 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
     let text = std::fs::read_to_string(&p)?;
     let rel = p.strip_prefix(&v).unwrap_or(&p).to_string_lossy().into_owned();
     let session_id = vault::new_id();
-    let project = opts.project.or_else(|| vault::fm_get(&text, "project")).filter(|s| !s.is_empty());
+    // `workspace:` gives the project when the note has none, and the other directories.
+    let ws = workspace::resolve(&v, &text)?;
+    let project = opts.project.or(ws.project).filter(|s| !s.is_empty());
     let permission_mode = match opts.intent.as_deref() {
         Some("plan") => Some("plan".to_string()),
         _ => vault::fm_get(&text, "permission_mode").filter(|s| !s.is_empty()),
@@ -181,9 +198,17 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
     let model = opts.model.or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
     let agent = vault::fm_get(&text, "agent").filter(|s| !s.is_empty() && s != agents::DEFAULT);
     let use_worktree = opts.worktree.unwrap_or_else(|| vault::fm_get(&text, "worktree").as_deref() != Some("false"));
+    let is_request = vault::fm_get(&text, "type").as_deref() == Some("request");
+    // A request in phases runs each phase in a new session, on the worktree of the one before.
+    let phase = if is_request { workflow::current_phase(&text) } else { None };
+    let first_phase = phase.is_none() || workflow::phases_of(&text).first() == phase.as_ref();
+    let last = (!first_phase).then(|| workflow::last_run(&v, &text)).flatten();
+    let reuse = opts.reuse.clone().or_else(|| last.as_ref().filter(|_| use_worktree).and_then(|m| m.worktree.clone()));
+    let reuse_dirs = opts.reuse_dirs.clone().or_else(|| last.map(|m| m.dirs));
 
     // A project that is a git repo gets its own worktree, unless the note says `worktree: false`.
     let worktree = match &project {
+        _ if reuse.is_some() => reuse,
         Some(proj) if use_worktree => match git::repo_root(&vault::expand_home(proj)) {
             Some(repo) => {
                 let carry = vault::fm_get(&text, "carry_changes").as_deref() == Some("true");
@@ -197,15 +222,34 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         _ => None,
     };
 
-    let (origin, title, prompt, text) = if vault::fm_get(&text, "type").as_deref() == Some("request") {
+    // Taken now, so the session cannot change its own check by editing the note.
+    let verify = match &phase {
+        Some(ph) if !workflow::is_last_phase(&text, ph) => None,
+        _ if is_request => opts.verify.clone().or_else(|| workflow::verify_of(&text)),
+        _ => None,
+    };
+    let sandbox = workflow::sandbox_of(&text);
+
+    let (origin, title, prompt, text) = if is_request {
         let (id, t) = vault::ensure_id(&text);
         let t = vault::fm_set(&t, "status", "running");
         let t = vault::fm_push(&t, "sessions", &session_id);
         let title = vault::fm_get(&t, "title").unwrap_or_else(|| rel.clone());
         let body = vault::split_frontmatter(&t).1;
-        // The result block is marq's own output, so it is not sent back as instructions.
-        let body = body.split("\n## Result").next().unwrap_or(body).trim().to_string();
-        let prompt = format!("{body}{}{}", render_context(&v, &t), ask_suffix(opts.intent.as_deref(), opts.instruction.as_deref()));
+        // The result block is marq's own output, so it is not sent back as instructions; the acceptance
+        // criteria are for the check, not for the agent doing the work.
+        let body = workflow::without_sections(body.split("\n## Result").next().unwrap_or(body), &["Acceptance"]);
+        let phase_part = phase.as_deref().map(|ph| workflow::phase_prompt(&v, &p, &t, ph)).unwrap_or_default();
+        let previous = opts.previous.as_deref().map(|m| format!("\n\n<previous_attempt>\n{m}\n</previous_attempt>")).unwrap_or_default();
+        let prompt = format!(
+            "{body}{}{phase_part}{previous}{}",
+            render_context(&v, &t),
+            ask_suffix(opts.intent.as_deref(), opts.instruction.as_deref())
+        );
+        let title = match &phase {
+            Some(ph) => format!("{title} · {ph}"),
+            None => title,
+        };
         (id, title, prompt, t)
     } else {
         let section = vault::section_at(&text, line);
@@ -231,6 +275,20 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
     };
     std::fs::write(&p, &text)?;
 
+    let dirs = match reuse_dirs {
+        Some(d) => d,
+        None => {
+            if !ws.dirs.is_empty() {
+                progress(&app, "Preparing the workspace's directories…");
+            }
+            let branch = worktree.as_ref().map(|w| w.branch.as_str());
+            workspace::prepare(&ws.dirs, &session_id, branch, project.as_deref().map(vault::expand_home).as_deref())?
+        }
+    };
+    let prompt = match &ws.notes {
+        Some((source, notes)) => format!("{prompt}\n\n<context source=\"{source}\">\n{notes}\n</context>"),
+        None => prompt,
+    };
     let cwd = match &worktree {
         Some(wt) => wt.path.clone(),
         None => project.unwrap_or_else(|| vault.to_string()),
@@ -247,6 +305,11 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         agent,
         worktree,
         crew: None,
+        sandbox,
+        verify,
+        verifies: None,
+        phase,
+        dirs,
     };
     progress(&app, "Starting the session…");
     runner.start(app.clone(), v, meta, prompt, Turn::New)?;
@@ -319,7 +382,7 @@ async fn rename_session(app: AppHandle, vault: String, session_id: String, title
     .await
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NewTask {
     title: String,
@@ -340,6 +403,32 @@ struct NewTask {
     /// The user left the title empty: name the task with a small model, keeping `title` as the fallback.
     #[serde(default)]
     auto_title: bool,
+    /// A command that checks the work after each turn (`verify:`).
+    #[serde(default)]
+    verify: Option<String>,
+    /// `fresh`: retry a failed check in a new session (`verify_retry:`).
+    #[serde(default)]
+    verify_retry: Option<String>,
+    #[serde(default)]
+    verify_retries: Option<u32>,
+    /// `on` or `strict`.
+    #[serde(default)]
+    sandbox: Option<String>,
+    /// Run the task in these phases, each in a new session.
+    #[serde(default)]
+    phases: Vec<String>,
+    /// Criteria the agent is not shown, checked by a separate session (`## Acceptance`).
+    #[serde(default)]
+    acceptance: Option<String>,
+    /// A workspace note: its directories (and its project, when `project` is empty).
+    #[serde(default)]
+    workspace: Option<String>,
+    /// Directories beyond the project, when not taken from a workspace.
+    #[serde(default)]
+    directories: Vec<workspace::DirSpec>,
+    /// Other frontmatter keys, e.g. inherited from a spec.
+    #[serde(skip)]
+    extra: Vec<(String, String)>,
 }
 
 fn yes() -> bool {
@@ -402,7 +491,10 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 
 /// Writes the task as a request note (`status: todo`) and returns its path relative to the vault.
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
-    let NewTask { title, prompt, project, permission_mode, model, agent, carry_changes, worktree, .. } = task;
+    let NewTask {
+        title, prompt, project, permission_mode, model, agent, carry_changes, worktree, verify, verify_retry, verify_retries,
+        sandbox, phases, acceptance, extra, workspace: ws, directories, ..
+    } = task;
     let v = Path::new(vault);
     let rel = vault::unique_path(v, "requests", &title);
     std::fs::create_dir_all(v.join("requests"))?;
@@ -420,8 +512,31 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
         mode.push_str("carry_changes: true\n");
     }
     let q = |s: &str| serde_json::to_string(s).unwrap();
+    let mut keys: Vec<(String, String)> = extra;
+    let mut set = |k: &str, v: Option<String>| {
+        if let Some(v) = v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+            keys.retain(|(key, _)| key != k);
+            keys.push((k.to_string(), v));
+        }
+    };
+    set("verify", verify);
+    set("verify_retry", verify_retry);
+    set("verify_retries", verify_retries.map(|n| n.to_string()));
+    set("sandbox", workflow::normalize_sandbox(sandbox.as_deref()));
+    set("workspace", ws);
+    let phases: Vec<String> = phases.iter().map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
+    for (k, v) in &keys {
+        // Commands go in quotes; the rest are plain words and numbers.
+        let v = if k == "verify" { q(v) } else { v.clone() };
+        mode.push_str(&format!("{k}: {v}\n"));
+    }
+    if !phases.is_empty() {
+        mode.push_str(&format!("phases: [{}]\n", phases.join(", ")));
+    }
+    mode.push_str(&workspace::render_dirs(&directories));
+    let acceptance = acceptance.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("\n## Acceptance\n\n{a}\n")).unwrap_or_default();
     let content = format!(
-        "---\nid: {}\ntype: request\ntitle: {}\ncreated: {now}\nupdated: {now}\nstatus: todo\nproject: {project}\n{mode}sessions: []\n---\n## Request\n\n{}\n",
+        "---\nid: {}\ntype: request\ntitle: {}\ncreated: {now}\nupdated: {now}\nstatus: todo\nproject: {project}\n{mode}sessions: []\n---\n## Request\n\n{}\n{acceptance}",
         vault::new_id(),
         q(&title),
         prompt.trim()
@@ -475,15 +590,16 @@ async fn save_task(app: AppHandle, vault: String, mut task: NewTask) -> Result<S
     blocking(move || write_request(&vault, task)).await
 }
 
-/// The session's worktree, with the branch that is checked out now.
-fn worktree_of(vault: &str, session_id: &str) -> Result<git::Worktree> {
-    session::current_worktree(Path::new(vault), session_id)?
+/// The session's worktree, or with `repo` the worktree of that repository among its other
+/// directories, with the branch that is checked out now.
+fn worktree_of(vault: &str, session_id: &str, repo: Option<&str>) -> Result<git::Worktree> {
+    session::worktree_for(Path::new(vault), session_id, repo)?
         .ok_or_else(|| error::Error::Other("this session has no worktree".into()))
 }
 
-/// What to diff for a session: its worktree, or else the checkout it ran in.
-fn diff_target(vault: &str, session_id: &str) -> Result<git::Worktree> {
-    if let Some(wt) = session::current_worktree(Path::new(vault), session_id)? {
+/// What to diff for a session: its worktree (or `repo`'s), or else the checkout it ran in.
+fn diff_target(vault: &str, session_id: &str, repo: Option<&str>) -> Result<git::Worktree> {
+    if let Some(wt) = session::worktree_for(Path::new(vault), session_id, repo)? {
         return Ok(wt);
     }
     let meta = session::meta(Path::new(vault), session_id)?;
@@ -502,23 +618,23 @@ async fn session_checkout(vault: String, session_id: String) -> Result<Option<gi
 }
 
 #[tauri::command]
-async fn session_changes(vault: String, session_id: String) -> Result<git::Changes> {
-    blocking(move || git::changes(&diff_target(&vault, &session_id)?)).await
+async fn session_changes(vault: String, session_id: String, repo: Option<String>) -> Result<git::Changes> {
+    blocking(move || git::changes(&diff_target(&vault, &session_id, repo.as_deref())?)).await
 }
 
 #[tauri::command]
-async fn session_file_diff(vault: String, session_id: String, file: String) -> Result<String> {
-    blocking(move || git::file_diff(&diff_target(&vault, &session_id)?, &file)).await
+async fn session_file_diff(vault: String, session_id: String, file: String, repo: Option<String>) -> Result<String> {
+    blocking(move || git::file_diff(&diff_target(&vault, &session_id, repo.as_deref())?, &file)).await
 }
 
 #[tauri::command]
-async fn session_commit(vault: String, session_id: String, message: String) -> Result<String> {
-    blocking(move || git::commit_all(&worktree_of(&vault, &session_id)?, &message)).await
+async fn session_commit(vault: String, session_id: String, message: String, repo: Option<String>) -> Result<String> {
+    blocking(move || git::commit_all(&worktree_of(&vault, &session_id, repo.as_deref())?, &message)).await
 }
 
 #[tauri::command]
-async fn session_push(vault: String, session_id: String) -> Result<String> {
-    blocking(move || git::push(&worktree_of(&vault, &session_id)?)).await
+async fn session_push(vault: String, session_id: String, repo: Option<String>) -> Result<String> {
+    blocking(move || git::push(&worktree_of(&vault, &session_id, repo.as_deref())?)).await
 }
 
 /// Pushes the current branch of a session that ran in its project, without a worktree.
@@ -534,10 +650,10 @@ async fn session_push_cwd(vault: String, session_id: String) -> Result<String> {
 }
 
 #[tauri::command]
-async fn session_create_pr(app: AppHandle, vault: String, session_id: String, message: String) -> Result<String> {
+async fn session_create_pr(app: AppHandle, vault: String, session_id: String, message: String, repo: Option<String>) -> Result<String> {
     blocking(move || {
         let meta = session::meta(Path::new(&vault), &session_id)?;
-        let wt = worktree_of(&vault, &session_id)?;
+        let wt = worktree_of(&vault, &session_id, repo.as_deref())?;
         let footer = format!("Created from Marq session `{session_id}`.");
         let (title, body) = git::pr_text(&message, &meta.title, &footer);
         let url = git::create_pr(&wt, &title, &body)?;
@@ -567,10 +683,15 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
 
 /// Renames the session's branch and records it in the session log.
 #[tauri::command]
-async fn session_rename_branch(app: AppHandle, vault: String, session_id: String, branch: String) -> Result<git::Worktree> {
+async fn session_rename_branch(app: AppHandle, vault: String, session_id: String, branch: String, repo: Option<String>) -> Result<git::Worktree> {
     blocking(move || {
-        let wt = git::rename_branch(&worktree_of(&vault, &session_id)?, &branch)?;
-        session::update_worktree(Path::new(&vault), &session_id, &wt)?;
+        let own = session::meta(Path::new(&vault), &session_id)?.worktree.is_some_and(|w| repo.as_deref().is_none_or(|r| r == w.repo));
+        let wt = git::rename_branch(&worktree_of(&vault, &session_id, repo.as_deref())?, &branch)?;
+        if own {
+            session::update_worktree(Path::new(&vault), &session_id, &wt)?;
+        } else {
+            session::update_dir_worktree(Path::new(&vault), &session_id, &wt)?;
+        }
         let _ = app.emit("sessions://changed", &session_id);
         Ok(wt)
     })
@@ -578,8 +699,8 @@ async fn session_rename_branch(app: AppHandle, vault: String, session_id: String
 }
 
 #[tauri::command]
-async fn session_remove_worktree(vault: String, session_id: String) -> Result<()> {
-    blocking(move || git::remove(&worktree_of(&vault, &session_id)?)).await
+async fn session_remove_worktree(vault: String, session_id: String, repo: Option<String>) -> Result<()> {
+    blocking(move || git::remove(&worktree_of(&vault, &session_id, repo.as_deref())?)).await
 }
 
 /// Opens a path in Finder or VS Code, or reveals a file in Finder.
@@ -645,6 +766,55 @@ fn knowledge_review(app: AppHandle, vault: String, path: String) -> Result<()> {
 }
 
 /// The schedule that merges learnings into knowledge notes, created the first time.
+/// Every workspace note.
+#[tauri::command]
+async fn list_workspaces(vault: String) -> Result<Vec<workspace::Workspace>> {
+    blocking(move || Ok(workspace::list(Path::new(&vault)))).await
+}
+
+/// Saves a set of directories as a workspace note and returns its path.
+#[tauri::command]
+fn create_workspace(app: AppHandle, vault: String, title: String, project: String, directories: Vec<workspace::DirSpec>) -> Result<String> {
+    let p = workspace::create(Path::new(&vault), &title, &project, &directories, "")?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// Writes a new spec note from the template and returns its path.
+#[tauri::command]
+fn new_spec(app: AppHandle, vault: String, title: String) -> Result<String> {
+    let p = workflow::new_spec(Path::new(&vault), &title)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+#[derive(Serialize)]
+struct BrokenDown {
+    board: String,
+    added: usize,
+}
+
+/// Puts a spec's open tasks on its board.
+#[tauri::command]
+async fn spec_to_board(app: AppHandle, vault: String, path: String) -> Result<BrokenDown> {
+    blocking(move || {
+        let v = Path::new(&vault);
+        let (board, added) = workflow::spec_to_board(v, &vault::resolve(v, &path)?)?;
+        let _ = app.emit("vault://changed", serde_json::json!({"path": board}));
+        let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
+        Ok(BrokenDown { board: board.to_string_lossy().into_owned(), added })
+    })
+    .await
+}
+
+/// The schedule that writes reviewed knowledge back into the project, created on first use.
+#[tauri::command]
+fn knowledge_promotion(app: AppHandle, vault: String) -> Result<String> {
+    let p = knowledge::ensure_promotion(Path::new(&vault))?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 fn knowledge_gardening(app: AppHandle, vault: String) -> Result<String> {
     let p = knowledge::ensure_gardening(Path::new(&vault))?;
@@ -1015,6 +1185,19 @@ fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktre
             git::delete_branch(wt)?;
         }
     }
+    // The worktrees made for the workspace's other directories go with the session's own.
+    if remove_worktree || delete_branch {
+        for d in &meta.dirs {
+            let Some(repo) = d.worktree.as_ref().map(|w| w.repo.clone()) else { continue };
+            let Some(wt) = session::worktree_for(v, session_id, Some(&repo)).ok().flatten() else { continue };
+            if Path::new(&wt.path).exists() {
+                git::remove(&wt)?;
+            }
+            if delete_branch {
+                git::delete_branch(&wt)?;
+            }
+        }
+    }
     progress(app, "Moving files to the Trash…");
     if let Some(path) = session::delete(v, session_id)? {
         let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
@@ -1115,11 +1298,17 @@ struct StartedCrew {
 
 /// Starts a task as a crew (New task with Team): a crew note with the prompt as its Goal, kicked off.
 #[tauri::command]
-async fn new_crew(app: AppHandle, vault: String, title: String, prompt: String, project: String, auto_title: bool) -> Result<StartedCrew> {
+#[allow(clippy::too_many_arguments)]
+async fn new_crew(
+    app: AppHandle, vault: String, title: String, prompt: String, project: String, auto_title: bool,
+    workspace: Option<String>, directories: Option<Vec<workspace::DirSpec>>,
+) -> Result<StartedCrew> {
     let title = if auto_title { self::auto_title(&app, &prompt, title, None).await } else { title };
+    let mut setup = workspace.filter(|w| !w.trim().is_empty()).map(|w| format!("workspace: {}\n", serde_json::to_string(w.trim()).unwrap())).unwrap_or_default();
+    setup.push_str(&workspace::render_dirs(&directories.unwrap_or_default()));
     blocking(move || {
         progress(&app, "Starting the crew…");
-        let c = crew::start(&app, Path::new(&vault), &title, &prompt, &project)?;
+        let c = crew::start(&app, Path::new(&vault), &title, &prompt, &project, &setup)?;
         Ok(StartedCrew { rel: c.rel, title: c.title })
     })
     .await
@@ -1224,6 +1413,7 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_opener::init())
+        .plugin(navigation::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Runner::default())
@@ -1245,6 +1435,11 @@ pub fn run() {
             note_links,
             knowledge_review,
             knowledge_gardening,
+            knowledge_promotion,
+            new_spec,
+            spec_to_board,
+            list_workspaces,
+            create_workspace,
             wikilink_open,
             board_create,
             board_read,

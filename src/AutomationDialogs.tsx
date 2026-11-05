@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { FolderGit2, ListTodo, Timer, X } from "lucide-react";
-import { api, Board, FileEntry, Queue } from "./api";
+import { FolderGit2, Layers, ListTodo, Timer, X } from "lucide-react";
+import { api, Board, FileEntry, Queue, Workspace } from "./api";
 import { composing } from "./keys";
 import { ModelSelect } from "./ModelSelect";
-import { MODES } from "./NewTaskDialog";
+import { MODES, SANDBOXES } from "./NewTaskDialog";
 
 function useProjects(vault: string) {
   const [projects, setProjects] = useState<string[]>([]);
@@ -34,6 +34,10 @@ export function QueueDialog({ vault, path, board, onClose }: { vault: string; pa
     max: 1, project: "", model: null, permission_mode: "acceptEdits", worktree: true,
   });
   const [error, setError] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  useEffect(() => {
+    api.listWorkspaces(vault).then(setWorkspaces, () => {});
+  }, [vault]);
   const set = (c: Partial<Queue>) => setQ({ ...q, ...c });
   const save = (queue: Queue | null) =>
     api.boardSetQueue(vault, path, queue).then(onClose, (e) => setError(String(e)));
@@ -68,6 +72,17 @@ export function QueueDialog({ vault, path, board, onClose }: { vault: string; pa
         </div>
         <label className="field-label">Project</label>
         <ProjectInput vault={vault} value={q.project} onChange={(project) => set({ project })} />
+        {(workspaces.length > 0 || q.workspace) && <>
+          <label className="field-label">Workspace</label>
+          <div className="project-row">
+            <Layers size={14} className="muted" />
+            <select className="model-select" value={q.workspace ?? ""} onChange={(e) => set({ workspace: e.target.value || null })}>
+              <option value="">None</option>
+              {workspaces.map((w) => <option key={w.rel} value={w.rel}>{w.title}</option>)}
+            </select>
+          </div>
+          <p className="muted small">Each card's session also gets the workspace's directories, and its project when the field above is empty.</p>
+        </>}
         <label className="check">
           <input type="checkbox" checked={q.worktree} onChange={(e) => set({ worktree: e.target.checked })} />
           Each card in its own worktree
@@ -82,6 +97,23 @@ export function QueueDialog({ vault, path, board, onClose }: { vault: string; pa
         <p className="muted small">Nobody watches these sessions as they start, so Ask leaves them waiting for you until you approve.</p>
         <label className="field-label">Model</label>
         <ModelSelect value={q.model ?? ""} onChange={(v) => set({ model: v || null })} />
+        <label className="field-label">Check</label>
+        <div className="project-row">
+          <input value={q.verify ?? ""} onChange={(e) => set({ verify: e.target.value || null })} spellCheck={false}
+            placeholder="After each card's turn, e.g. pnpm check (empty: a linked spec's, or none)" />
+        </div>
+        <p className="muted small">
+          A card moves to the review list only once its check passes or gives up; failures go back to the agent first.
+          A card linked to a spec also gets the spec's acceptance check.
+        </p>
+        <label className="field-label">Sandbox</label>
+        <div className="modes">
+          {SANDBOXES.map((m) => (
+            <button key={m.value} className={`mode ${(q.sandbox ?? "") === m.value ? "on" : ""}`} title={m.hint}
+              onClick={() => set({ sandbox: m.value || null })}>{m.label}</button>
+          ))}
+        </div>
+        <p className="muted small">{SANDBOXES.find((m) => m.value === (q.sandbox ?? ""))?.hint} Empty uses a linked spec's, then <code>[sandbox] unattended</code> in config.toml.</p>
         {error && <div className="banner error">{error}</div>}
         <div className="modal-foot">
           {board.queue ? <button className="danger" onClick={() => save(null)}>Turn off</button> : <span />}

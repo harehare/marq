@@ -25,6 +25,40 @@ A session from Ask starts with the section's heading as its title and is renamed
 
 **Save for later** in the New task dialog saves the task as a request note without running it. You can also write a request by hand: set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started are listed in **Inbox**. Right-click one to mark it done, drop it, or move it back to todo.
 
+## Workspaces
+
+A task can span several directories, such as an app and its docs site, or a service and a library it uses. List them in the request:
+
+```yaml
+project: ~/dev/git/mq                # where the session runs
+directories:
+  - path: ~/dev/git/mq-docs
+    worktree: true                   # a git repository gets its own worktree on the task's branch
+  - ~/dev/git/mq-lib                 # used as it is
+```
+
+The agent can read and edit every directory listed (Claude Code's additional directories), and is told where each one is. A directory with `worktree: true` that is a git repository gets a worktree on the same branch as the task's, when the task works in a worktree. It shows as a tab in the **Changes** panel, where you can review, commit, push and open a pull request for it on its own. Deleting the session can remove those worktrees too. Directories without a worktree are used as they are, so tasks running at the same time can change them at the same time.
+
+To pick a set again, save it as a **workspace**: **Save as workspace** in the New task dialog, or **New workspace** in the command palette. Either one writes `workspaces/<name>.md`:
+
+```markdown
+---
+type: workspace
+title: "mq + docs"
+project: ~/dev/git/mq
+directories:
+  - path: ~/dev/git/mq-docs
+    worktree: true
+---
+# mq + docs
+
+mq-docs is the documentation site; update it when a feature changes.
+```
+
+Choose it under **Workspace** in the New task dialog. A request that uses a workspace unchanged records `workspace: workspaces/mq-docs.md`, so later edits to the workspace apply to it. If you change the directories in the dialog, the request lists them itself instead. The workspace's body goes to the agent as context. A request's own `project:` and `directories:` take precedence over the workspace's.
+
+Board queues (**Workspace** in the Queue dialog, `queue_workspace`), schedules (`workspace:` or `directories:`) and [crews](crews-and-boards.md#workspaces) take a workspace too.
+
 ## Worktrees and review
 
 When the project is inside a git repository, each session gets its own worktree at `~/.marq/worktrees/<repo>/<short id>` on a new branch `marq/<short id>`, created from HEAD. Set `worktree: false` in the note to work in the project directory, or `branch:` to name the branch.
@@ -40,6 +74,10 @@ When the project is inside a git repository, each session gets its own worktree 
 In **New task**, choose **Compare with another model** under Model to add up to three more models. Marq saves one request note and starts one session per model, each in its own worktree, so the runs cannot overwrite each other. This needs a git repository and **Work in a new worktree**.
 
 A **Compare** tab opens with one column per run: the model, status, branch and changed files. Open a file to see its diff. When every run has finished, **Keep this one** removes the worktrees of the other runs (their branches and session logs are kept) and opens the one you kept, where you commit and create a PR as usual. For runs you started earlier, right-click one of them in the sidebar and choose **Compare runs**.
+
+## Checks, phases and the sandbox
+
+A request can check its own work after each turn (`verify:` and `## Acceptance`), run in phases (`phases: [research, plan, implement]`), and run in Claude Code's sandbox (`sandbox:`). See [Workflows](workflows.md).
 
 ## Schedules
 
@@ -59,7 +97,7 @@ last_run: 2026-10-29T09:00:12+09:00
 Go through the Todo list on boards/sprint.md and move the cards that are ready to Agent.
 ```
 
-Each run saves a request note and starts a session from it, like **New task**. An interval counts from the last run; a run is skipped while the previous one is still in its turn; runs missed while Marq was closed are made up once when it opens. The sidebar shows when each schedule runs next, with **Run now** and **Pause** on hover.
+Each run saves a request note and starts a session from it, like **New task**. The request takes `verify`, `verify_retry`, `verify_retries`, `verify_timeout`, `verify_model`, `phases`, `phase_gate` and `sandbox` from the schedule; see [Workflows](workflows.md). An interval counts from the last run; a run is skipped while the previous one is still in its turn; runs missed while Marq was closed are made up once when it opens. The sidebar shows when each schedule runs next, with **Run now** and **Pause** on hover.
 
 ### Only when a query has results
 

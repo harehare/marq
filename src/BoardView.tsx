@@ -4,6 +4,7 @@ import {
   AlignLeft, ArrowLeft, ArrowRight, Bot, Check, ChevronDown, Columns3, FilePlus2, FileText, Link2, List as ListIcon, ListTodo, Pencil, Plus, Search, Sparkles, Tag,
   Trash2, User, X,
 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { QueueDialog } from "./AutomationDialogs";
 import { api, Board, Card, FileEntry } from "./api";
 import { composing } from "./keys";
@@ -135,6 +136,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   const openLink = (href: string) => {
     const file = resolveLink(path, href);
     if (file) onOpenFile(file);
+    else if (/^(https?:|mailto:)/i.test(href)) openUrl(href).catch(() => {});
   };
 
   const shown = board?.lists.map((l) => l.name) ?? [];

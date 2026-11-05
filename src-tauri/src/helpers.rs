@@ -138,6 +138,8 @@ fn start(app: &AppHandle, vault: &Path, p: &PathBuf, note: &str) -> Result<Strin
         agent: vault::fm_get(note, "agent").filter(|s| !s.is_empty() && s != agents::DEFAULT),
         worktree: None,
         crew: None,
+        sandbox: crate::workflow::sandbox_of(note),
+        ..Default::default()
     };
     let prompt = format!(
         "You are a standing helper in Marq named \"{name}\". Requests will follow in later messages, \

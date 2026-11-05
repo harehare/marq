@@ -1,4 +1,5 @@
 // The Claude backend: runs Claude Code with the Agent SDK and translates its messages into marq's session events.
+import { fileURLToPath } from "node:url";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKMessage, SDKUserMessage, PermissionMode, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
@@ -95,6 +96,18 @@ export function* toEvents(m: SDKMessage): Generator<AgentEvent> {
   }
 }
 
+/** Skills marq ships for its workflows (specs, retros), loaded into every session as the `marq` plugin. */
+const PLUGIN = fileURLToPath(new URL("./plugin", import.meta.url));
+
+/**
+ * Claude Code's OS sandbox for Bash. `on` lets a command that fails in the sandbox ask to run outside it;
+ * `strict` does not. Either way it fails rather than running unsandboxed when the sandbox is unavailable.
+ */
+function sandbox(mode?: string | null) {
+  if (mode !== "on" && mode !== "strict") return {};
+  return { sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: mode === "on", failIfUnavailable: true } };
+}
+
 const PERMISSION_MODES = new Set(["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"]);
 
 class ClaudeSession implements AgentSession {
@@ -126,6 +139,8 @@ class ClaudeSession implements AgentSession {
         additionalDirectories: c.additionalDirectories,
         systemPrompt: { type: "preset", preset: "claude_code", append: c.system },
         settingSources: ["user", "project", "local"],
+        plugins: [{ type: "local", path: PLUGIN }],
+        ...sandbox(c.sandbox),
         pathToClaudeCodeExecutable: c.executable,
         ...backend(c.model),
         stderr: (d: string) => log(`[${c.id.slice(-8)}]`, d.trimEnd()),
@@ -218,7 +233,10 @@ export const claude: AgentBackend = {
     const input = new InputQueue();
     const q = query({
       prompt: input,
-      options: { cwd: c.cwd, settingSources: ["user", "project", "local"], pathToClaudeCodeExecutable: c.executable, env: BASE_ENV },
+      options: {
+        cwd: c.cwd, settingSources: ["user", "project", "local"], plugins: [{ type: "local", path: PLUGIN }],
+        pathToClaudeCodeExecutable: c.executable, env: BASE_ENV,
+      },
     });
     try {
       return await q.supportedCommands();

@@ -66,11 +66,22 @@ pub struct Queue {
     #[serde(default)]
     pub permission_mode: Option<String>,
     pub worktree: bool,
+    /// A command that checks each card's work after its turn; see `workflow`.
+    #[serde(default)]
+    pub verify: Option<String>,
+    /// `on` or `strict`.
+    #[serde(default)]
+    pub sandbox: Option<String>,
+    /// A workspace note whose directories each card's session gets.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 /// Frontmatter key for each queue field.
-const QUEUE_KEYS: [&str; 8] =
-    ["queue", "queue_doing", "queue_review", "queue_max", "queue_project", "queue_model", "queue_permission_mode", "queue_worktree"];
+const QUEUE_KEYS: [&str; 11] = [
+    "queue", "queue_doing", "queue_review", "queue_max", "queue_project", "queue_model", "queue_permission_mode", "queue_worktree",
+    "queue_verify", "queue_sandbox", "queue_workspace",
+];
 
 fn queue_of(head: &str) -> Option<Queue> {
     let get = |k: &str| vault::fm_get(head, k).filter(|v| !v.is_empty());
@@ -83,6 +94,9 @@ fn queue_of(head: &str) -> Option<Queue> {
         model: get("queue_model"),
         permission_mode: get("queue_permission_mode"),
         worktree: get("queue_worktree").as_deref() != Some("false"),
+        verify: get("queue_verify"),
+        sandbox: get("queue_sandbox"),
+        workspace: get("queue_workspace"),
     })
 }
 
@@ -107,6 +121,9 @@ pub fn set_queue(path: &Path, queue: Option<Queue>) -> Result<()> {
                 q(queue.model.as_deref().unwrap_or_default()),
                 q(queue.permission_mode.as_deref().unwrap_or_default()),
                 queue.worktree.to_string(),
+                q(queue.verify.as_deref().unwrap_or_default()),
+                q(queue.sandbox.as_deref().unwrap_or_default()),
+                q(queue.workspace.as_deref().unwrap_or_default()),
             ];
             for (k, v) in QUEUE_KEYS.iter().zip(values) {
                 head = vault::fm_set(&head, k, &v);

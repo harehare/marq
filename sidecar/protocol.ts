@@ -12,6 +12,8 @@ export type Command =
       system?: string;
       /** A crew member gets the crew tools and read access to the other members' directories. */
       crew?: boolean; additionalDirectories?: string[];
+      /** `on` or `strict`: run Bash in Claude Code's OS sandbox. Only the Claude backend has one. */
+      sandbox?: string | null;
     }
   | { op: "send"; id: string; text: string; model?: string | null }
   | { op: "interrupt"; id: string }

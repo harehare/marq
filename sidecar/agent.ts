@@ -20,6 +20,8 @@ export type StartOptions = {
   system?: string;
   crew: boolean;
   additionalDirectories?: string[];
+  /** `on` or `strict`: run Bash in Claude Code's OS sandbox. */
+  sandbox?: string | null;
 };
 
 export type ApprovalRequest = {
