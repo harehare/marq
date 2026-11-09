@@ -3,7 +3,11 @@
 
 <h1>Marq</h1>
 
+<h3>Run agents. Keep everything.</h3>
+
 **A Markdown knowledge base and an IDE for coding agents, in one app.**
+
+Run coding agents in parallel, and keep every prompt, session, task and doc they produce as Markdown in your vault, ready to search, query, and hand to the next agent.
 
 </div>
 
