@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePaletteKeys } from "./usePaletteKeys";
 import { composing, pretty } from "./keys";
 
 export type PaletteCommand = { id: string; label: string; keys: string[] };
@@ -10,6 +11,8 @@ export function CommandPalette({ commands, onRun, onClose }: {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  usePaletteKeys(inputRef, onClose);
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     return commands.filter((c) => words.every((w) => `${c.label} ${c.id}`.toLowerCase().includes(w)));
@@ -29,11 +32,10 @@ export function CommandPalette({ commands, onRun, onClose }: {
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="palette">
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a command…"
+        <input ref={inputRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a command…"
           onKeyDown={(e) => {
             if (composing(e)) return;
-            if (e.key === "Escape") onClose();
-            else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) setSel((i) => Math.min(i + 1, shown.length - 1));
+            if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) setSel((i) => Math.min(i + 1, shown.length - 1));
             else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) setSel((i) => Math.max(i - 1, 0));
             else if (e.key === "Enter") run(shown[sel]);
             else return;

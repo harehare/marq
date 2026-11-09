@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Columns3, FileText, MessageSquare, Search, Users } from "lucide-react";
 import { FileEntry, SessionInfo } from "./api";
+import { usePaletteKeys } from "./usePaletteKeys";
 import { composing } from "./keys";
 
 /** Subsequence match of `q` in `s`; higher for consecutive runs and matches at word starts. -1 when no match. */
@@ -59,6 +60,8 @@ export function QuickOpen({ files, recent, sessions, placeholder, onOpen, onOpen
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  usePaletteKeys(inputRef, onClose);
 
   const entries = useMemo(() => {
     const fs = sessions ? files.filter((f) => !f.rel.startsWith("sessions/")) : files;
@@ -105,11 +108,10 @@ export function QuickOpen({ files, recent, sessions, placeholder, onOpen, onOpen
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="palette">
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder ?? "Open a note by title or path…  (⇧↵ searches the text)"}
+        <input ref={inputRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder ?? "Open a note by title or path…  (⇧↵ searches the text)"}
           onKeyDown={(e) => {
             if (composing(e)) return;
-            if (e.key === "Escape") onClose();
-            else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) setSel((i) => Math.min(i + 1, shown.length - 1));
+            if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) setSel((i) => Math.min(i + 1, shown.length - 1));
             else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) setSel((i) => Math.max(i - 1, 0));
             else if (e.key === "Enter" && e.shiftKey && onSearch) { onClose(); onSearch(q); }
             else if (e.key === "Enter") open(shown[sel]);
