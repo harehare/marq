@@ -37,7 +37,10 @@ pub fn list_files(vault: &Path) -> Vec<FileEntry> {
                 path: e.path().to_string_lossy().into_owned(),
                 rel: e.path().strip_prefix(vault).unwrap_or(e.path()).to_string_lossy().into_owned(),
                 id: fm_get(&text, "id").filter(|s| !s.is_empty()),
-                title: fm_get(&text, "title").filter(|s| !s.is_empty()),
+                // Untitled notes and scratch memos are named by what they say.
+                title: fm_get(&text, "title").filter(|s| !s.is_empty()).or_else(|| {
+                    (fm_get(&text, "untitled").as_deref() == Some("true")).then(|| crate::scratch::title_from_body(&text)).flatten()
+                }),
                 kind: fm_get(&text, "type"),
                 status: fm_get(&text, "status"),
                 tags: fm_list(&text, "tags"),
@@ -257,6 +260,28 @@ pub fn write_doc(vault: &Path, doc: DocWrite, session: &str, origin: &str) -> Re
     );
     std::fs::write(&full, text)?;
     Ok(SavedDoc { rel, title: title.into(), created: true })
+}
+
+/// Documents agents wrote (`type: doc`) for `origin` (a request, note anchor or crew id), plus those
+/// `session` wrote or revised, newest first. The crew view and a session's Docs tab list them.
+pub fn docs_from(vault: &Path, origin: &str, session: Option<&str>) -> Vec<serde_json::Value> {
+    let mut docs: Vec<(String, serde_json::Value)> = list_files(vault)
+        .into_iter()
+        .filter(|f| f.kind.as_deref() == Some("doc"))
+        .filter_map(|f| {
+            let text = std::fs::read_to_string(&f.path).ok()?;
+            let by_origin = !origin.is_empty() && fm_get(&text, "origin").as_deref() == Some(origin);
+            let by_session = session.is_some_and(|s| {
+                fm_get(&text, "sessions").is_some_and(|v| v.trim_matches(['[', ']']).split(',').any(|x| x.trim() == s))
+            });
+            (by_origin || by_session).then(|| {
+                let updated = fm_get(&text, "updated").unwrap_or_default();
+                (updated.clone(), serde_json::json!({"path": f.path, "rel": f.rel, "title": f.title, "updated": updated}))
+            })
+        })
+        .collect();
+    docs.sort_by(|a, b| b.0.cmp(&a.0));
+    docs.into_iter().map(|(_, d)| d).collect()
 }
 
 /// Removes `item` from a flow-style list key such as `sessions: [a, b]`.
@@ -567,6 +592,29 @@ pub fn search(vault: &Path, query: &str, include_sessions: bool, max_files: usiz
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn docs_from_finds_a_tasks_documents() {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path();
+        let w = |title: &str, session: &str, origin: &str| {
+            write_doc(v, DocWrite { title, content: "x", folder: None, path: None, tags: &[] }, session, origin).unwrap()
+        };
+        w("Plan", "s1", "req1");
+        w("Other run", "s2", "req1");
+        w("Unrelated", "s3", "req2");
+        let revised = w("Revised", "s3", "req2");
+        write_doc(v, DocWrite { title: "Revised", content: "y", folder: None, path: Some(&revised.rel), tags: &[] }, "s1", "req1").unwrap();
+        let titles = |d: Vec<serde_json::Value>| {
+            let mut t: Vec<String> = d.iter().map(|x| x["title"].as_str().unwrap().to_string()).collect();
+            t.sort();
+            t
+        };
+        assert_eq!(titles(docs_from(v, "req1", Some("s1"))), ["Other run", "Plan", "Revised"]);
+        assert_eq!(titles(docs_from(v, "req1", None)), ["Other run", "Plan"]);
+        assert!(docs_from(v, "", None).is_empty());
+    }
+
     #[test]
     fn grep_matches_every_word_and_skips_sessions() {
         let dir = tempfile::tempdir().unwrap();

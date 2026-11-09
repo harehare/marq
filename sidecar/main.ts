@@ -55,7 +55,7 @@ function answer(c: Extract<Command, { op: "approval" }>) {
   if (!a) return;
   approvals.delete(c.requestId);
   if (c.allow && c.always) active.get(a.sessionId)?.alwaysAllow.add(a.toolName);
-  a.resolve(c.allow ? { allow: true } : { allow: false, message: c.message || "The user denied this action." });
+  a.resolve(c.allow ? { allow: true, answers: c.answers } : { allow: false, message: c.message || "The user denied this action." });
 }
 
 function cancelApprovals(sessionId: string) {

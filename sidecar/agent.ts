@@ -32,7 +32,10 @@ export type ApprovalRequest = {
   blockedPath?: string;
 };
 
-export type ApprovalDecision = { allow: true } | { allow: false; message: string; interrupt?: boolean };
+export type ApprovalDecision =
+  /** `answers`: the user's choices for AskUserQuestion, question text -> chosen label(s), comma-separated. */
+  | { allow: true; answers?: Record<string, string> }
+  | { allow: false; message: string; interrupt?: boolean };
 
 /** What a running session reports back to main.ts. */
 export interface SessionHost {

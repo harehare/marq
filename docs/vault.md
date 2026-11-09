@@ -7,6 +7,7 @@ The Markdown files in the vault are the source of truth. There is no database to
 ```
 <vault>/
 ├─ notes/**.md
+├─ scratch/YYYY-MM-DD-HHMM.md          # scratch memos, cleaned up after a while
 ├─ requests/YYYY-MM-DD-<slug>.md      # tasks and requests
 ├─ sessions/YYYY-MM-DD-<short-id>.md  # derived from .raw, regenerable
 ├─ sessions/.raw/<id>.jsonl           # raw agent log (source of truth for a session)
@@ -32,7 +33,7 @@ Only `sessions/` and dot folders belong to Marq. Everything else can be edited o
 ```yaml
 ---
 id: 0192f0c4-...            # assigned the first time Marq links something to the file
-type: note                  # note | request | session | crew | board | doc | schedule | glossary | knowledge
+type: note                  # note | scratch | request | session | crew | board | doc | schedule | glossary | knowledge
 title: ...                  # optional, defaults to the first heading or the filename
 created: 2026-10-27T10:12:00+09:00
 updated: 2026-10-27T11:40:00+09:00
@@ -215,6 +216,19 @@ crates/mq-lsp/src/hover.rs
 - `## Summary` and `## Learnings` are filled in by **Summarize**. You can edit them by hand; they are kept when the Transcript is regenerated.
 - Each tool use is a fenced block with the info string `tool:<ToolName>` and its main argument (path, command, pattern) as the body. Results longer than 20 lines go inside `<details>`.
 - Thinking blocks are not rendered.
+
+## Quick notes and scratch memos
+
+- **Quick note** (⌥⌘N) creates `notes/<date>-<time>.md` and opens it for typing, without asking for a name.
+- **Scratch memo** (⇧⌘M, or **+** on **Scratch** in the sidebar) does the same in `scratch/`, with `type: scratch`. The sidebar lists memos newest first.
+
+Both are marked `untitled: true`, so their title is the first heading, or else the first line, of what you write. Rename the file whenever you like.
+
+They clean up after themselves:
+
+- One closed with nothing in it is deleted. So is an empty one left over from before, when the vault opens.
+- A scratch memo not changed for `[scratch] keep_days` days (7 by default; 0 never) goes to the Trash when the vault opens.
+- To keep a memo, right-click it and choose **Keep as note…**: it moves to the path you give and becomes `type: note`, so it is no longer cleaned up.
 
 ## Documents from agents
 

@@ -25,6 +25,8 @@ export const DEFAULT_KEYS: Keymap = {
     find: ["Cmd+F"],
     "task.new": ["Cmd+N"],
     "note.new": ["Cmd+Shift+N"],
+    "note.quick": ["Cmd+Alt+N"],
+    "scratch.new": ["Cmd+Shift+M"],
     "note.toggleEdit": ["Cmd+E"],
     "query.open": ["Cmd+Shift+Q"],
     "terminal.new": ["Cmd+T"],
@@ -95,7 +97,9 @@ export function normalize(key: string): string {
 
 /** Defaults overridden by the config's `[keys]` (normal mode) and `[keys.<mode>]` tables. */
 export function mergeKeys(config: unknown): Keymap {
-  const map: Keymap = JSON.parse(JSON.stringify(DEFAULT_KEYS));
+  // Defaults are written for reading ("Cmd+Shift+N"); events come in canonical order ("Shift+Cmd+N").
+  const map = Object.fromEntries(Object.entries(DEFAULT_KEYS).map(([mode, table]) =>
+    [mode, Object.fromEntries(Object.entries(table).map(([cmd, keys]) => [cmd, keys.map(normalize)]))])) as Keymap;
   const keys = (config as { keys?: Record<string, unknown> } | null)?.keys;
   if (!keys) return map;
   const apply = (mode: Mode, table: Record<string, unknown>) => {

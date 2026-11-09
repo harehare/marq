@@ -5,7 +5,7 @@ import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff, Bot,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, StickyNote, NotebookPen,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -22,7 +22,7 @@ import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
 import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
-import { DEFAULT_KEYS, FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
+import { FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { QueryContext, RUN_AGENT_EVENT } from "./queryContext";
 import { CompareView } from "./review/CompareView";
@@ -79,8 +79,10 @@ function loadVault(): string | null {
 
 const tabsKey = (vault: string) => `marq.tabs:${vault}`;
 
-// Terminals are not restored: their shell ended with the app. Kinds no longer in the app are dropped too.
+// Kinds no longer in the app are dropped. Terminals' shells ended with the app: only pinned ones
+// come back, as a fresh shell in the same directory with the same title (not the command they ran).
 const RESTORED_KINDS = new Set(["note", "session", "query", "compare", "crew", "board", "search"]);
+const restored = (t: Tab) => RESTORED_KINDS.has(t.kind) || (t.kind === "terminal" && !!t.pinned && typeof t.cwd === "string");
 
 /**
  * The tabs open when the vault was last shown.
@@ -91,8 +93,8 @@ function loadTabs(vault: string | null): { tabs: Tab[]; active: string | null } 
     const v = vault && JSON.parse(localStorage.getItem(tabsKey(vault)) ?? "null");
     if (!v || !Array.isArray(v.tabs)) return { tabs: [], active: null };
     const tabs = (v.tabs as Tab[])
-      .filter((t) => t && typeof t.key === "string" && RESTORED_KINDS.has(t.kind))
-      .map((t) => (t.kind === "note" ? { ...t, jump: undefined, fresh: undefined } : t));
+      .filter((t) => t && typeof t.key === "string" && restored(t))
+      .map((t) => (t.kind === "note" ? { ...t, jump: undefined, fresh: undefined } : t.kind === "terminal" ? { ...t, command: undefined } : t));
     return { tabs, active: tabs.some((t) => t.key === v.active) ? v.active : tabs[tabs.length - 1]?.key ?? null };
   } catch {
     return { tabs: [], active: null };
@@ -118,6 +120,8 @@ function buildTree(files: FileEntry[], dirs: string[]): Tree {
 }
 
 const fileLabel = (f: FileEntry) => f.title ?? f.rel.split("/").pop()!.replace(/\.md$/, "");
+/** A file name from a title: words joined by `-`, like the vault's own slugs. */
+const slugOf = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "note";
 
 const DRAG_TYPE = "application/x-marq-path";
 
@@ -202,6 +206,7 @@ function fileIcon(f: FileEntry) {
   if (f.rel.startsWith("sessions/")) return <MessageSquare size={13} />;
   if (f.kind === "request") return <Inbox size={13} />;
   if (f.kind === "crew") return <Users size={13} />;
+  if (f.kind === "scratch") return <StickyNote size={13} />;
   return null;
 }
 
@@ -449,7 +454,7 @@ export default function App() {
   const [naming, setNaming] = useState<{ kind: "note" | "crew" | "spec" | "workspace"; initial: string } | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   // New folder, rename and move share one name dialog.
-  const [pathDialog, setPathDialog] = useState<{ mode: "folder" | "rename" | "move"; from?: string; initial: string } | null>(null);
+  const [pathDialog, setPathDialog] = useState<{ mode: "folder" | "rename" | "move" | "keep"; from?: string; initial: string } | null>(null);
   const [menu, setMenu] = useState<MenuState>(null);
   const [deleting, setDeleting] = useState<SessionInfo | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -592,6 +597,23 @@ export default function App() {
     (f.kind === "request" && f.status === "todo") || (f.kind === "knowledge" && f.status === "draft")), [files]);
   const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
+  // Newest first: their names are the time they were made.
+  const scratches = useMemo(() => files.filter((f) => f.kind === "scratch").sort((a, b) => b.rel.localeCompare(a.rel)), [files]);
+  // Untitled notes are named by what they say, so their tabs follow as the text changes.
+  useEffect(() => {
+    setTabs((prev) => {
+      let changed = false;
+      const next = prev.map((t) => {
+        if (t.kind !== "note") return t;
+        const f = files.find((x) => x.path === t.path);
+        const title = f && fileLabel(f);
+        if (!title || title === t.title) return t;
+        changed = true;
+        return { ...t, title };
+      });
+      return changed ? next : prev;
+    });
+  }, [files]);
   // A crew's task board is shown on its Tasks tab, not with the other boards.
   const boards = useMemo(() => files.filter((f) => f.kind === "board" && !f.rel.startsWith("crews/")), [files]);
   const [newBoard, setNewBoard] = useState(false);
@@ -858,12 +880,30 @@ export default function App() {
   const [dragTab, setDragTab] = useState<string | null>(null);
 
   const closeTab = (key: string) => {
+    const closing = tabs.find((t) => t.key === key);
+    // An untitled note or memo closed with nothing in it is not kept. After the editor's save on close lands.
+    if (closing?.kind === "note" && vault) {
+      const v = vault;
+      setTimeout(() => api.discardUntitled(v, closing.path).then((gone) => { if (gone) void refreshFiles(); }).catch(() => {}), 1000);
+    }
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
       if (active === key) setActive(next[next.length - 1]?.key ?? null);
       return next;
     });
   };
+
+  /** ⌥⌘N / ⇧⌘M: a note or scratch memo without a name, open for typing. Its title comes from what you write. */
+  const createUntitled = async (scratch: boolean) => {
+    const path = await api.createUntitled(vault!, scratch);
+    await refreshFiles();
+    openNote(path, undefined, true);
+  };
+
+  // Empty untitled notes left behind, and scratch memos past `[scratch] keep_days`, once per vault.
+  useEffect(() => {
+    if (vault) api.sweepScratch(vault).then((r) => { if (r.removed.length || r.trashed.length) void refreshFiles(); }).catch(() => {});
+  }, [vault]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = async (rel: string, kind: "note" | "crew") => {
     const path = await api.createNote(vault!, rel, kind);
@@ -946,6 +986,9 @@ export default function App() {
       items: [
         { label: "Open", icon: ExternalLink, onClick: () => openNote(f.path) },
         ...(f.kind === "crew" ? [{ label: "Open crew", icon: Users, onClick: () => openCrew(f) }] : []),
+        ...(f.kind === "scratch"
+          ? [{ label: "Keep as note…", icon: NotebookPen, onClick: () => setPathDialog({ mode: "keep", from: f.rel, initial: `notes/${slugOf(fileLabel(f))}` }) }]
+          : []),
         { label: "Reveal in Finder", icon: FolderOpen, onClick: () => api.openIn(f.path, "reveal") },
         ...(f.rel.startsWith("sessions/")
           ? []
@@ -1037,7 +1080,7 @@ export default function App() {
   };
 
   // ---- keyboard ----
-  const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYS);
+  const [keymap, setKeymap] = useState<Keymap>(() => mergeKeys(null));
   const [mode, setMode] = useState<Mode>("normal");
   const [showPalette, setShowPalette] = useState(false);
   const [showQuickOpen, setShowQuickOpen] = useState(false);
@@ -1145,6 +1188,8 @@ export default function App() {
     "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },
+    "note.quick": { label: "Quick note (untitled, in notes/)", run: () => void createUntitled(false) },
+    "scratch.new": { label: "Scratch memo (temporary, in scratch/)", run: () => void createUntitled(true) },
     "board.new": { label: "New board", run: () => setNewBoard(true) },
     "helper.new": { label: "New helper (a standing session with a role, such as a translator)", run: () => setNewHelper(true) },
     "query.open": { label: "mq query", run: () => openTab({ key: "query", kind: "query", title: "mq query" }) },
@@ -1282,6 +1327,10 @@ export default function App() {
   const pinned = tabs.filter((t) => t.pinned);
   const unpinned = tabs.filter((t) => !t.pinned);
 
+  /** The tab that was already active at the first click of a double-click, if any. */
+  const renameArmed = useRef<string | null>(null);
+  const renameTab = (t: Tab) => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }));
+
   const tabMenu = (e: React.MouseEvent, t: Tab) => {
     e.preventDefault();
     setMenu({
@@ -1289,6 +1338,7 @@ export default function App() {
       y: e.clientY,
       items: [
         t.pinned ? { label: "Unpin", icon: PinOff, onClick: () => togglePin(t.key) } : { label: "Pin", icon: Pin, onClick: () => togglePin(t.key) },
+        ...(t.kind === "terminal" || t.kind === "session" ? [{ label: "Rename…", icon: Pencil, onClick: () => renameTab(t) }] : []),
         { label: "Close", icon: X, onClick: () => closeTab(t.key) },
       ],
     });
@@ -1318,7 +1368,13 @@ export default function App() {
       onDragEnd={() => setDragTab(null)}
       onAuxClick={(e) => e.button === 1 && closeTab(t.key)}
       onContextMenu={(e) => tabMenu(e, t)}
-      onDoubleClick={() => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }))}>
+      onMouseDown={(e) => { if (e.detail === 1) renameArmed.current = t.key === active ? t.key : null; }}
+      onDoubleClick={(e) => {
+        // Only a double-click on the tab already shown renames it, so quickly switching tabs (or a
+        // click that lands right after the ✕ or pin) never opens the dialog.
+        if (renameArmed.current !== t.key || (e.target as Element).closest("button")) return;
+        renameTab(t);
+      }}>
       <span className={`tab-icon kind-${t.kind}`}>
         <Icon size={14} />
         {status && <span className={`tab-status ${status}`} />}
@@ -1419,6 +1475,18 @@ export default function App() {
               ))}
             </Collapsible>
           )}
+          <Collapsible title="Scratch" icon={<StickyNote size={11} />} count={scratches.length}
+            action={<button className="section-action" title="New scratch memo (⇧⌘M)" onClick={() => void createUntitled(true)}><Plus size={13} /></button>}>
+            {scratches.map((f) => (
+              <a key={f.path} className={`inbox-row ${current?.kind === "note" && current.path === f.path ? "on" : ""}`}
+                onClick={() => openNote(f.path)} onContextMenu={(e) => fileMenu(e, f)} title={f.rel}>
+                <StickyNote size={13} /> <span className="ellipsis">{f.title ?? "Empty memo"}</span>
+              </a>
+            ))}
+            {scratches.length === 0 && (
+              <a className="muted small pad" onClick={() => void createUntitled(true)}>Jot something down. Memos you leave alone are cleaned up.</a>
+            )}
+          </Collapsible>
           <Collapsible title="Boards" icon={<Columns3 size={11} />} count={boards.length}
             action={<button className="section-action" title="New board" onClick={() => setNewBoard(true)}><Plus size={13} /></button>}>
             {boards.map((f) => (
@@ -1623,15 +1691,17 @@ export default function App() {
       )}
       {pathDialog && (
         <NameDialog
-          title={pathDialog.mode === "folder" ? "New folder" : pathDialog.mode === "rename" ? "Rename" : "Move to folder"}
+          title={pathDialog.mode === "folder" ? "New folder" : pathDialog.mode === "rename" ? "Rename" : pathDialog.mode === "keep" ? "Keep as note" : "Move to folder"}
           label={pathDialog.mode === "move" ? "Folder, relative to the vault (empty for the top level)" : "Path, relative to the vault"}
           initial={pathDialog.initial}
           placeholder={pathDialog.mode === "folder" ? "e.g. projects/website" : pathDialog.mode === "move" ? "e.g. archive" : ""}
           suggestions={pathDialog.mode === "move" ? dirs : undefined}
           hint={pathDialog.mode === "folder"
             ? "Parent folders are created as needed."
-            : "Relative links between notes are updated. Nothing is overwritten."}
-          submit={pathDialog.mode === "folder" ? "Create" : pathDialog.mode === "rename" ? "Rename" : "Move"}
+            : pathDialog.mode === "keep"
+              ? "The memo becomes an ordinary note there, so it is no longer cleaned up."
+              : "Relative links between notes are updated. Nothing is overwritten."}
+          submit={pathDialog.mode === "folder" ? "Create" : pathDialog.mode === "rename" ? "Rename" : pathDialog.mode === "keep" ? "Keep" : "Move"}
           allowEmpty={pathDialog.mode === "move"}
           onSubmit={async (v) => {
             if (pathDialog.mode === "folder") {
@@ -1639,6 +1709,9 @@ export default function App() {
               await refresh();
             } else if (pathDialog.mode === "rename") {
               await api.movePath(vault, pathDialog.from!, v);
+              await refresh();
+            } else if (pathDialog.mode === "keep") {
+              await api.keepScratch(vault, pathDialog.from!, v);
               await refresh();
             } else {
               await api.movePath(vault, pathDialog.from!, v ? `${v.replace(/\/+$/, "")}/` : "");

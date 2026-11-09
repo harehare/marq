@@ -41,6 +41,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [ollama]
 # url = "http://127.0.0.1:11434"   # default: $OLLAMA_HOST, then this
 
+[scratch]
+# keep_days = 7                   # scratch memos not changed for this many days go to the Trash; 0 keeps them
+
 [sandbox]
 # unattended = "on"               # on | strict: Claude Code's sandbox for board queues and schedules that do not set one
 

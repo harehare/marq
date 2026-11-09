@@ -138,10 +138,21 @@ With the **Ask** or **Accept edits** permission modes, a tool call that needs pe
 - A session that stopped part-way (interrupted or error) shows a **Resume** button, also in the sidebar's right-click menu. It continues the conversation, or starts again from the first prompt if the agent never started.
 - An idle session process is closed after 10 minutes and resumed on your next message.
 - Markdown files a turn wrote show up as cards when it ends. A file in the vault opens in a tab; one outside it opens in its default app. Documents saved with `write_doc` get a card as soon as they are written.
+- The side panel's **Docs** tab lists every document the task saved with `write_doc`, newest first, like a crew's Docs view: those from every run of the same request (other models, earlier sessions) and any the session revised. Click one to open it in a tab.
 
 ## Slash commands and skills
 
 Type `/` at the start of a line in the session composer or the New task prompt to complete skills and slash commands (↑↓, Enter or Tab, Esc). The list comes from Claude Code for the session's directory, with your skills, commands and plugins before the built-ins.
+
+## Referring to notes
+
+Type `[[` in the message box of a session or the New task dialog to pick a note by title, file name, alias or path. When you send, Marq attaches each note you named after your message, so the agent reads exactly that:
+
+- `[[Note]]` attaches the whole note, without its frontmatter.
+- `[[Note#Heading]]` attaches only that section (the heading and everything under it, down to the next heading of the same level).
+- A note over 20,000 characters is named instead, for the agent to read with `read_note`. A name that matches no note is reported to the agent as missing.
+
+The conversation shows your message as you typed it, with each `[[...]]` as a link that opens the note. Links in a request note's body are attached the same way when its session starts.
 
 ## Sending text between notes and sessions
 

@@ -32,6 +32,9 @@ pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar
 [ollama]
 url = "http://127.0.0.1:11434"  # default: $OLLAMA_HOST, then this
 
+[scratch]
+keep_days = 7                   # scratch memos not changed for this many days go to the Trash; 0 keeps them
+
 [sandbox]
 unattended = "on"               # on | strict: sandbox board queues and schedules that do not set one
 
@@ -60,6 +63,8 @@ Keys follow zellij's modes:
 | Lock | ⌃G | Every key goes to the focused view |
 
 A status bar shows the current mode and its keys. Bound keys are taken before the editor sees them. **⌘K** lists every command with its keys.
+
+Pinned terminal tabs come back when Marq restarts, as a new shell in the same directory with the same title. What ran in them and their scrollback are not restored.
 
 In a terminal tab only keys with ⌘ are taken; everything else, ⌃T, ⌃P and ⌃G included, goes to the shell, so zellij, tmux and readline keep their keys. The status bar shows **TERMINAL** and the ⌘ shortcuts that still work there (⌘T, ⌘W, ⇧⌘[ / ⇧⌘], ⌘1–9, ⇧⌘E, ⌘K). To use the modes from a terminal, click outside it, or bind the mode keys to something with ⌘:
 

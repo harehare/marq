@@ -42,6 +42,7 @@ To work on a repository instead, press ⌘N for **New task**. See [Sessions](ses
 | Needs you | Sessions waiting for an approval |
 | Needs review | Stopped sessions with changes in their worktree and no review state |
 | Running / Recent | Sessions. Crew members appear only under their crew |
+| Scratch | Temporary memos (⇧⌘M), newest first. See [Quick notes and scratch memos](vault.md#quick-notes-and-scratch-memos) |
 | Crews | Teams of sessions. See [Crews and boards](crews-and-boards.md) |
 | Boards | Kanban boards stored as Markdown |
 | Query | A query tab with presets (inbox, learnings, Bash commands). See [mq queries](mq.md) |

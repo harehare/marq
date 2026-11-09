@@ -1,14 +1,15 @@
-import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { KeyboardEvent, ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowUp, CornerUpLeft, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
   FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, NotebookPen, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
-  Forward, MessageSquareReply, MessagesSquare, ExternalLink,
+  Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
 import { Md } from "./markdown/Md";
 import { ChangesPanel } from "./review/ChangesPanel";
 import { OriginNotePanel } from "./review/OriginNotePanel";
+import { SessionDocsPanel } from "./review/SessionDocsPanel";
 import { Resizer, usePaneSize } from "./Resizer";
 import { SlashTextarea } from "./SlashTextarea";
 import { usePastes } from "./pastes";
@@ -108,6 +109,11 @@ function toItems(events: SessionEvent[]): Item[] {
       items.push({ kind: "relay", dir: "out", session: e.to, title: e.title, reply: !!e.reply, by: e.by });
     } else if (e.type === "marq_crew") {
       items.push({ kind: "crew", path: e.path, title: e.title });
+    } else if (e.type === "marq_approval" && e.tool === "AskUserQuestion") {
+      const answers = Object.entries((e.answers ?? {}) as Record<string, string>);
+      items.push(e.allow && answers.length
+        ? { kind: "info", text: `You answered: ${answers.map(([q, a]) => `${q} → ${a}`).join(" / ")}` }
+        : { kind: "info", text: "You skipped the question", error: true });
     } else if (e.type === "marq_approval") {
       items.push({ kind: "info", text: `${e.allow ? (e.always ? "Always allowed" : "Allowed") : "Denied"} ${e.tool}`, error: !e.allow });
     } else if (e.type === "marq_verify") {
@@ -130,7 +136,10 @@ function toItems(events: SessionEvent[]): Item[] {
   return items;
 }
 
-function ToolRow({ item }: { item: Extract<Item, { kind: "tool" }> }) {
+type ToolItem = Extract<Item, { kind: "tool" }>;
+
+/** toItems builds new objects on every event, so compare the fields, not the object. */
+const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false);
   const Icon = TOOL_ICONS[item.toolKind] ?? Wrench;
   const lines = item.result?.split("\n").length ?? 0;
@@ -149,7 +158,7 @@ function ToolRow({ item }: { item: Extract<Item, { kind: "tool" }> }) {
       {open && <pre className="tool-out">{item.result}</pre>}
     </div>
   );
-}
+}, (a, b) => a.item.name === b.item.name && a.item.toolKind === b.item.toolKind && a.item.arg === b.item.arg && a.item.result === b.item.result);
 
 /** What a tool call is about to do, for the approval card. */
 function approvalDetail(a: Approval): string {
@@ -163,7 +172,80 @@ function approvalDetail(a: Approval): string {
   return JSON.stringify(i, null, 2);
 }
 
+type Question = { question: string; header?: string; multiSelect?: boolean; options?: { label: string; description?: string }[] };
+
+/** AskUserQuestion: the agent's questions with their options. The choices go back as the tool's `answers`. */
+function QuestionCard({ a }: { a: Approval }) {
+  const questions: Question[] = Array.isArray(a.input?.questions) ? a.input.questions : [];
+  // Per question: the chosen labels, and the text typed under Other.
+  const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []));
+  const [other, setOther] = useState<string[]>(() => questions.map(() => ""));
+  const [busy, setBusy] = useState(false);
+  const choose = (qi: number, label: string, multi?: boolean) =>
+    setPicked((p) => p.map((l, i) => (i !== qi ? l : multi ? (l.includes(label) ? l.filter((x) => x !== label) : [...l, label]) : [label])));
+  const answerOf = (qi: number) => {
+    const typed = other[qi].trim();
+    const labels = picked[qi].filter((l) => l !== OTHER);
+    return [...labels, ...(picked[qi].includes(OTHER) && typed ? [typed] : [])].join(", ");
+  };
+  const ready = questions.length > 0 && questions.every((_, i) => answerOf(i));
+  const submit = async (allow: boolean) => {
+    setBusy(true);
+    try {
+      const answers = Object.fromEntries(questions.map((q, i) => [q.question, answerOf(i)]));
+      await api.answerApproval(a.request_id, allow, false, allow ? undefined : "The user skipped the question.", allow ? answers : undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="approval question">
+      {questions.map((q, qi) => (
+        <div key={qi} className="question-block">
+          <div className="approval-head">
+            <MessageCircleQuestion size={15} />
+            {q.header && <span className="question-chip">{q.header}</span>}
+            <span>{q.question}</span>
+          </div>
+          <div className="question-options">
+            {[...(q.options ?? []), { label: OTHER, description: undefined }].map((o) => {
+              const on = picked[qi].includes(o.label);
+              return (
+                <button key={o.label} className={`question-option ${on ? "on" : ""}`} disabled={busy}
+                  onClick={() => choose(qi, o.label, q.multiSelect)}>
+                  <span className="question-mark">{q.multiSelect ? (on ? "☑" : "☐") : on ? "◉" : "○"}</span>
+                  <span className="question-text">
+                    <span>{o.label}</span>
+                    {o.description && <span className="muted small">{o.description}</span>}
+                  </span>
+                </button>
+              );
+            })}
+            {picked[qi].includes(OTHER) && (
+              <input autoFocus value={other[qi]} placeholder="Your answer" disabled={busy}
+                onChange={(e) => setOther((t) => t.map((x, i) => (i === qi ? e.target.value : x)))}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && ready && submit(true)} />
+            )}
+          </div>
+        </div>
+      ))}
+      <div className="approval-actions">
+        <span className="muted small" style={{ flex: 1 }}>{questions.some((q) => q.multiSelect) ? "Pick one or more where marked." : ""}</span>
+        <button disabled={busy} onClick={() => submit(false)}><X size={13} /> Skip</button>
+        <button className="primary" disabled={busy || !ready} onClick={() => submit(true)}><Check size={13} /> Answer</button>
+      </div>
+    </div>
+  );
+}
+
+const OTHER = "Other";
+
 function ApprovalCard({ a }: { a: Approval }) {
+  if (a.tool_name === "AskUserQuestion") return <QuestionCard a={a} />;
+  return <PermissionCard a={a} />;
+}
+
+function PermissionCard({ a }: { a: Approval }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const answer = async (allow: boolean, always = false) => {
@@ -194,10 +276,107 @@ function ApprovalCard({ a }: { a: Approval }) {
   );
 }
 
+type ListProps = {
+  vault: string;
+  events: SessionEvent[];
+  onOpenOrigin: (path: string, line: number) => void;
+  onOpenSession: (id: string, title: string) => void;
+  onOpenCrew?: (rel: string, title: string) => void;
+  onError: (message: string) => void;
+};
+
+/** The conversation. Memoized so typing in the composer does not render every message again;
+ * a new event renders the list, and Md/ToolRow skip the messages that did not change. */
+const MessageList = memo(function MessageList({ vault, events, onOpenOrigin, onOpenSession, onOpenCrew, onError }: ListProps) {
+  const items = useMemo(() => toItems(events), [events]);
+  const openNote = useCallback((path: string) => onOpenOrigin(path, 0), [onOpenOrigin]);
+  return (
+    <>
+    {items.map((it, i) => {
+      switch (it.kind) {
+        case "user":
+          return <div key={i} className="msg user"><Md onOpenNote={openNote}>{it.text}</Md></div>;
+        case "text":
+          return <div key={i} className="msg assistant"><Md onOpenNote={openNote}>{it.text}</Md></div>;
+        case "tool":
+          return <ToolRow key={i} item={it} />;
+        case "info":
+          return <div key={i} className={`info ${it.error ? "err" : ""}`}>{it.text}</div>;
+        case "doc":
+          return (
+            <a key={i} className="doc-card" onClick={() => onOpenOrigin(`${vault}/${it.path}`, 0)} title="Open in a tab">
+              <FileOutput size={18} />
+              <span className="doc-card-body">
+                <span className="doc-card-title">{it.title}</span>
+                <span className="muted small mono">{it.created ? "Saved to" : "Updated"} {it.path}</span>
+              </span>
+            </a>
+          );
+        case "files":
+          return (
+            <div key={i} className="written-files">
+              {it.paths.map((p) => {
+                const inVault = p.startsWith(`${vault}/`);
+                return (
+                  <a key={p} className="doc-card" title={inVault ? "Open in a tab" : "Open with the default app"}
+                    onClick={() => (inVault ? onOpenOrigin(p, 0) : api.openIn(p, "finder").catch((e) => onError(String(e))))}>
+                    <FileText size={18} />
+                    <span className="doc-card-body">
+                      <span className="doc-card-title">{p.split("/").pop()}</span>
+                      <span className="muted small mono ellipsis">Wrote {inVault ? p.slice(vault.length + 1) : p.replace(/^\/Users\/[^/]+/, "~")}</span>
+                    </span>
+                    <ExternalLink size={13} className="muted" />
+                  </a>
+                );
+              })}
+            </div>
+          );
+        case "relay":
+          return (
+            <a key={i} className={`relay-row ${it.dir}`} onClick={() => onOpenSession(it.session, it.title)} title="Open that session">
+              {it.dir === "out" ? <Forward size={13} /> : it.dir === "reply" ? <MessageSquareReply size={13} /> : <MessagesSquare size={13} />}
+              <span className="ellipsis">
+                {it.dir === "out" ? (it.by === "user" ? "You sent this to " : "Sent to ")
+                  : it.dir === "reply" ? "Reply from " : it.by === "user" ? "Forwarded by you from " : "Message from "}
+                <b>{it.title}</b>
+              </span>
+              {it.reply && <span className="muted small">{it.dir === "out" ? "· the answer comes back here" : "· your answer goes back"}</span>}
+            </a>
+          );
+        case "crew":
+          return (
+            <a key={i} className="doc-card" onClick={() => onOpenCrew?.(it.path, it.title)} title="Open the crew">
+              <Users size={18} />
+              <span className="doc-card-body">
+                <span className="doc-card-title">{it.title}</span>
+                <span className="muted small mono">Handed to a crew · {it.path}</span>
+              </span>
+            </a>
+          );
+      }
+    })}
+    </>
+  );
+});
+
 export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onSendExcerpt, onOpenCrew, compact }: Props) {
   const messagesRef = useRef<HTMLDivElement>(null);
   // null until the user picks a tab: Changes for worktree sessions, otherwise the note.
-  const [side, setSide] = useState<"changes" | "note" | null>(null);
+  const [side, setSide] = useState<"changes" | "note" | "docs" | null>(null);
+  // How many documents the task has written, for the Docs tab's count.
+  const [docCount, setDocCount] = useState(0);
+  useEffect(() => {
+    setDocCount(0);
+    api.sessionDocs(vault, sessionId).then((d) => setDocCount(d.length)).catch(() => {});
+    const un = listen<{ session_id: string; event: { type?: string } }>("session://event", (e) => {
+      if (e.payload.session_id === sessionId && e.payload.event?.type === "marq_doc") {
+        api.sessionDocs(vault, sessionId).then((d) => setDocCount(d.length)).catch(() => {});
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [vault, sessionId]);
   const [sideOpen, setSideOpen] = useState(!compact);
   const sideWidth = usePaneSize("sessionSide", 480, 300, 2000);
   const sideRef = useRef<HTMLElement>(null);
@@ -347,18 +526,18 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     el.style.height = `${Math.min(COMPOSER_MAX, Math.max(composerHeight.size, el.scrollHeight))}px`;
   }, [input, composerHeight.size]);
   /** Appends to the message box and focuses it. */
-  const compose = (text: string) => {
+  const compose = useCallback((text: string) => {
     setInput((v) => (v.trim() ? `${v.trimEnd()}\n\n${text}` : text));
     requestAnimationFrame(() => {
       const el = composerRef.current;
       el?.focus();
       el?.setSelectionRange(el.value.length, el.value.length);
     });
-  };
-  const sendText = async (text: string) => {
+  }, []);
+  const sendText = useCallback(async (text: string) => {
     await api.sendMessage(vault, sessionId, text);
     setEvents(await api.sessionEvents(vault, sessionId));
-  };
+  }, [vault, sessionId]);
 
   // Earlier messages, recalled with ↑/↓ while the box is empty: this session's own, newest last,
   // after those sent in other sessions.
@@ -471,14 +650,12 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           <div className="session-meta">
             <span className={`pill status-${status}`}>{status}</span>
             {worktree ? (
-              <span className="meta-item" title={`${worktree.branch}\n${worktree.path}`}>
-                <GitBranch size={12} /> <span className="ellipsis">{worktree.branch}</span>
-              </span>
-            ) : (
-              <span className="meta-item" title={meta?.cwd}>
-                <FolderGit2 size={12} /> <span className="ellipsis">{meta?.cwd?.replace(/^\/Users\/[^/]+/, "~")}</span>
-              </span>
-            )}
+              <CopyMeta value={worktree.branch} alt={worktree.path} icon={<GitBranch size={12} />}
+                title={`${worktree.branch}\n${worktree.path}\nClick to copy the branch, ⌥-click to copy the path`} />
+            ) : meta?.cwd ? (
+              <CopyMeta value={meta.cwd} label={meta.cwd.replace(/^\/Users\/[^/]+/, "~")} icon={<FolderGit2 size={12} />}
+                title={`${meta.cwd}\nClick to copy the path`} />
+            ) : null}
             {model && <span className="meta-item"><Bot size={12} /> {model}</span>}
           </div>
         </div>
@@ -525,69 +702,8 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
         <SelectionPopover container={messagesRef}
           onSend={(text) => onSendExcerpt({ text, source: `session: ${title}`, from: { id: sessionId, title } })} />
         <div className="messages-inner">
-          {toItems(events).map((it, i) => {
-            switch (it.kind) {
-              case "user":
-                return <div key={i} className="msg user"><Md>{it.text}</Md></div>;
-              case "text":
-                return <div key={i} className="msg assistant"><Md>{it.text}</Md></div>;
-              case "tool":
-                return <ToolRow key={i} item={it} />;
-              case "info":
-                return <div key={i} className={`info ${it.error ? "err" : ""}`}>{it.text}</div>;
-              case "doc":
-                return (
-                  <a key={i} className="doc-card" onClick={() => onOpenOrigin(`${vault}/${it.path}`, 0)} title="Open in a tab">
-                    <FileOutput size={18} />
-                    <span className="doc-card-body">
-                      <span className="doc-card-title">{it.title}</span>
-                      <span className="muted small mono">{it.created ? "Saved to" : "Updated"} {it.path}</span>
-                    </span>
-                  </a>
-                );
-              case "files":
-                return (
-                  <div key={i} className="written-files">
-                    {it.paths.map((p) => {
-                      const inVault = p.startsWith(`${vault}/`);
-                      return (
-                        <a key={p} className="doc-card" title={inVault ? "Open in a tab" : "Open with the default app"}
-                          onClick={() => (inVault ? onOpenOrigin(p, 0) : api.openIn(p, "finder").catch((e) => setError(String(e))))}>
-                          <FileText size={18} />
-                          <span className="doc-card-body">
-                            <span className="doc-card-title">{p.split("/").pop()}</span>
-                            <span className="muted small mono ellipsis">Wrote {inVault ? p.slice(vault.length + 1) : p.replace(/^\/Users\/[^/]+/, "~")}</span>
-                          </span>
-                          <ExternalLink size={13} className="muted" />
-                        </a>
-                      );
-                    })}
-                  </div>
-                );
-              case "relay":
-                return (
-                  <a key={i} className={`relay-row ${it.dir}`} onClick={() => onOpenSession(it.session, it.title)} title="Open that session">
-                    {it.dir === "out" ? <Forward size={13} /> : it.dir === "reply" ? <MessageSquareReply size={13} /> : <MessagesSquare size={13} />}
-                    <span className="ellipsis">
-                      {it.dir === "out" ? (it.by === "user" ? "You sent this to " : "Sent to ")
-                        : it.dir === "reply" ? "Reply from " : it.by === "user" ? "Forwarded by you from " : "Message from "}
-                      <b>{it.title}</b>
-                    </span>
-                    {it.reply && <span className="muted small">{it.dir === "out" ? "· the answer comes back here" : "· your answer goes back"}</span>}
-                  </a>
-                );
-              case "crew":
-                return (
-                  <a key={i} className="doc-card" onClick={() => onOpenCrew?.(it.path, it.title)} title="Open the crew">
-                    <Users size={18} />
-                    <span className="doc-card-body">
-                      <span className="doc-card-title">{it.title}</span>
-                      <span className="muted small mono">Handed to a crew · {it.path}</span>
-                    </span>
-                  </a>
-                );
-            }
-          })}
+          <MessageList vault={vault} events={events} onOpenOrigin={onOpenOrigin} onOpenSession={onOpenSession}
+            onOpenCrew={onOpenCrew} onError={setError} />
           {approvals.map((a) => <ApprovalCard key={a.request_id} a={a} />)}
           {running && approvals.length === 0 && (
             <div className="thinking"><Loader2 size={14} className="spin" /> Working…</div>
@@ -638,6 +754,9 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
               <button className={panel === "changes" ? "on" : ""} onClick={() => setSide("changes")}>Changes</button>
             )}
             <button className={panel === "note" ? "on" : ""} onClick={() => setSide("note")}>Note</button>
+            <button className={panel === "docs" ? "on" : ""} onClick={() => setSide("docs")}>
+              Docs {docCount > 0 && <span className="count">{docCount}</span>}
+            </button>
           </div>
           <div className="side-content">
             {panel === "changes" && diffable && dirTrees.length > 0 && (
@@ -650,7 +769,9 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
                 ))}
               </div>
             )}
-            {panel === "changes" && diffable ? (
+            {panel === "docs" ? (
+              <SessionDocsPanel vault={vault} sessionId={sessionId} onOpenNote={onOpenOrigin} onCount={setDocCount} />
+            ) : panel === "changes" && diffable ? (
               <ChangesPanel key={`${sessionId}:${otherTree?.repo ?? ""}`} vault={vault} sessionId={sessionId}
                 worktree={otherTree ?? diffable} repo={otherTree?.repo} checkout={!otherTree && !worktree}
                 title={meta?.title ?? ""} running={running}
@@ -663,5 +784,21 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       )}
       </div>
     </div>
+  );
+}
+
+/** A session header item (branch or directory) that copies its value when clicked; ⌥-click copies `alt`. */
+function CopyMeta({ value, alt, label, icon, title }: { value: string; alt?: string; label?: string; icon: ReactNode; title: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }, () => {});
+  };
+  return (
+    <button type="button" className="meta-item meta-copy" title={title} onClick={(e) => copy(e.altKey && alt ? alt : value)}>
+      {copied ? <Check size={12} /> : icon} <span className="ellipsis">{copied ? "Copied" : label ?? value}</span>
+    </button>
   );
 }

@@ -11,7 +11,9 @@ mod links;
 mod mq;
 mod navigation;
 mod organize;
+mod refs;
 mod relay;
+mod scratch;
 mod session;
 mod shell;
 mod tasks;
@@ -1087,8 +1089,9 @@ fn answer_approval(
     allow: bool,
     always: bool,
     message: Option<String>,
+    answers: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<()> {
-    runner.answer(&app, &request_id, allow, always, message)
+    runner.answer(&app, &request_id, allow, always, message, answers)
 }
 
 #[tauri::command]
@@ -1261,6 +1264,47 @@ pub(crate) fn emit_moved(app: &AppHandle, vault: &Path, r: &organize::MoveResult
 #[tauri::command]
 async fn delete_note(vault: String, path: String) -> Result<()> {
     blocking(move || vault::move_to_trash(&vault::resolve(Path::new(&vault), &path)?)).await
+}
+
+/// The documents a session's task produced: those written for its origin, by any run, or by the session itself.
+#[tauri::command]
+async fn session_docs(vault: String, session_id: String) -> Result<Vec<serde_json::Value>> {
+    blocking(move || {
+        let v = Path::new(&vault);
+        let meta = session::meta(v, &session_id)?;
+        Ok(vault::docs_from(v, &meta.origin, Some(&session_id)))
+    })
+    .await
+}
+
+/// A new untitled note in `notes/`, or with `scratch`, a scratch memo in `scratch/`. Returns its path.
+#[tauri::command]
+fn create_untitled(vault: String, scratch: bool) -> Result<String> {
+    Ok(scratch::create(Path::new(&vault), scratch)?.to_string_lossy().into_owned())
+}
+
+/// Deletes an untitled note or scratch memo with nothing in it, as its tab closes.
+#[tauri::command]
+fn discard_untitled(vault: String, path: String) -> Result<bool> {
+    scratch::discard_if_empty(Path::new(&vault), &path)
+}
+
+/// On opening a vault: removes empty untitled notes and trashes scratch memos past `[scratch] keep_days`.
+#[tauri::command]
+async fn sweep_scratch(vault: String) -> Result<scratch::Swept> {
+    blocking(move || scratch::sweep(Path::new(&vault), scratch::keep_days(), vault::move_to_trash)).await
+}
+
+/// Keeps a scratch memo as a note at `to`.
+#[tauri::command]
+async fn keep_scratch(app: AppHandle, vault: String, from: String, to: String) -> Result<organize::MoveResult> {
+    blocking(move || {
+        let v = Path::new(&vault);
+        let r = scratch::keep(v, &from, &to)?;
+        emit_moved(&app, v, &r);
+        Ok(r)
+    })
+    .await
 }
 
 /// The crew view's data: the note, its members and the message timeline.
@@ -1505,6 +1549,11 @@ pub fn run() {
             open_in,
             recent_projects,
             crew_state,
+            session_docs,
+            create_untitled,
+            discard_untitled,
+            sweep_scratch,
+            keep_scratch,
             crew_send,
             crew_release,
             crew_kick_off,

@@ -175,6 +175,8 @@ impl Runner {
         // The session is running again: the session list moves it to Active.
         let _ = app.emit("sessions://changed", &id);
 
+        // The log keeps the prompt as typed; the agent also gets the notes its [[links]] name.
+        let prompt = crate::refs::attach(&vault, &prompt);
         let cmd = if was_alive {
             // A crew member's model can change between turns.
             json!({"op": "send", "id": id, "text": prompt, "model": meta.model})
@@ -210,16 +212,25 @@ impl Runner {
         self.send(app, json!({"op": "interrupt", "id": id}))
     }
 
-    pub fn answer(&self, app: &AppHandle, request_id: &str, allow: bool, always: bool, message: Option<String>) -> Result<()> {
+    /// `answers` carries the user's choices for AskUserQuestion (question text -> label(s)).
+    pub fn answer(
+        &self,
+        app: &AppHandle,
+        request_id: &str,
+        allow: bool,
+        always: bool,
+        message: Option<String>,
+        answers: Option<serde_json::Map<String, Value>>,
+    ) -> Result<()> {
         let Some(a) = self.approvals.lock().unwrap().remove(request_id) else {
             return Err(Error::Other("this request was already answered".into()));
         };
         if let Some(v) = self.vaults.lock().unwrap().get(&a.session_id) {
-            let line = json!({"type": "marq_approval", "tool": a.tool_name, "input": a.input, "allow": allow, "always": always});
+            let line = json!({"type": "marq_approval", "tool": a.tool_name, "input": a.input, "allow": allow, "always": always, "answers": answers});
             let _ = session::append(&session::raw_path(v, &a.session_id), &line);
         }
         let _ = app.emit("session://approval", json!({"session_id": a.session_id, "request_id": request_id, "answered": true}));
-        self.send(app, json!({"op": "approval", "requestId": request_id, "allow": allow, "always": always, "message": message}))
+        self.send(app, json!({"op": "approval", "requestId": request_id, "allow": allow, "always": always, "message": message, "answers": answers}))
     }
 
     pub fn approvals(&self, session_id: Option<&str>) -> Vec<Approval> {

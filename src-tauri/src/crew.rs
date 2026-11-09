@@ -507,16 +507,6 @@ fn relative(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 
-/// Documents members wrote for the crew: `type: doc` notes whose origin is the crew.
-fn crew_docs(vault: &Path, crew_id: &str) -> Vec<Value> {
-    vault::list_files(vault)
-        .into_iter()
-        .filter(|f| f.kind.as_deref() == Some("doc"))
-        .filter(|f| std::fs::read_to_string(&f.path).is_ok_and(|t| vault::fm_get(&t, "origin").as_deref() == Some(crew_id)))
-        .map(|f| json!({"path": f.path, "rel": f.rel, "title": f.title}))
-        .collect()
-}
-
 /// A message to post. `from` is a role or `user`.
 pub struct Outgoing<'a> {
     pub from: &'a str,
@@ -1143,7 +1133,7 @@ pub fn state(app: &AppHandle, vault: &Path, crew_id: &str) -> Result<CrewState> 
         })
         .collect();
     let (path, list) = read_tasks(vault, &crew)?;
-    let docs = crew_docs(vault, &crew.id);
+    let docs = vault::docs_from(vault, &crew.id, None);
     Ok(CrewState { crew, members_state, messages, tasks: list.tasks, tasks_path: path.to_string_lossy().into_owned(), docs })
 }
 

@@ -18,7 +18,7 @@ export type Command =
   | { op: "send"; id: string; text: string; model?: string | null }
   | { op: "interrupt"; id: string }
   | { op: "stop"; id: string }
-  | { op: "approval"; requestId: string; allow: boolean; always?: boolean; message?: string }
+  | { op: "approval"; requestId: string; allow: boolean; always?: boolean; message?: string; answers?: Record<string, string> }
   | {
       op: "summarize"; reqId: string; id: string; cwd: string; instruction: string; model?: string | null;
       agent?: string; executable?: string; args?: string[]; agentSession?: string;

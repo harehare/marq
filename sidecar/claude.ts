@@ -132,7 +132,9 @@ class ClaudeSession implements AgentSession {
             { toolName, input, title: opts.title, reason: opts.decisionReason, blockedPath: opts.blockedPath },
             opts.signal,
           );
-          return d.allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: d.message, interrupt: d.interrupt };
+          if (!d.allow) return { behavior: "deny", message: d.message, interrupt: d.interrupt };
+          // AskUserQuestion reads the user's choices from `answers` in its input; without them the agent gets no answer.
+          return { behavior: "allow", updatedInput: d.answers ? { ...input, answers: d.answers } : input };
         },
         allowedTools: VAULT_TOOLS,
         mcpServers: { marq: vaultServer(c.id, c.crew) },

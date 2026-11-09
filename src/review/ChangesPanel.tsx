@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   GitBranch, GitCommitHorizontal, GitPullRequest, RefreshCw, FolderOpen, Terminal as TerminalIcon, Code2, Trash2,
   ChevronRight, AlertCircle, CheckCircle2, Pencil, ArrowUp, Check, Loader2, MessageSquareText, Send, TextCursorInput,
-  Search, ChevronUp, ChevronDown, X,
+  Search, ChevronUp, ChevronDown, X, Copy,
 } from "lucide-react";
 import { api, Changes, Worktree } from "../api";
 import { countMatches, DiffComment, DiffView } from "./DiffView";
@@ -46,7 +46,7 @@ type Action = "commit" | "push" | "pr" | "remove" | "rename";
 
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
 
-export function ChangesPanel({ vault, sessionId, worktree: initial, title, running, repo, checkout = false, onCompose, onSend }: Props) {
+function ChangesPanelView({ vault, sessionId, worktree: initial, title, running, repo, checkout = false, onCompose, onSend }: Props) {
   // Review comments, kept until sent.
   const [comments, setComments] = useState<DiffComment[]>(() => {
     try {
@@ -65,6 +65,7 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
   // Local copy, since renaming the branch changes it without reloading the session.
   const [worktree, setWorktree] = useState(initial);
   const [editingBranch, setEditingBranch] = useState<string | null>(null);
+  const [branchCopied, setBranchCopied] = useState(false);
   const [changes, setChanges] = useState<Changes | null>(null);
   const [open, setOpen] = useState<Record<string, string | null>>({});
   const [message, setMessage] = useState(title);
@@ -264,6 +265,17 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
               }}
             />
           )}
+          {editingBranch === null && (
+            <button className="icon branch-copy" title={`Copy the branch name\n⌥-click to copy the worktree path`}
+              onClick={(e) => {
+                navigator.clipboard.writeText(e.altKey ? worktree.path : worktree.branch).then(() => {
+                  setBranchCopied(true);
+                  setTimeout(() => setBranchCopied(false), 1200);
+                }, () => {});
+              }}>
+              {branchCopied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          )}
           {checkout ? <span className="muted">uncommitted</span> : <span className="muted">← {worktree.base_branch}</span>}
         </div>
         <div className="diffstat">
@@ -411,3 +423,6 @@ export function ChangesPanel({ vault, sessionId, worktree: initial, title, runni
     </div>
   );
 }
+
+/** Memoized: the session view renders on every keystroke in its composer. */
+export const ChangesPanel = memo(ChangesPanelView);

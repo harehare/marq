@@ -107,7 +107,7 @@ export type CrewMessage = {
   delivered: boolean;
 };
 export type CrewTask = { id: string; title: string; status: string; owner: string | null; labels: string[]; notes: string[] };
-export type CrewDoc = { path: string; rel: string; title: string | null };
+export type CrewDoc = { path: string; rel: string; title: string | null; updated?: string };
 export type CrewState = {
   id: string;
   title: string;
@@ -146,6 +146,14 @@ export const api = {
   readNote: (vault: string, path: string) => invoke<string>("read_note", { vault, path }),
   writeNote: (vault: string, path: string, content: string) => invoke<void>("write_note", { vault, path, content }),
   createNote: (vault: string, rel: string, kind: string) => invoke<string>("create_note", { vault, rel, kind }),
+  /** A new untitled note in notes/, or a scratch memo in scratch/; returns its path. */
+  createUntitled: (vault: string, scratch: boolean) => invoke<string>("create_untitled", { vault, scratch }),
+  /** Deletes an untitled note or scratch memo with nothing in it. */
+  discardUntitled: (vault: string, path: string) => invoke<boolean>("discard_untitled", { vault, path }),
+  sweepScratch: (vault: string) => invoke<{ removed: string[]; trashed: string[] }>("sweep_scratch", { vault }),
+  /** Keeps a scratch memo as a note at `to` (relative to the vault). */
+  keepScratch: (vault: string, from: string, to: string) =>
+    invoke<{ to: string; moved: { from: string; to: string }[]; relinked: string[] }>("keep_scratch", { vault, from, to }),
   pinMqOutput: (vault: string, path: string, line: number, output: string) =>
     invoke<string>("pin_mq_output", { vault, path, line, output }),
   noteAnchors: (content: string) => invoke<Anchor[]>("note_anchors", { content }),
@@ -187,8 +195,9 @@ export const api = {
     title: string; prompt: string; project: string; permissionMode?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   } & TaskChecks, models: string[]) =>
     invoke<{ request: string; sessions: { session_id: string; title: string }[] }>("new_task_compare", { vault, task, models }),
-  answerApproval: (requestId: string, allow: boolean, always: boolean, message?: string) =>
-    invoke<void>("answer_approval", { requestId, allow, always, message }),
+  /** `answers`: for AskUserQuestion, question text -> chosen label(s), comma-separated. */
+  answerApproval: (requestId: string, allow: boolean, always: boolean, message?: string, answers?: Record<string, string>) =>
+    invoke<void>("answer_approval", { requestId, allow, always, message, answers }),
   listApprovals: (sessionId?: string) => invoke<Approval[]>("list_approvals", { sessionId }),
   listCommands: (vault: string, opts: { cwd?: string; sessionId?: string }) =>
     invoke<SlashCommand[]>("list_commands", { vault, ...opts }),
@@ -227,6 +236,8 @@ export const api = {
   recentProjects: (vault: string) => invoke<string[]>("recent_projects", { vault }),
   /** `crewId` is the crew note's id or vault-relative path. */
   crewState: (vault: string, crewId: string) => invoke<CrewState>("crew_state", { vault, crewId }),
+  /** Documents a session's task produced (`write_doc`), newest first. */
+  sessionDocs: (vault: string, sessionId: string) => invoke<CrewDoc[]>("session_docs", { vault, sessionId }),
   crewSend: (vault: string, crewId: string, to: string, text: string) =>
     invoke<{ id: string; held: boolean }>("crew_send", { vault, crewId, to, text }),
   crewKickOff: (vault: string, crewId: string) => invoke<void>("crew_kick_off", { vault, crewId }),
