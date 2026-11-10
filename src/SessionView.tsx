@@ -1,4 +1,5 @@
-import { KeyboardEvent, ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, ReactNode, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowUp, CornerUpLeft, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
@@ -191,12 +192,10 @@ function QuestionCard({ a }: { a: Approval }) {
   const ready = questions.length > 0 && questions.every((_, i) => answerOf(i));
   const submit = async (allow: boolean) => {
     setBusy(true);
-    try {
+    await attempt(async () => {
       const answers = Object.fromEntries(questions.map((q, i) => [q.question, answerOf(i)]));
       await api.answerApproval(a.request_id, allow, false, allow ? undefined : "The user skipped the question.", allow ? answers : undefined);
-    } finally {
-      setBusy(false);
-    }
+    }, undefined, () => setBusy(false));
   };
   return (
     <div className="approval question">
@@ -250,11 +249,9 @@ function PermissionCard({ a }: { a: Approval }) {
   const [busy, setBusy] = useState(false);
   const answer = async (allow: boolean, always = false) => {
     setBusy(true);
-    try {
+    await attempt(async () => {
       await api.answerApproval(a.request_id, allow, always, allow ? undefined : note || undefined);
-    } finally {
-      setBusy(false);
-    }
+    }, undefined, () => setBusy(false));
   };
   return (
     <div className="approval">
@@ -409,7 +406,11 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     let alive = true;
     api.sessionEvents(vault, sessionId).then((ev) => alive && setEvents(ev)).catch((e) => setError(String(e)));
     const un1 = listen<{ session_id: string; event: SessionEvent }>("session://event", (e) => {
-      if (e.payload.session_id === sessionId) setEvents((prev) => [...prev, e.payload.event]);
+      if (e.payload.session_id !== sessionId) return;
+      const ev = e.payload.event;
+      // A message this view sent may already be in the log it reloaded after sending.
+      setEvents((prev) => (ev.type === "marq_user" && prev.some((p) => p.type === "marq_user" && p.text === ev.text && p.timestamp === ev.timestamp)
+        ? prev : [...prev, ev]));
     });
     // Reload on exit so marq_exit (written by the backend, not streamed) shows up.
     const un2 = listen<{ session_id: string }>("session://exit", (e) => {
@@ -465,14 +466,12 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
 
   const resume = async () => {
     setResuming(true);
-    try {
+    await attempt(async () => {
       await api.resumeSession(vault, sessionId);
       setEvents(await api.sessionEvents(vault, sessionId));
-    } catch (e) {
+    }, (e) => {
       setError(String(e));
-    } finally {
-      setResuming(false);
-    }
+    }, () => setResuming(false));
   };
   const model = events.find((e) => e.type === "init")?.model;
   const worktree: Worktree | undefined = meta?.worktree ?? undefined;
@@ -495,26 +494,22 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
 
   const summarize = async () => {
     setSummarizing(true);
-    try {
+    await attempt(async () => {
       await api.summarizeSession(vault, sessionId);
       setNotice("Summary and learnings written to the session note");
-    } catch (e) {
+    }, (e) => {
       setError(String(e));
-    } finally {
-      setSummarizing(false);
-    }
+    }, () => setSummarizing(false));
   };
 
   const [pushing, setPushing] = useState(false);
   const push = async () => {
     setPushing(true);
-    try {
+    await attempt(async () => {
       setNotice(`Pushed to ${await api.sessionPushCwd(vault, sessionId)}`);
-    } catch (e) {
+    }, (e) => {
       setError(String(e));
-    } finally {
-      setPushing(false);
-    }
+    }, () => setPushing(false));
   };
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -533,10 +528,10 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       el?.focus();
       el?.setSelectionRange(el.value.length, el.value.length);
     });
-  }, []);
+  }, [setInput]);
   const sendText = useCallback(async (text: string) => {
+    // The message comes back as an event, like the rest of the turn.
     await api.sendMessage(vault, sessionId, text);
-    setEvents(await api.sessionEvents(vault, sessionId));
   }, [vault, sessionId]);
 
   // Earlier messages, recalled with ↑/↓ while the box is empty: this session's own, newest last,
@@ -567,7 +562,9 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   // Esc interrupts the turn wherever the focus is in this view, or anywhere when this is the only session on screen.
   const rootRef = useRef<HTMLDivElement>(null);
   const runningRef = useRef(false);
-  runningRef.current = running;
+  useLayoutEffect(() => {
+    runningRef.current = running;
+  });
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       const root = rootRef.current;
@@ -597,7 +594,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       recall.current = null;
       setInput("");
       pastes.clear();
-      setEvents(await api.sessionEvents(vault, sessionId));
     } catch (e) {
       setError(String(e));
     }

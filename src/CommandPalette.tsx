@@ -5,9 +5,11 @@ import { composing, pretty } from "./keys";
 export type PaletteCommand = { id: string; label: string; keys: string[] };
 
 /** Every command with its keys; type to filter, ↵ to run. */
-export function CommandPalette({ commands, onRun, onClose }: {
-  commands: PaletteCommand[]; onRun: (id: string) => void; onClose: () => void;
+export function CommandPalette({ getCommands, onRun, onClose }: {
+  /** Called once, when the palette opens. */
+  getCommands: () => PaletteCommand[]; onRun: (id: string) => void; onClose: () => void;
 }) {
+  const [commands] = useState(getCommands);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);

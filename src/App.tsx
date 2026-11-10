@@ -1,11 +1,11 @@
-import { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff, Bot,
-  PanelLeftClose, PanelLeftOpen, StickyNote, NotebookPen,
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -22,6 +22,8 @@ import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
 import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
+import { TabStrip } from "./TabStrip";
+import { TabErrorBoundary } from "./TabErrorBoundary";
 import { FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { QueryContext, RUN_AGENT_EVENT } from "./queryContext";
@@ -79,6 +81,12 @@ function loadVault(): string | null {
 
 const tabsKey = (vault: string) => `marq.tabs:${vault}`;
 
+/**
+ * Two tabs side by side (`row`) or one above the other (`column`). The focused one is `active`;
+ * `other` is the tab in the other pane, and `side` is where the focused one sits (0: left or top).
+ */
+type Split = { other: string; dir: "row" | "column"; side: 0 | 1 };
+
 // Kinds no longer in the app are dropped. Terminals' shells ended with the app: only pinned ones
 // come back, as a fresh shell in the same directory with the same title (not the command they ran).
 const RESTORED_KINDS = new Set(["note", "session", "query", "compare", "crew", "board", "search"]);
@@ -88,16 +96,19 @@ const restored = (t: Tab) => RESTORED_KINDS.has(t.kind) || (t.kind === "terminal
  * The tabs open when the vault was last shown.
  * One-off state (a jump to a line, a just-created note) is dropped too.
  */
-function loadTabs(vault: string | null): { tabs: Tab[]; active: string | null } {
+function loadTabs(vault: string | null): { tabs: Tab[]; active: string | null; split: Split | null } {
   try {
     const v = vault && JSON.parse(localStorage.getItem(tabsKey(vault)) ?? "null");
-    if (!v || !Array.isArray(v.tabs)) return { tabs: [], active: null };
+    if (!v || !Array.isArray(v.tabs)) return { tabs: [], active: null, split: null };
     const tabs = (v.tabs as Tab[])
       .filter((t) => t && typeof t.key === "string" && restored(t))
       .map((t) => (t.kind === "note" ? { ...t, jump: undefined, fresh: undefined } : t.kind === "terminal" ? { ...t, command: undefined } : t));
-    return { tabs, active: tabs.some((t) => t.key === v.active) ? v.active : tabs[tabs.length - 1]?.key ?? null };
+    const active = tabs.some((t) => t.key === v.active) ? v.active : tabs[tabs.length - 1]?.key ?? null;
+    const sp = v.split as Split | null;
+    const split = sp && sp.other !== active && tabs.some((t) => t.key === sp.other) && (sp.dir === "row" || sp.dir === "column") ? sp : null;
+    return { tabs, active, split };
   } catch {
-    return { tabs: [], active: null };
+    return { tabs: [], active: null, split: null };
   }
 }
 
@@ -339,21 +350,32 @@ function ago(iso: string) {
   return iso.slice(5, 10);
 }
 
+function storedFlag(key: string, fallback: boolean) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function storedList(key: string): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
 /** An open/closed state remembered per sidebar section. */
 function useSectionOpen(key: string, defaultOpen = true) {
   const storage = `marq.section.${key}`;
-  const [open, setOpen] = useState(() => {
-    try {
-      const v = localStorage.getItem(storage);
-      return v === null ? defaultOpen : v === "1";
-    } catch {
-      return defaultOpen;
-    }
-  });
+  const [open, setOpen] = useState(() => storedFlag(storage, defaultOpen));
   const set = (v: boolean) => {
     setOpen(v);
+    const flag = v ? "1" : "0";
     try {
-      localStorage.setItem(storage, v ? "1" : "0");
+      localStorage.setItem(storage, flag);
     } catch {}
   };
   return [open, set] as const;
@@ -403,11 +425,24 @@ function Collapsible({ title, icon, count, children, defaultOpen = true, action,
  * sidebar refresh or tab switch would otherwise re-render all of them.
  */
 const TabPane = memo(
-  function TabPane({ active, children }: { tab: Tab; vault: string; active: boolean; children: React.ReactNode }) {
-    return <div className="pane-inner" tabIndex={-1} hidden={!active}>{children}</div>;
+  function TabPane({ active, slot, focused, onFocus, children }: {
+    tab: Tab; vault: string; active: boolean;
+    /** With the screen split: 0 for the left or top pane, 1 for the other. */
+    slot?: 0 | 1; focused?: boolean; onFocus?: () => void;
+    children: React.ReactNode;
+  }) {
+    return (
+      <div className={`pane-inner ${slot !== undefined ? `slot-${slot}` : ""} ${focused ? "focused" : ""}`} tabIndex={-1} hidden={!active}
+        onMouseDownCapture={focused ? undefined : onFocus}>
+        <TabErrorBoundary>{children}</TabErrorBoundary>
+      </div>
+    );
   },
   (a, b) => !a.active && !b.active && a.tab === b.tab && a.vault === b.vault,
 );
+
+/** A state update that keeps the previous value when the new one has the same contents. */
+const same = <T,>(next: T) => (prev: T) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
 
 const parentOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
 
@@ -421,15 +456,61 @@ export default function App() {
   const [newSchedule, setNewSchedule] = useState(false);
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(vault).tabs);
   const [active, setActive] = useState<string | null>(() => loadTabs(vault).active);
+  const [split, setSplit] = useState<Split | null>(() => loadTabs(vault).split);
   // Restored note and board tabs are checked against the vault's files once they are listed.
   const pruneTabs = useRef<string | null>(vault);
   const [filesVault, setFilesVault] = useState<string | null>(null);
   useEffect(() => {
     if (!vault) return;
     try {
-      localStorage.setItem(tabsKey(vault), JSON.stringify({ tabs, active }));
+      localStorage.setItem(tabsKey(vault), JSON.stringify({ tabs, active, split }));
     } catch {}
-  }, [vault, tabs, active]);
+  }, [vault, tabs, active, split]);
+  // Showing the tab in the other pane moves the focus there; the panes keep their tabs.
+  const prevActive = useRef(active);
+  useLayoutEffect(() => {
+    const prev = prevActive.current;
+    prevActive.current = active;
+    if (split && active === split.other) {
+      setSplit(prev && prev !== active && tabs.some((t) => t.key === prev) ? { ...split, other: prev, side: split.side ? 0 : 1 } : null);
+    }
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The split ends when the other pane's tab goes.
+  useEffect(() => {
+    if (split && !tabs.some((t) => t.key === split.other)) setSplit(null);
+  }, [tabs, split]);
+  const splitSize = usePaneSize("tabSplit", 500, 150, 850);
+  const paneRef = useRef<HTMLElement>(null);
+  // Which way the screen was last split, for the next time.
+  const [splitDir, setSplitDir] = useState<Split["dir"]>(() => (storedFlag("marq.splitColumn", false) ? "column" : "row"));
+  const setDir = (dir: Split["dir"]) => {
+    setSplitDir(dir);
+    setSplit((s) => (s ? { ...s, dir } : s));
+    const flag = dir === "column" ? "1" : "0";
+    try { localStorage.setItem("marq.splitColumn", flag); } catch {}
+  };
+  /** Shows `key` in the other pane, focused. The tab shown is kept next to it. */
+  const openToSide = (key: string) => {
+    if (split && (key === active || key === split.other)) return setActive(key);
+    if (key === active) {
+      const i = tabs.findIndex((t) => t.key === key);
+      const other = (tabs[i - 1] ?? tabs[i + 1])?.key;
+      if (other) setSplit({ other, dir: splitDir, side: 1 });
+      return;
+    }
+    if (!active) return setActive(key);
+    setSplit({ other: active, dir: splitDir, side: split ? (split.side ? 0 : 1) : 1 });
+    prevActive.current = key;
+    setActive(key);
+  };
+  // ⌥-click on anything that opens a tab opens it to the side.
+  const sideClick = useRef(0);
+  useEffect(() => {
+    const on = (e: MouseEvent) => { sideClick.current = e.altKey ? performance.now() : 0; };
+    window.addEventListener("click", on, true);
+    return () => window.removeEventListener("click", on, true);
+  }, []);
+
   const [showNewTask, setShowNewTask] = useState(false);
   const [taskPrompt, setTaskPrompt] = useState("");
   // mq results the New task dialog hands to the agent, from a Run agent button.
@@ -438,17 +519,12 @@ export default function App() {
   const sidebar = usePaneSize("sidebar", 300, 200, 600);
   const sidebarRef = useRef<HTMLElement>(null);
   // Hidden with ⌘B; remembered across launches.
-  const [sidebarOpen, setSidebarOpenState] = useState(() => {
-    try {
-      return localStorage.getItem("marq.sidebar") !== "0";
-    } catch {
-      return true;
-    }
-  });
+  const [sidebarOpen, setSidebarOpenState] = useState(() => storedFlag("marq.sidebar", true));
   const setSidebarOpen = (v: boolean) => {
     setSidebarOpenState(v);
+    const flag = v ? "1" : "0";
     try {
-      localStorage.setItem("marq.sidebar", v ? "1" : "0");
+      localStorage.setItem("marq.sidebar", flag);
     } catch {}
   };
   const [naming, setNaming] = useState<{ kind: "note" | "crew" | "spec" | "workspace"; initial: string } | null>(null);
@@ -460,7 +536,10 @@ export default function App() {
   const closeMenu = useCallback(() => setMenu(null), []);
   const [theme, setTheme, themeFromConfig] = useTheme();
   // Pinned tabs get a row of their own above the others, or lead the one row.
-  const pinnedRow = useSettings().tabs?.pinned_layout === "row";
+  const tabSettings = useSettings().tabs;
+  const pinnedRow = tabSettings?.pinned_layout === "row";
+  // Tabs that do not fit flow onto more rows, or scroll with a count of those out of sight.
+  const wrapTabs = tabSettings?.overflow === "wrap";
   const themeMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
@@ -483,10 +562,11 @@ export default function App() {
   const refreshFiles = useCallback(async () => {
     if (!vault) return;
     const [fs, ds, sc] = await Promise.all([api.listFiles(vault), api.listDirs(vault), api.schedulesList(vault)]);
-    setFiles(fs);
+    // Unchanged lists keep their identity, so nothing that takes them renders again for nothing.
+    setFiles(same(fs));
     setFilesVault(vault);
-    setDirs(ds);
-    setSchedules(sc);
+    setDirs(same(ds));
+    setSchedules(same(sc));
   }, [vault]);
 
   // Helper notes live under helpers/; a send writes the session it started into the note.
@@ -512,7 +592,7 @@ export default function App() {
     await refreshFiles();
     const [list, approvals] = await Promise.all([api.listSessions(vault), api.listApprovals()]);
     const waiting = new Set(approvals.map((a) => a.session_id));
-    setSessions(list.map((s) => (waiting.has(s.id) ? { ...s, status: "waiting" } : s)));
+    setSessions(same(list.map((s) => (waiting.has(s.id) ? { ...s, status: "waiting" } : s))));
   }, [vault, refreshFiles]);
 
   useEffect(() => {
@@ -546,7 +626,9 @@ export default function App() {
   // ---- notifications and unread results ----
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const watch = useRef({ sessions, active });
-  watch.current = { sessions, active };
+  useLayoutEffect(() => {
+    watch.current = { sessions, active };
+  });
   useEffect(() => {
     // A session counts as seen while its tab is open in a focused window.
     const attention = (id: string, body: string, markUnread: boolean) => {
@@ -624,13 +706,7 @@ export default function App() {
   const activeNote = activeTab?.kind === "note" ? activeTab.path : undefined;
 
   // Notes and boards opened recently, for ⌘P.
-  const [recentFiles, setRecentFiles] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("marq.recentFiles") ?? "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [recentFiles, setRecentFiles] = useState<string[]>(() => storedList("marq.recentFiles"));
   const activeFile = activeTab?.kind === "note" || activeTab?.kind === "board" ? activeTab.path : undefined;
   useEffect(() => {
     if (!activeFile) return;
@@ -741,6 +817,8 @@ export default function App() {
     setVault(dir);
     setTabs(saved.tabs);
     setActive(saved.active);
+    setSplit(saved.split);
+    prevActive.current = saved.active;
     pruneTabs.current = dir;
   };
 
@@ -773,7 +851,10 @@ export default function App() {
       next[i] = { ...prev[i], ...tab } as Tab;
       return next;
     });
-    setActive(tab.key);
+    if (performance.now() - sideClick.current < 500) {
+      sideClick.current = 0;
+      openToSide(tab.key);
+    } else setActive(tab.key);
   };
 
   /** `fresh`: just created, open in the editor. */
@@ -884,6 +965,13 @@ export default function App() {
     if (closing?.kind === "note" && vault) {
       const v = vault;
       setTimeout(() => api.discardUntitled(v, closing.path).then((gone) => { if (gone) void refreshFiles(); }).catch(() => {}), 1000);
+    }
+    // Closing a tab in the split leaves the other one on its own.
+    if (split && key === active) {
+      setSplit(null);
+      setTabs((prev) => prev.filter((t) => t.key !== key));
+      setActive(split.other);
+      return;
     }
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
@@ -1197,6 +1285,10 @@ export default function App() {
     "tab.next": { label: "Next tab", run: () => cycleTab(1) },
     "tab.prev": { label: "Previous tab", run: () => cycleTab(-1) },
     "tab.pin": { label: "Pin or unpin tab", run: () => active && togglePin(active) },
+    "split.open": { label: "Split: show the tab next to the one before it", run: () => active && openToSide(active) },
+    "split.focus": { label: "Split: focus the other pane", run: () => split && setActive(split.other) },
+    "split.direction": { label: "Split: side by side or one above the other", run: () => setDir(splitDir === "row" ? "column" : "row") },
+    "split.close": { label: "Split: close (keep the focused tab)", run: () => setSplit(null) },
     "tab.rename": {
       label: "Rename tab or session",
       run: () => activeTab?.kind === "terminal" ? setRenaming(activeTab.key)
@@ -1248,6 +1340,8 @@ export default function App() {
   };
 
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  // Kept current after each render; the listener below calls the latest.
+  useLayoutEffect(() => {
   onKey.current = (e) => {
     if (e.isComposing || !vault) return;
     const key = eventKey(e);
@@ -1278,6 +1372,7 @@ export default function App() {
     // Actions that open something end the mode, like zellij.
     if (mode !== "normal" && ["terminal.new", "tab.close", "tab.rename", "tree.focus", "content.focus"].includes(cmd)) setMode("normal");
   };
+  });
   useEffect(() => {
     const h = (e: KeyboardEvent) => onKey.current(e);
     // Capture, so the editor and terminal never see bound keys.
@@ -1300,9 +1395,13 @@ export default function App() {
     if (!treeFocus && !dialogOpen) requestAnimationFrame(focusContent);
   }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const paletteCommands = Object.entries(commands)
+  // Listed when the palette opens, not on every render (some handlers read refs, which render must not).
+  const paletteCommands = () => Object.entries(commands)
     .filter(([id]) => !id.startsWith("tree.") || id === "tree.focus")
     .map(([id, c]) => ({ id, label: c.label, keys: keymap.normal[id] ?? [] }));
+
+  /** The tab that was already active at the first click of a double-click, if any. */
+  const renameArmed = useRef<string | null>(null);
 
   if (!vault) {
     return (
@@ -1326,8 +1425,6 @@ export default function App() {
   const pinned = tabs.filter((t) => t.pinned);
   const unpinned = tabs.filter((t) => !t.pinned);
 
-  /** The tab that was already active at the first click of a double-click, if any. */
-  const renameArmed = useRef<string | null>(null);
   const renameTab = (t: Tab) => (t.kind === "terminal" ? setRenaming(t.key) : t.kind === "session" && setRenamingSession({ id: t.id, title: t.title }));
 
   const tabMenu = (e: React.MouseEvent, t: Tab) => {
@@ -1338,6 +1435,9 @@ export default function App() {
       items: [
         t.pinned ? { label: "Unpin", icon: PinOff, onClick: () => togglePin(t.key) } : { label: "Pin", icon: Pin, onClick: () => togglePin(t.key) },
         ...(t.kind === "terminal" || t.kind === "session" ? [{ label: "Rename…", icon: Pencil, onClick: () => renameTab(t) }] : []),
+        ...(split && (t.key === active || t.key === split.other)
+          ? [{ label: "Close split", icon: PanelRightClose, onClick: () => { setSplit(null); setActive(t.key); } }]
+          : [{ label: "Open to the side", icon: Columns2, onClick: () => openToSide(t.key) }]),
         { label: "Close", icon: X, onClick: () => closeTab(t.key) },
       ],
     });
@@ -1352,14 +1452,23 @@ export default function App() {
   };
   const STATUS_LABEL: Record<string, string> = { waiting: "Needs you", running: "Running", error: "Stopped with an error", unread: "New output" };
 
+  const tabIcon = (t: Tab) => t.kind === "session" ? MessageSquare : t.kind === "compare" ? GitCompare : t.kind === "query" ? Braces
+    : t.kind === "crew" ? Users : t.kind === "terminal" ? SquareTerminal : t.kind === "board" ? Columns3 : t.kind === "search" ? Search : FileText;
+  /** The tabs scrolled out of sight, to pick one from. */
+  const hiddenTabsMenu = (keys: string[], x: number, y: number) => setMenu({
+    x, y,
+    items: keys.flatMap((k) => {
+      const t = tabs.find((x) => x.key === k);
+      return t ? [{ label: t.title, icon: tabIcon(t), onClick: () => setActive(k) }] : [];
+    }),
+  });
   const tabEl = (t: Tab) => {
     const status = tabStatus(t);
-    const Icon = t.kind === "session" ? MessageSquare : t.kind === "compare" ? GitCompare : t.kind === "query" ? Braces
-      : t.kind === "crew" ? Users : t.kind === "terminal" ? SquareTerminal : t.kind === "board" ? Columns3 : t.kind === "search" ? Search : FileText;
+    const Icon = tabIcon(t);
     return (
-    <div key={t.key} className={`tab ${t.key === active ? "on" : ""} ${t.pinned ? "pinned" : ""} ${t.key === dragTab ? "dragging" : ""} ${status ? `is-${status}` : ""}`}
+    <div key={t.key} data-key={t.key} className={`tab ${t.key === active ? "on" : ""} ${t.key === split?.other ? "side" : ""} ${t.pinned ? "pinned" : ""} ${t.key === dragTab ? "dragging" : ""} ${status ? `is-${status}` : ""}`}
       title={status ? `${t.title} — ${STATUS_LABEL[status]}` : t.title}
-      onClick={() => setActive(t.key)}
+      onClick={(e) => (e.altKey ? openToSide(t.key) : setActive(t.key))}
       draggable onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; setDragTab(t.key); }}
       onDragEnter={() => dragTab && moveTab(dragTab, t.key)}
       onDragOver={(e) => dragTab && e.preventDefault()}
@@ -1386,6 +1495,22 @@ export default function App() {
     </div>
     );
   };
+
+  // At the end of the tab bar: split the screen, or turn and close the split.
+  const splitControls = split ? (
+    <span className="split-controls">
+      <button className="icon" title={split.dir === "row" ? "Put the panes one above the other" : "Put the panes side by side"}
+        onClick={() => setDir(split.dir === "row" ? "column" : "row")}>
+        {split.dir === "row" ? <Rows2 size={14} /> : <Columns2 size={14} />}
+      </button>
+      <button className="icon" title="Close the split (keep the focused tab)" onClick={() => setSplit(null)}><PanelRightClose size={14} /></button>
+    </span>
+  ) : tabs.length > 1 && (
+    <span className="split-controls">
+      <button className="icon" title="Split: show this tab next to the one before it (⌘\; ⌥-click a tab or link to open it to the side)"
+        onClick={() => active && openToSide(active)}><Columns2 size={14} /></button>
+    </span>
+  );
 
   // At the start of the tab bar while the sidebar is hidden.
   const showSidebar = !sidebarOpen && (
@@ -1619,22 +1744,33 @@ export default function App() {
       <main>
         {pinnedRow ? (
           <>
-            {pinned.length > 0 && <nav className="tabs pinned-row">{showSidebar}{pinned.map(tabEl)}</nav>}
-            <nav className="tabs">{pinned.length === 0 && showSidebar}{unpinned.map(tabEl)}</nav>
+            {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu}>
+              {pinned.map(tabEl)}
+            </TabStrip>}
+            <TabStrip lead={pinned.length === 0 && showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu}>
+              {unpinned.map(tabEl)}
+            </TabStrip>
           </>
         ) : (
-          <nav className="tabs">
-            {showSidebar}
+          <TabStrip lead={showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu}>
             {pinned.map(tabEl)}
             {pinned.length > 0 && unpinned.length > 0 && <span className="tab-sep" />}
             {unpinned.map(tabEl)}
-          </nav>
+          </TabStrip>
         )}
-        <section className="pane">
+        <section ref={paneRef} className={`pane ${split ? `split ${split.dir}` : ""}`}
+          style={split ? { "--split-first": `${splitSize.size / 10}%` } as React.CSSProperties : undefined}>
+          {split && (
+            <Resizer axis={split.dir === "row" ? "x" : "y"} sign={1} pane={splitSize}
+              scale={() => ((split.dir === "row" ? paneRef.current?.clientWidth : paneRef.current?.clientHeight) ?? 1000) / 1000}
+              preview={(v) => paneRef.current?.style.setProperty("--split-first", `${v / 10}%`)} />
+          )}
           {/* Tabs stay mounted so editor state and session streams survive switching. */}
           {tabs.map((t) => (
-            <TabPane key={t.key} tab={t} vault={vault} active={t.key === active}>
-              {t.kind === "note" && <NoteEditor vault={vault} path={t.path} active={t.key === active} jump={t.jump} fresh={t.fresh} onOpenSession={openSession} onOpenFile={openFile}
+            <TabPane key={t.key} tab={t} vault={vault} active={t.key === active || t.key === split?.other}
+              slot={!split ? undefined : t.key === active ? split.side : t.key === split.other ? (split.side ? 0 : 1) : undefined}
+              focused={!!split && t.key === active} onFocus={() => setActive(t.key)}>
+              {t.kind === "note" && <NoteEditor vault={vault} path={t.path} active={t.key === active || t.key === split?.other} jump={t.jump} fresh={t.fresh} onOpenSession={openSession} onOpenFile={openFile}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} />}
               {t.kind === "compare" && <CompareView vault={vault} ids={t.ids} sessions={sessions} onOpenSession={openSession} onChanged={refresh} />}
               {t.kind === "session" && <SessionView vault={vault} sessionId={t.id} onOpenOrigin={openNote} onOpenSession={openSession}
@@ -1730,7 +1866,15 @@ export default function App() {
           vault={vault}
           excerpt={sending.excerpt}
           exclude={sending.exclude}
-          onSent={(id, title, stay) => { refresh(); if (!stay) openSession(id, title); }}
+          onSent={(id, title, stay) => {
+            refresh();
+            if (stay) return;
+            // Asked from a document about itself: with the screen split, the answer shows next to the document.
+            if (split && sending.excerpt.target === id) {
+              setTabs((prev) => (prev.some((t) => t.key === `session:${id}`) ? prev : [...prev, { key: `session:${id}`, kind: "session", id, title }]));
+              openToSide(`session:${id}`);
+            } else openSession(id, title);
+          }}
           onOpenFile={openFile}
           onNewTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }}
           onClose={() => setSending(null)}
@@ -1754,7 +1898,7 @@ export default function App() {
           onOpenSession={(s) => openSession(s.id, s.title)} onSearch={openSearch} />
       )}
       {showPalette && (
-        <CommandPalette commands={paletteCommands} onClose={() => setShowPalette(false)}
+        <CommandPalette getCommands={paletteCommands} onClose={() => setShowPalette(false)}
           onRun={(id) => commands[id]?.run()} />
       )}
       {newBoard && (

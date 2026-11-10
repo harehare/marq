@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { attempt } from "../attempt";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -46,15 +47,17 @@ type Action = "commit" | "push" | "pr" | "remove" | "rename";
 
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
 
+function storedComments(key: string): DiffComment[] {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
 function ChangesPanelView({ vault, sessionId, worktree: initial, title, running, repo, checkout = false, onCompose, onSend }: Props) {
   // Review comments, kept until sent.
-  const [comments, setComments] = useState<DiffComment[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(reviewKey(sessionId, repo)) ?? "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [comments, setComments] = useState<DiffComment[]>(() => storedComments(reviewKey(sessionId, repo)));
   useEffect(() => {
     try {
       if (comments.length) localStorage.setItem(reviewKey(sessionId, repo), JSON.stringify(comments));
@@ -89,7 +92,9 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
   // Read through a ref so `refresh` stays stable; otherwise expanding a diff re-subscribes
   // the event listeners below, and an event arriving in that gap is lost.
   const openRef = useRef(open);
-  openRef.current = open;
+  useLayoutEffect(() => {
+    openRef.current = open;
+  });
   // Refreshes can overlap (one per tool result); only the latest may apply its result.
   const generation = useRef(0);
 
@@ -141,14 +146,12 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
   const act = async (kind: Action, label: string, fn: () => Promise<{ text: string; url?: string }>) => {
     setPending({ kind, label });
     setNotice(null);
-    try {
+    await attempt(async () => {
       setNotice({ ok: true, ...(await fn()) });
       await refresh();
-    } catch (e) {
+    }, (e) => {
       setNotice({ ok: false, text: String(e) });
-    } finally {
-      setPending(null);
-    }
+    }, () => setPending(null));
   };
 
   const commit = () =>
@@ -217,15 +220,13 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
 
   const sendReview = async () => {
     setSendingReview(true);
-    try {
+    await attempt(async () => {
       await onSend(reviewMessage(comments, repo ? worktree.path : undefined));
       setComments([]);
       setNotice({ ok: true, text: `Sent ${comments.length} comment${comments.length === 1 ? "" : "s"} to the session` });
-    } catch (e) {
+    }, (e) => {
       setNotice({ ok: false, text: String(e) });
-    } finally {
-      setSendingReview(false);
-    }
+    }, () => setSendingReview(false));
   };
 
   // ⌘F on the session's tab.

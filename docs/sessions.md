@@ -139,6 +139,7 @@ With the **Ask** or **Accept edits** permission modes, a tool call that needs pe
 - An idle session process is closed after 10 minutes and resumed on your next message.
 - Markdown files a turn wrote show up as cards when it ends. A file in the vault opens in a tab; one outside it opens in its default app. Documents saved with `write_doc` get a card as soon as they are written.
 - The side panel's **Docs** tab lists every document the task saved with `write_doc`, newest first, like a crew's Docs view: those from every run of the same request (other models, earlier sessions) and any the session revised. Click one to open it in a tab.
+- A document opened in a tab has a **Session** button that goes back to the session that wrote it (the latest one, if several revised it). The side panel lists them all under **Written by**. Select text in the document's preview and choose **Ask its session** to send it to that session with a question; with the screen split, the conversation shows next to the document.
 
 ## Slash commands and skills
 

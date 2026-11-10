@@ -1,4 +1,25 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as rawInvoke } from "@tauri-apps/api/core";
+
+/**
+ * Backend calls. In development, slow ones are logged (`[ipc]`), and every call is counted in
+ * `window.__marqIpc` (`console.table(__marqIpc)` shows which are called most and take longest).
+ */
+const invoke: typeof rawInvoke = import.meta.env.DEV ? timed : rawInvoke;
+type IpcStat = { calls: number; totalMs: number; maxMs: number };
+async function timed<T>(cmd: string, args?: Parameters<typeof rawInvoke>[1], opts?: Parameters<typeof rawInvoke>[2]): Promise<T> {
+  const t0 = performance.now();
+  try {
+    return await rawInvoke<T>(cmd, args, opts);
+  } finally {
+    const ms = performance.now() - t0;
+    const w = window as unknown as { __marqIpc?: Record<string, IpcStat> };
+    const s = ((w.__marqIpc ??= {})[cmd] ??= { calls: 0, totalMs: 0, maxMs: 0 });
+    s.calls++;
+    s.totalMs = Math.round(s.totalMs + ms);
+    s.maxMs = Math.max(s.maxMs, Math.round(ms));
+    if (ms > 100) console.warn(`[ipc] ${cmd} ${Math.round(ms)}ms`);
+  }
+}
 
 export type SearchHit = { path: string; rel: string; title: string | null; lines: [number, string][]; more: number };
 export type Card = { id: string; title: string; done: boolean; owner: string | null; labels: string[]; notes: string[] };

@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
 
 /// A Markdown file in the vault.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FileEntry {
     pub path: String,
     /// The frontmatter `id`, if any. The sidebar matches crew sessions to crew notes by it.
@@ -24,30 +24,84 @@ pub struct FileEntry {
     pub aliases: Vec<String>,
 }
 
-/// Lists Markdown files under `vault`, skipping dot directories (`.marq`, `.raw`, `.git`).
-pub fn list_files(vault: &Path) -> Vec<FileEntry> {
-    let mut files: Vec<FileEntry> = walkdir::WalkDir::new(vault)
+/// What a file says about itself, kept until the file changes.
+struct Scanned {
+    stamp: (std::time::SystemTime, u64),
+    entry: FileEntry,
+    /// For documents agents wrote: what they were written for, and the sessions that wrote them.
+    origin: Option<String>,
+    sessions: Vec<String>,
+    updated: String,
+}
+
+fn scan_cache() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, Scanned>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Scanned>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scanned {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let entry = FileEntry {
+        path: path.to_string_lossy().into_owned(),
+        rel: path.strip_prefix(vault).unwrap_or(path).to_string_lossy().into_owned(),
+        id: fm_get(&text, "id").filter(|s| !s.is_empty()),
+        // Untitled notes and scratch memos are named by what they say.
+        title: fm_get(&text, "title").filter(|s| !s.is_empty()).or_else(|| {
+            (fm_get(&text, "untitled").as_deref() == Some("true")).then(|| crate::scratch::title_from_body(&text)).flatten()
+        }),
+        kind: fm_get(&text, "type"),
+        status: fm_get(&text, "status"),
+        tags: fm_list(&text, "tags"),
+        aliases: fm_list(&text, "aliases"),
+    };
+    let doc = entry.kind.as_deref() == Some("doc");
+    Scanned {
+        stamp,
+        origin: if doc { fm_get(&text, "origin").filter(|s| !s.is_empty()) } else { None },
+        updated: if doc { fm_get(&text, "updated").unwrap_or_default() } else { String::new() },
+        sessions: if doc {
+            fm_get(&text, "sessions")
+                .map(|v| v.trim_matches(['[', ']']).split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+                .unwrap_or_default()
+        } else {
+            vec![]
+        },
+        entry,
+    }
+}
+
+/// Walks the vault and calls `f` with each Markdown file's scan. Only files whose modified time or
+/// size changed since the last walk are read again, so listing a large vault stays cheap.
+fn each_scanned(vault: &Path, mut f: impl FnMut(&Scanned)) {
+    let found: Vec<(PathBuf, (std::time::SystemTime, u64))> = walkdir::WalkDir::new(vault)
         .into_iter()
         .filter_entry(|e| e.depth() == 0 || !e.file_name().to_string_lossy().starts_with('.'))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|x| x == "md"))
-        .map(|e| {
-            let text = std::fs::read_to_string(e.path()).unwrap_or_default();
-            FileEntry {
-                path: e.path().to_string_lossy().into_owned(),
-                rel: e.path().strip_prefix(vault).unwrap_or(e.path()).to_string_lossy().into_owned(),
-                id: fm_get(&text, "id").filter(|s| !s.is_empty()),
-                // Untitled notes and scratch memos are named by what they say.
-                title: fm_get(&text, "title").filter(|s| !s.is_empty()).or_else(|| {
-                    (fm_get(&text, "untitled").as_deref() == Some("true")).then(|| crate::scratch::title_from_body(&text)).flatten()
-                }),
-                kind: fm_get(&text, "type"),
-                status: fm_get(&text, "status"),
-                tags: fm_list(&text, "tags"),
-                aliases: fm_list(&text, "aliases"),
-            }
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            Some((e.path().to_path_buf(), (m.modified().ok()?, m.len())))
         })
         .collect();
+    let mut cache = scan_cache().lock().unwrap();
+    for (path, stamp) in &found {
+        if cache.get(path).is_none_or(|c| c.stamp != *stamp) {
+            let s = scan(vault, path, *stamp);
+            cache.insert(path.clone(), s);
+        }
+    }
+    // Files gone from this vault are forgotten; other vaults' entries stay.
+    let seen: std::collections::HashSet<&PathBuf> = found.iter().map(|(p, _)| p).collect();
+    cache.retain(|p, _| !p.starts_with(vault) || seen.contains(p));
+    for (path, _) in &found {
+        f(&cache[path]);
+    }
+}
+
+/// Lists Markdown files under `vault`, skipping dot directories (`.marq`, `.raw`, `.git`).
+pub fn list_files(vault: &Path) -> Vec<FileEntry> {
+    let mut files = Vec::new();
+    each_scanned(vault, |s| files.push(s.entry.clone()));
     files.sort_by(|a, b| a.rel.cmp(&b.rel));
     files
 }
@@ -265,21 +319,18 @@ pub fn write_doc(vault: &Path, doc: DocWrite, session: &str, origin: &str) -> Re
 /// Documents agents wrote (`type: doc`) for `origin` (a request, note anchor or crew id), plus those
 /// `session` wrote or revised, newest first. The crew view and a session's Docs tab list them.
 pub fn docs_from(vault: &Path, origin: &str, session: Option<&str>) -> Vec<serde_json::Value> {
-    let mut docs: Vec<(String, serde_json::Value)> = list_files(vault)
-        .into_iter()
-        .filter(|f| f.kind.as_deref() == Some("doc"))
-        .filter_map(|f| {
-            let text = std::fs::read_to_string(&f.path).ok()?;
-            let by_origin = !origin.is_empty() && fm_get(&text, "origin").as_deref() == Some(origin);
-            let by_session = session.is_some_and(|s| {
-                fm_get(&text, "sessions").is_some_and(|v| v.trim_matches(['[', ']']).split(',').any(|x| x.trim() == s))
-            });
-            (by_origin || by_session).then(|| {
-                let updated = fm_get(&text, "updated").unwrap_or_default();
-                (updated.clone(), serde_json::json!({"path": f.path, "rel": f.rel, "title": f.title, "updated": updated}))
-            })
-        })
-        .collect();
+    let mut docs: Vec<(String, serde_json::Value)> = Vec::new();
+    each_scanned(vault, |s| {
+        if s.entry.kind.as_deref() != Some("doc") {
+            return;
+        }
+        let by_origin = !origin.is_empty() && s.origin.as_deref() == Some(origin);
+        let by_session = session.is_some_and(|id| s.sessions.iter().any(|x| x == id));
+        if by_origin || by_session {
+            let d = serde_json::json!({"path": s.entry.path, "rel": s.entry.rel, "title": s.entry.title, "updated": s.updated});
+            docs.push((s.updated.clone(), d));
+        }
+    });
     docs.sort_by(|a, b| b.0.cmp(&a.0));
     docs.into_iter().map(|(_, d)| d).collect()
 }

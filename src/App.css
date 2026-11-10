@@ -845,8 +845,28 @@ kbd {
 main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tabs {
   display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0;
-  background: var(--bg-sunken); border-bottom: 1px solid var(--border); overflow-x: auto; flex: none;
+  background: var(--bg-sunken); border-bottom: 1px solid var(--border); flex: none; min-width: 0;
 }
+/* The tabs themselves scroll sideways; the bar's border stays put, and the shown tab still covers it. */
+.tabs-scroll {
+  position: relative; display: flex; align-items: flex-end; gap: 2px; flex: 1; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; margin-bottom: -1px;
+  --fade-l: 0px; --fade-r: 0px;
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+}
+.tabs-scroll::-webkit-scrollbar { display: none; }
+.tabs-scroll.fade-l { --fade-l: 24px; }
+.tabs-scroll.fade-r { --fade-r: 24px; }
+.tabs-scroll .tab { margin-bottom: 0; }
+/* How many tabs are out of sight at that end; a click lists them. */
+.tabs-more {
+  flex: none; align-self: center; display: flex; align-items: center; gap: 1px; margin-bottom: 6px; padding: 2px 6px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--muted);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.tabs-more.left { margin-right: 4px; padding-left: 3px; }
+.tabs-more.right { margin-left: 4px; padding-right: 3px; }
+.tabs-more:hover { color: var(--fg); border-color: var(--muted); }
 .tab {
   display: flex; align-items: center; gap: 7px; max-width: 220px; padding: 7px 6px 7px 12px;
   border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
@@ -893,9 +913,36 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 /* The pinned row sits above the tab bar, so its tabs are pills rather than joined to the content. */
 .tabs.pinned-row { align-items: center; padding: 5px 8px; }
 .tabs.pinned-row .tab { padding: 4px 6px 4px 10px; border-bottom: 1px solid transparent; border-radius: 6px; margin-bottom: 0; }
+.tabs.pinned-row .tabs-scroll { align-items: center; margin-bottom: 0; }
+.tabs.pinned-row .tabs-more { margin-bottom: 0; }
+/* Wrapped tabs sit on several rows, so they are pills like the pinned row's. */
+.tabs.wrap { align-items: flex-start; padding: 5px 8px; }
+.tabs.wrap .tabs-scroll { flex-wrap: wrap; align-items: center; gap: 3px; margin-bottom: 0; max-height: 30vh; overflow-y: auto; mask-image: none; }
+.tabs.wrap .tab { padding: 4px 6px 4px 10px; border-bottom: 1px solid transparent; border-radius: 6px; }
+.tabs.wrap .tab.on { border-bottom-color: var(--border); }
+.tabs.wrap .sidebar-show { margin-bottom: 0; }
+.tabs.wrap .tab-sep { margin-bottom: 0; }
 .pane { flex: 1; min-height: 0; position: relative; }
 .pane-inner { height: 100%; }
 .pane-inner[hidden] { display: none; }
+/* Two tabs at once: the focused pane is marked along its top edge. */
+.pane.split { display: flex; }
+.pane.split.column { flex-direction: column; }
+.pane.split > .pane-inner { min-width: 0; min-height: 0; flex: 1 1 0; height: auto; position: relative; }
+.pane.split > .pane-inner.slot-0 { order: 0; flex: 0 0 var(--split-first, 50%); }
+.pane.split > .resizer { order: 1; }
+.pane.split > .pane-inner.slot-1 { order: 2; }
+.pane.split > .pane-inner::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 4; pointer-events: none;
+  background: var(--accent); opacity: 0; transition: opacity 0.12s;
+}
+.pane.split > .pane-inner.focused::before { opacity: 1; }
+/* The tab shown in the other pane. */
+.tab.side { color: var(--fg); background: color-mix(in srgb, var(--bg) 55%, transparent); border-color: color-mix(in srgb, var(--border) 60%, transparent); }
+.split-controls { flex: none; display: flex; align-items: center; gap: 2px; align-self: center; margin: 0 0 6px 6px; }
+.split-controls .icon { padding: 4px; color: var(--muted); }
+.split-controls .icon:hover { color: var(--fg); }
+.tabs.pinned-row .split-controls, .tabs.wrap .split-controls { margin-bottom: 0; }
 .pane-inner:focus { outline: none; }
 .pane-msg { padding: 32px; color: var(--muted); }
 .empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--muted); }
@@ -906,7 +953,9 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 }
 .crumbs { flex: 1; display: flex; align-items: center; min-width: 0; overflow: hidden; color: var(--muted); }
 .crumb::after { content: "/"; margin: 0 6px; opacity: 0.5; }
-.crumb.last { color: var(--fg-strong); font-weight: 600; }
+.crumb.last { color: var(--fg-strong); font-weight: 600; cursor: copy; -webkit-user-select: text; user-select: text; display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.crumb.last:hover { color: var(--accent); }
+.crumb-copied { color: var(--ok); flex: none; }
 .crumb.last::after { content: none; }
 a.crumb.link { cursor: pointer; white-space: nowrap; }
 a.crumb.link:hover { color: var(--accent); text-decoration: underline; }

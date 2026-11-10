@@ -28,6 +28,7 @@ enabled = true                  # system notifications when a session finishes, 
 
 [tabs]
 pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar, or in a row above the others
+overflow = "scroll"             # scroll | wrap: tabs that do not fit scroll sideways, with a count of those out of sight, or wrap onto more rows
 
 [ollama]
 url = "http://127.0.0.1:11434"  # default: $OLLAMA_HOST, then this

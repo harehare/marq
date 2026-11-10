@@ -34,6 +34,7 @@ export const DEFAULT_KEYS: Keymap = {
     "tab.next": ["Cmd+Shift+]", "Ctrl+Tab"],
     "tab.prev": ["Cmd+Shift+[", "Ctrl+Shift+Tab"],
     "tab.rename": ["Cmd+Shift+R"],
+    "split.open": ["Cmd+\\"],
     ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`tab.goto.${n}`, [`Cmd+${n}`]])),
     "tree.focus": ["Cmd+Shift+E"],
     "sidebar.toggle": ["Cmd+B"],
@@ -54,6 +55,10 @@ export const DEFAULT_KEYS: Keymap = {
   pane: {
     "tree.focus": ["H", "Left"],
     "content.focus": ["L", "Right"],
+    "split.open": ["S"],
+    "split.focus": ["O", "Tab"],
+    "split.direction": ["D"],
+    "split.close": ["X"],
     "mode.normal": ["Escape", "Enter", "Ctrl+P"],
   },
   locked: {

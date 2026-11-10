@@ -56,6 +56,10 @@ const SECTIONS: Section[] = [
         key: "tabs.pinned_layout", label: "Pinned tabs", kind: "select", desc: "Pin a tab from its right-click menu",
         options: [{ value: "", label: "First in the tab bar (default)" }, { value: "row", label: "In a row above the others" }],
       },
+      {
+        key: "tabs.overflow", label: "When tabs do not fit", kind: "select",
+        options: [{ value: "", label: "Scroll, with a count of tabs out of sight (default)" }, { value: "wrap", label: "Wrap onto more rows" }],
+      },
     ],
   },
   {

@@ -39,7 +39,7 @@ export function SessionDocsPanel({ vault, sessionId, onOpenNote, onCount }: Prop
         <p className="muted small">Designs, plans and reports this task saves with <code>write_doc</code> show up here, from every run of the same request.</p>
       )}
       {docs.map((d) => (
-        <a key={d.path} className="doc-card" onClick={() => onOpenNote(d.path, 0)} title={`Open ${d.rel} in a tab`}>
+        <a key={d.path} className="doc-card" onClick={() => onOpenNote(d.path, 0)} title={`Open ${d.rel} in a tab (⌥-click: next to this session)`}>
           <FileOutput size={18} />
           <span className="doc-card-body">
             <span className="doc-card-title">{d.title ?? d.rel}</span>

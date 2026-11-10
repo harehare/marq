@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -52,7 +52,9 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
   id: string; cwd: string; command?: string; active: boolean; onTitle: (title: string) => void;
 }) {
   const onTitleRef = useRef(onTitle);
-  onTitleRef.current = onTitle;
+  useLayoutEffect(() => {
+    onTitleRef.current = onTitle;
+  });
   const host = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const termRef = useRef<Terminal | null>(null);

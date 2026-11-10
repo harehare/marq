@@ -24,6 +24,7 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 
 [tabs]
 # pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar, or in a row above the others
+# overflow = "scroll"             # scroll | wrap: tabs that do not fit scroll sideways, with a count of those out of sight, or wrap onto more rows
 
 [terminal]
 # shell = "/bin/zsh"              # default: $SHELL

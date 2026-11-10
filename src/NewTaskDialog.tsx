@@ -470,7 +470,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               </button>
             )}
             <button className="primary" onClick={start} disabled={!prompt.trim() || busy}>
-              <Sparkles size={14} /> {comparing ? `Start ${extra.length + 1} runs` : splitting ? `Start ${context!.files} sessions` : "Start"} ⌘↵
+              <Sparkles size={14} /> {comparing ? `Start ${extra.length + 1} runs` : splitting ? `Start ${context?.files} sessions` : "Start"} ⌘↵
             </button>
           </span>
         </div>

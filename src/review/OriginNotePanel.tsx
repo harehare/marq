@@ -39,7 +39,9 @@ export function OriginNotePanel({ vault, sessionId, onOpenNote, onOpenSession }:
   }, [origin, load]);
 
   const run = async (line: number, options: AskOptions) => {
-    const started = await api.runFromNote(vault, origin!.path, line, options);
+    // Not `origin!.path`: React Compiler reads a non-null-asserted value up front, before the check below.
+    if (!origin) return;
+    const started = await api.runFromNote(vault, origin.path, line, options);
     onOpenSession(started.session_id, text?.split("\n")[line]?.replace(/^#+\s*/, "") || "session");
   };
 

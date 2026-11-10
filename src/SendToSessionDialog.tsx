@@ -11,6 +11,8 @@ export type Excerpt = {
   from?: { id: string; title: string };
   /** What to ask, filled in beforehand. */
   instruction?: string;
+  /** The session picked beforehand, such as the one that wrote the document the text is from. */
+  target?: string;
 };
 
 type Props = {
@@ -61,11 +63,11 @@ export function SendToSessionDialog({ vault, excerpt, exclude, onSent, onOpenFil
       const all = list
         .filter((s) => s.id !== exclude)
         .map((s) => (waiting.has(s.id) ? { ...s, status: "waiting" } : s))
-        .sort((a, b) => (RANK[a.status] ?? 2) - (RANK[b.status] ?? 2));
+        .sort((a, b) => (b.id === excerpt.target ? 1 : 0) - (a.id === excerpt.target ? 1 : 0) || (RANK[a.status] ?? 2) - (RANK[b.status] ?? 2));
       setSessions(all);
-      setPicked((p) => p ?? all[0]?.id ?? null);
+      setPicked((p) => p ?? all.find((s) => s.id === excerpt.target)?.id ?? all[0]?.id ?? null);
     }, (e) => setError(String(e)));
-  }, [vault, exclude]);
+  }, [vault, exclude, excerpt.target]);
 
   const shown = useMemo(() => {
     const q = filter.toLowerCase();

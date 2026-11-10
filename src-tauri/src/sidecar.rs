@@ -169,8 +169,11 @@ impl Runner {
             m["type"] = json!("marq_meta");
             session::append(&raw, &m)?;
         }
-        session::append(&raw, &json!({"type": "marq_user", "text": prompt, "timestamp": vault::now()}))?;
+        let user = json!({"type": "marq_user", "text": prompt, "timestamp": vault::now()});
+        session::append(&raw, &user)?;
         session::rerender(&vault, &id)?;
+        // Open views show the message at once, whoever sent it (the session's own box, Send to session, a schedule).
+        let _ = app.emit("session://event", json!({"session_id": id, "event": user}));
         self.vaults.lock().unwrap().insert(id.clone(), vault.clone());
         // The session is running again: the session list moves it to Active.
         let _ = app.emit("sessions://changed", &id);

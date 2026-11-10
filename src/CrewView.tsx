@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle, ArrowUp, FileOutput, CornerDownRight, Cpu, ExternalLink, FileText, FolderGit2, GitBranch, Gavel, Hand, Loader2, Play,
@@ -98,15 +99,13 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
   const send = async (target: string, text: string) => {
     if (!target || !text.trim()) return;
     setSending(true);
-    try {
+    await attempt(async () => {
       await api.crewSend(vault, st.id, target, text);
       setInput("");
       load();
-    } catch (e) {
+    }, (e) => {
       setError(String(e));
-    } finally {
-      setSending(false);
-    }
+    }, () => setSending(false));
   };
 
   const release = async (m: CrewMessage) => {
@@ -129,14 +128,12 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
 
   const kickOff = async () => {
     setSending(true);
-    try {
+    await attempt(async () => {
       await api.crewKickOff(vault, st.id);
       load();
-    } catch (e) {
+    }, (e) => {
       setError(String(e));
-    } finally {
-      setSending(false);
-    }
+    }, () => setSending(false));
   };
 
   return (

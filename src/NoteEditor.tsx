@@ -1,8 +1,8 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { EditorView, ReactCodeMirrorRef, type ViewUpdate } from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { listen } from "@tauri-apps/api/event";
-import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X, KanbanSquare } from "lucide-react";
+import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X, KanbanSquare, MessageSquare } from "lucide-react";
 import { parseFrontmatter } from "./markdown/segments";
 import { api, SessionInfo } from "./api";
 import { Preview } from "./markdown/Preview";
@@ -85,8 +85,20 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
       setTimeout(() => setCopied(false), 1200);
     }, (e) => setError(String(e)));
   };
+  /** The note's title (frontmatter `title`, else the file name), to paste elsewhere. */
+  const [titleCopied, setTitleCopied] = useState(false);
+  const copyTitle = () => {
+    const name = path.split("/").pop()?.replace(/\.md$/, "") ?? "";
+    const title = (text && new Map(parseFrontmatter(text).fields).get("title")) || name;
+    navigator.clipboard.writeText(title).then(() => {
+      setTitleCopied(true);
+      setTimeout(() => setTitleCopied(false), 1200);
+    }, (e) => setError(String(e)));
+  };
   const width = useSettings().appearance?.content_width ?? "wide";
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  // For a document an agent wrote: the sessions that wrote or revised it, latest first.
+  const [writers, setWriters] = useState<SessionInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pendingJump, setPendingJump] = useState<number | null>(null);
   const ref = useRef<ReactCodeMirrorRef>(null);
@@ -95,18 +107,23 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   const split = usePaneSize("noteSplit", 500, 200, 800);
   const linksWidth = usePaneSize("noteLinks", 240, 180, 480);
   const dirtyRef = useRef(false);
-  dirtyRef.current = dirty;
   const textRef = useRef<string | null>(null);
-  textRef.current = text;
+  // Kept current for handlers and timers, after each render.
+  useLayoutEffect(() => {
+    dirtyRef.current = dirty;
+    textRef.current = text;
+  });
   // The text on disk as of the last load or save, to tell our own writes from others'.
   const saved = useRef<string | null>(null);
   // Changed on disk while there were unsaved edits: autosave stops until a manual save.
   const conflict = useRef(false);
+  const [conflicted, setConflicted] = useState(false);
 
   /** Text that is now on disk. */
   const loaded = useCallback((content: string) => {
     saved.current = content;
     conflict.current = false;
+    setConflicted(false);
     setText(content);
     setDirty(false);
   }, []);
@@ -124,9 +141,10 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     if (disk === null || disk === saved.current) return;
     if (dirtyRef.current) {
       conflict.current = true;
+      setConflicted(true);
       setError("This note was changed on disk. Autosave is paused; saving (⌘S) will overwrite it.");
     } else loaded(disk);
-  }, [vault, path, loaded]);
+  }, [vault, path, loaded, setError]);
 
   // When marq writes a result back into this note.
   useEffect(() => {
@@ -155,18 +173,24 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     const next = all.filter((s) => origins.has(s.origin));
     // Unchanged lists keep their identity, so the preview is not rendered again for nothing.
     setSessions((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
-  }, [vault]);
+    const fm = new Map(parseFrontmatter(content).fields);
+    const ids = fm.get("type") === "doc" ? (fm.get("sessions") ?? "").replace(/^\[|\]$/g, "").split(",").map((x) => x.trim()).filter(Boolean) : [];
+    const by = [...new Set(ids)].reverse().flatMap((sid) => all.filter((x) => x.id === sid));
+    setWriters((prev) => (JSON.stringify(prev) === JSON.stringify(by) ? prev : by));
+  }, [vault, setSessions, setWriters]);
+
+  // Hidden tabs catch up when they are shown again, rather than on every change.
+  useEffect(() => {
+    if (active && text !== null && !dirty) refreshLinks(text);
+  }, [active, text, dirty, refreshLinks]);
 
   useEffect(() => {
-    if (text !== null && !dirty) refreshLinks(text);
-  }, [text, dirty, refreshLinks]);
-
-  useEffect(() => {
+    if (!active) return;
     const un = listen("session://exit", () => text !== null && refreshLinks(text));
     return () => {
       un.then((f) => f());
     };
-  }, [text, refreshLinks]);
+  }, [active, text, refreshLinks]);
 
   const goToLine = useCallback((line: number) => {
     const view = ref.current?.view;
@@ -211,10 +235,11 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     await api.writeNote(vault, path, content);
     saved.current = content;
     conflict.current = false;
+    setConflicted(false);
     // Typing during the write leaves the newer text unsaved.
     if (textRef.current === content) setDirty(false);
     setError(null);
-  }, [vault, path]);
+  }, [vault, path, setError]);
   const flow = useMemo(() => workflowOf(text), [text]);
   const breakDown = async () => {
     try {
@@ -387,7 +412,9 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     if (u.selectionSet) setHasSelection(!u.state.selection.main.empty);
   }, []);
   const latest = useRef({ askAt, setPendingJump, onOpenFile, onOpenSession, loaded });
-  latest.current = { askAt, setPendingJump, onOpenFile, onOpenSession, loaded };
+  useLayoutEffect(() => {
+    latest.current = { askAt, setPendingJump, onOpenFile, onOpenSession, loaded };
+  });
   const previewHandlers = useMemo(() => ({
     onRunAt: (line: number, withOptions?: boolean) => latest.current.askAt(line, withOptions),
     onEditAt: (line: number) => latest.current.setPendingJump(line),
@@ -415,10 +442,16 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
       <div className="toolbar">
         <span className="crumbs">
           {parents?.map((p, i) => <a key={`p${i}`} className="crumb link" onClick={p.onClick}>{p.label}</a>)}
-          {crumbs.map((c, i) => (
-            <span key={i} className={i === crumbs.length - 1 ? "crumb last" : "crumb"}>{c}</span>
-          ))}
-          {dirty && <span className="dirty" title={autosave && !conflict.current ? "Saving soon" : "Unsaved changes"} />}
+          {crumbs.map((c, i) => (i === crumbs.length - 1
+            ? (
+              <span key={i} className="crumb last" title="Click to copy the title"
+                // A click copies; a drag still selects, so part of it can be copied too.
+                onClick={() => { if (!window.getSelection()?.toString()) copyTitle(); }}>
+                {c}{titleCopied && <Check size={12} className="crumb-copied" />}
+              </span>
+            )
+            : <span key={i} className="crumb">{c}</span>))}
+          {dirty && <span className="dirty" title={autosave && !conflicted ? "Saving soon" : "Unsaved changes"} />}
         </span>
         <div className="segmented">
           <button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")} title="Edit (⌘E toggles; ⌘-click in the preview edits there)"><PenLine size={14} /></button>
@@ -439,6 +472,12 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
           title={`Width: ${CONTENT_WIDTHS.find((w) => w.value === width)?.label} (click to change; also in Settings)`}>
           <MoveHorizontal size={14} />
         </button>
+        {writers.length > 0 && (
+          <button onClick={() => onOpenSession(writers[0].id, writers[0].title)}
+            title={`Open the session that wrote this document: ${writers[0].title}${writers.length > 1 ? `\n${writers.length} sessions wrote it; all are in the side panel` : ""}\n⌥-click: open it next to this document`}>
+            <MessageSquare size={14} /> Session
+          </button>
+        )}
         <button className={`icon ${showLinks ? "on" : ""}`} onClick={() => setShowLinks(!showLinks)} title="Sessions and links panel">
           <PanelRight size={14} />
         </button>
@@ -515,6 +554,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
           <div className="preview-wrap" ref={previewRef}>
             <SelectionPopover container={previewRef}
               onSend={(text) => onSendExcerpt({ text, source: rel, lines: previewLines() })}
+              toSession={writers[0] && { title: writers[0].title, onSend: (text) => onSendExcerpt({ text, source: rel, lines: previewLines(), target: writers[0].id }) }}
               onAsk={(text) => {
                 const l = previewLines();
                 setAsk({ line: l?.[0] ?? 0, options: false, excerpt: l ? { text, from: l[0], to: l[1] } : undefined });
@@ -526,6 +566,13 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
         {showLinks && <Resizer axis="x" sign={-1} pane={linksWidth} />}
         {showLinks && (
           <aside className="links" style={{ width: linksWidth.size }}>
+            {writers.length > 0 && <h4>Written by</h4>}
+            {writers.map((s) => (
+              <a key={s.id} className="session-card" onClick={() => onOpenSession(s.id, s.title)}>
+                <div className="session-card-title"><span className={`dot ${s.status}`} /> {s.title}</div>
+                <div className="muted small">{s.started.slice(0, 16).replace("T", " ")} · {s.status}</div>
+              </a>
+            ))}
             <h4>Sessions</h4>
             {sessions.length === 0 && (
               <p className="muted small">Hover a heading in the preview and choose Ask to start one.</p>
