@@ -220,7 +220,7 @@ crates/mq-lsp/src/hover.rs
 ## Quick notes and scratch memos
 
 - **Quick note** (⌥⌘N) creates `notes/<date>-<time>.md` and opens it for typing, without asking for a name.
-- **Scratch memo** (⇧⌘M, or **+** on **Scratch** in the sidebar) does the same in `scratch/`, with `type: scratch`. The sidebar lists memos newest first.
+- **Scratch memo** (⇧⌘M) does the same in `scratch/`, with `type: scratch`. Memos appear under `scratch/` in the Notes tree.
 
 Both are marked `untitled: true`, so their title is the first heading, or else the first line, of what you write. Rename the file whenever you like.
 

@@ -598,7 +598,6 @@ export default function App() {
   const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   // Newest first: their names are the time they were made.
-  const scratches = useMemo(() => files.filter((f) => f.kind === "scratch").sort((a, b) => b.rel.localeCompare(a.rel)), [files]);
   // Untitled notes are named by what they say, so their tabs follow as the text changes.
   useEffect(() => {
     setTabs((prev) => {
@@ -1475,18 +1474,6 @@ export default function App() {
               ))}
             </Collapsible>
           )}
-          <Collapsible title="Scratch" icon={<StickyNote size={11} />} count={scratches.length}
-            action={<button className="section-action" title="New scratch memo (⇧⌘M)" onClick={() => void createUntitled(true)}><Plus size={13} /></button>}>
-            {scratches.map((f) => (
-              <a key={f.path} className={`inbox-row ${current?.kind === "note" && current.path === f.path ? "on" : ""}`}
-                onClick={() => openNote(f.path)} onContextMenu={(e) => fileMenu(e, f)} title={f.rel}>
-                <StickyNote size={13} /> <span className="ellipsis">{f.title ?? "Empty memo"}</span>
-              </a>
-            ))}
-            {scratches.length === 0 && (
-              <a className="muted small pad" onClick={() => void createUntitled(true)}>Jot something down. Memos you leave alone are cleaned up.</a>
-            )}
-          </Collapsible>
           <Collapsible title="Boards" icon={<Columns3 size={11} />} count={boards.length}
             action={<button className="section-action" title="New board" onClick={() => setNewBoard(true)}><Plus size={13} /></button>}>
             {boards.map((f) => (
