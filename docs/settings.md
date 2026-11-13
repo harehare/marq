@@ -97,6 +97,17 @@ With the file tree focused (⇧⌘E, or ⌃P then H): J and K move, L or ↵ ope
 
 Terminal tabs take their title from the shell until you rename them (⇧⌘R, ⌃T then R, or double-click).
 
+A terminal tab can be split into panes like tmux, each with its own shell in the tab's directory:
+
+| Keys | |
+| --- | --- |
+| ⌘D / ⇧⌘D | Split the focused pane: new one on the right / below |
+| ⌥⌘← → ↑ ↓ | Focus the pane in that direction (⌘] cycles) |
+| ⇧⌘↵ | Zoom the focused pane, again to restore |
+| ⌘W | Close the focused pane; the last one closes the tab |
+
+Drag a divider to resize. A pane closes when its shell exits, unless it is the last one. Panes are not restored when Marq restarts (a pinned tab comes back as one shell). Bind them with `terminal.splitRight`, `terminal.splitDown`, `terminal.paneLeft`, `terminal.paneRight`, `terminal.paneUp`, `terminal.paneDown`, `terminal.paneNext`, `terminal.paneZoom` and `terminal.paneClose` in `[keys]`.
+
 ## Shell environment
 
 Apps started from Finder get a minimal `PATH`. Marq reads the `PATH` of an interactive login shell (`$SHELL -ilc`) once and uses it to find `git`, `gh`, `node` and `claude`. It is also passed to the sidecar, so an agent's Bash tool sees the same commands as your terminal.

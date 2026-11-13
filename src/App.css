@@ -545,7 +545,15 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
   flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--bg-raised); color: var(--fg);
 }
-.terminal-view { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+.terminal-view { position: relative; height: 100%; background: var(--bg); overflow: hidden; }
+.terminal-pane { position: absolute; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+/* A frame between split panes; the focused one takes the accent. */
+.terminal-pane.multi::after { content: ""; position: absolute; inset: 0; border: 1px solid var(--border); pointer-events: none; }
+.terminal-pane.multi.focused::after { border-color: var(--accent); }
+.terminal-divider { position: absolute; z-index: 2; touch-action: none; }
+.terminal-divider.row { width: 7px; margin-left: -3px; cursor: col-resize; }
+.terminal-divider.column { height: 7px; margin-top: -3px; cursor: row-resize; }
+.terminal-divider:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 .terminal-view.no-ligatures .xterm-rows { font-variant-ligatures: none; }
 .terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 12px; }
 .terminal-exited { padding: 6px 12px; border-top: 1px solid var(--border); }

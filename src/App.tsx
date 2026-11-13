@@ -16,7 +16,7 @@ import { NoteEditor } from "./NoteEditor";
 import { SessionView } from "./SessionView";
 import { CrewView } from "./CrewView";
 import { QueryView } from "./QueryView";
-import { TerminalView } from "./TerminalView";
+import { TerminalView, PANE_EVENT, type PaneAction, type PaneRequest } from "./TerminalView";
 import { BoardView } from "./BoardView";
 import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
@@ -1253,6 +1253,14 @@ export default function App() {
     return vault!;
   };
 
+  /** Asks the active terminal tab's panes to act; false if it is not a terminal or no pane took it. */
+  const terminalPane = (action: PaneAction): boolean => {
+    if (activeTab?.kind !== "terminal") return false;
+    const req: PaneRequest = { id: activeTab.id, action };
+    window.dispatchEvent(new CustomEvent(PANE_EVENT, { detail: req }));
+    return !!req.handled;
+  };
+
   const commands: Record<string, { label: string; run: () => void }> = {
     "mode.normal": { label: "Normal mode", run: () => setMode("normal") },
     "mode.tab": { label: "Tab mode", run: () => setMode("tab") },
@@ -1281,7 +1289,17 @@ export default function App() {
     "helper.new": { label: "New helper (a standing session with a role, such as a translator)", run: () => setNewHelper(true) },
     "query.open": { label: "mq query", run: () => openTab({ key: "query", kind: "query", title: "mq query" }) },
     "terminal.new": { label: "New terminal", run: () => openTerminal(terminalCwd()) },
-    "tab.close": { label: "Close tab", run: () => active && closeTab(active) },
+    // In a terminal tab with split panes, ⌘W closes the focused pane first; the tab goes with its last pane.
+    "tab.close": { label: "Close tab (or the focused terminal pane)", run: () => active && !terminalPane("close") && closeTab(active) },
+    "terminal.splitRight": { label: "Terminal: split the pane, new one on the right", run: () => void terminalPane("splitRight") },
+    "terminal.splitDown": { label: "Terminal: split the pane, new one below", run: () => void terminalPane("splitDown") },
+    "terminal.paneNext": { label: "Terminal: focus the next pane", run: () => void terminalPane("next") },
+    "terminal.paneLeft": { label: "Terminal: focus the pane on the left", run: () => void terminalPane("left") },
+    "terminal.paneRight": { label: "Terminal: focus the pane on the right", run: () => void terminalPane("right") },
+    "terminal.paneUp": { label: "Terminal: focus the pane above", run: () => void terminalPane("up") },
+    "terminal.paneDown": { label: "Terminal: focus the pane below", run: () => void terminalPane("down") },
+    "terminal.paneZoom": { label: "Terminal: zoom the focused pane (toggle)", run: () => void terminalPane("zoom") },
+    "terminal.paneClose": { label: "Terminal: close the focused pane", run: () => void terminalPane("close") },
     "tab.next": { label: "Next tab", run: () => cycleTab(1) },
     "tab.prev": { label: "Previous tab", run: () => cycleTab(-1) },
     "tab.pin": { label: "Pin or unpin tab", run: () => active && togglePin(active) },

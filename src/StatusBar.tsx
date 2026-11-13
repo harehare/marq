@@ -11,7 +11,7 @@ const HINTS: Record<Mode, [string, string][]> = {
 const TREE_HINTS: [string, string][] = [["J/K", "Move"], ["L/↵", "Open"], ["H", "Close"], ["Esc", "Leave"]];
 
 /** In a terminal only ⌘ keys reach the app, so these replace the mode keys. */
-const TERMINAL_HINTS: [string, string][] = [["tab.prev", "Prev"], ["tab.next", "Next"], ["terminal.new", "New"], ["tab.close", "Close"], ["tree.focus", "Tree"], ["palette", "Commands"]];
+const TERMINAL_HINTS: [string, string][] = [["tab.prev", "Prev"], ["tab.next", "Next"], ["terminal.new", "New"], ["terminal.splitRight", "Split"], ["terminal.splitDown", "Split ↓"], ["tab.close", "Close"], ["tree.focus", "Tree"], ["palette", "Commands"]];
 
 /** zellij-style bar: the current mode and the keys that do something in it. */
 export function StatusBar({ mode, keymap, treeFocus, termFocus, running, waiting, onActive }: {
