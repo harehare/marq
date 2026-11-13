@@ -21,6 +21,7 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [editor]
 # default_mode = "preview"        # preview | edit | split; new notes always open in edit
 # autosave = true                 # save notes shortly after typing stops, and when they close
+# vim = false                     # Vim keys in the note editor; :w saves
 
 [tabs]
 # pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar, or in a row above the others

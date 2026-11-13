@@ -14,6 +14,7 @@ content_width = "wide"          # normal | wide | full: how wide notes and conve
 
 [editor]
 default_mode = "preview"        # preview | edit | split; new notes always open in edit
+vim = false                     # Vim keys in the note editor; :w saves
 
 [terminal]
 shell = "/bin/zsh"              # default: $SHELL
@@ -64,6 +65,8 @@ Keys follow zellij's modes:
 | Lock | ⌃G | Every key goes to the focused view |
 
 A status bar shows the current mode and its keys. Bound keys are taken before the editor sees them. **⌘K** lists every command with its keys.
+
+With `[editor] vim = true` (or **Settings → Editor → Vim keys**) notes are edited with Vim keys and a mode line. `:w` and `:wq` save the note. While Vim has focus, **⌃T**, **⌃P** and **⌃G** go to Vim; the **⌘** shortcuts still work.
 
 Pinned terminal tabs come back when Marq restarts, as a new shell in the same directory with the same title. What ran in them and their scrollback are not restored.
 

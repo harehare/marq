@@ -47,6 +47,7 @@ const SECTIONS: Section[] = [
         options: [{ value: "", label: "Preview (default)" }, { value: "edit", label: "Edit" }, { value: "split", label: "Split" }],
       },
       { key: "editor.autosave", label: "Auto-save", kind: "bool", desc: "Save notes automatically while you type" },
+      { key: "editor.vim", label: "Vim keys", kind: "bool", desc: "Modal editing in notes, with :w to save" },
     ],
   },
   {

@@ -13,6 +13,7 @@ import { AskDialog, AskOptions } from "./AskDialog";
 import { SelectionPopover } from "./SelectionPopover";
 import type { Excerpt } from "./SendToSessionDialog";
 import { EditorState } from "@codemirror/state";
+import { vim, Vim } from "@replit/codemirror-vim";
 import { NoteLinksPanel } from "./NoteLinks";
 import { wikiCompletion } from "./wikilinks";
 import { composing, FIND_EVENT } from "./keys";
@@ -22,6 +23,12 @@ const wikiCompletions = EditorState.languageData.of(() => [{ autocomplete: wikiC
 
 // Built once: the editor reconfigures itself, parsing the whole note again, whenever these change identity.
 const EXTENSIONS = [markdown(), editorHighlight, EditorView.lineWrapping, wikiCompletions];
+// `[editor] vim`: Vim keys with a mode line. `marq-vim` lets the app leave ⌃-keys to Vim while it is focused.
+const VIM_EXTENSIONS = [vim({ status: true }), EditorView.editorAttributes.of({ class: "marq-vim" }), ...EXTENSIONS];
+/** Dispatched by `:w`; `detail` is the CodeMirror view that ran it. */
+const VIM_WRITE = "marq:vim-write";
+Vim.defineEx("write", "w", (cm: { cm6?: EditorView }) => window.dispatchEvent(new CustomEvent(VIM_WRITE, { detail: cm.cm6 })));
+Vim.defineEx("wq", "wq", (cm: { cm6?: EditorView }) => window.dispatchEvent(new CustomEvent(VIM_WRITE, { detail: cm.cm6 })));
 const BASIC_SETUP = { lineNumbers: false, foldGutter: false, highlightActiveLine: false };
 
 type Mode = "edit" | "split" | "preview";
@@ -229,6 +236,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     return () => clearTimeout(t);
   }, [pendingJump, mode, text === null, goToLine]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const vimOn = useSettings().editor?.vim === true;
   const save = useCallback(async () => {
     const content = textRef.current;
     if (content === null) return;
@@ -240,6 +248,14 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     if (textRef.current === content) setDirty(false);
     setError(null);
   }, [vault, path, setError]);
+  // `:w` in Vim mode saves this note.
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<EditorView>).detail === ref.current?.view) save().catch((err) => setError(String(err)));
+    };
+    window.addEventListener(VIM_WRITE, on);
+    return () => window.removeEventListener(VIM_WRITE, on);
+  }, [save, setError]);
   const flow = useMemo(() => workflowOf(text), [text]);
   const breakDown = async () => {
     try {
@@ -531,7 +547,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
               className="editor"
               theme={editorTheme}
               basicSetup={BASIC_SETUP}
-              extensions={EXTENSIONS}
+              extensions={vimOn ? VIM_EXTENSIONS : EXTENSIONS}
               onUpdate={onEditorUpdate}
               onChange={onEditorChange}
               onKeyDown={(e) => {

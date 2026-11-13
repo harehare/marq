@@ -6,7 +6,7 @@ export type Settings = {
     font?: string; mono_font?: string; font_size?: number; editor_font_size?: number; palette?: string; mode?: string;
     content_width?: ContentWidth;
   };
-  editor?: { default_mode?: "preview" | "edit" | "split"; autosave?: boolean };
+  editor?: { default_mode?: "preview" | "edit" | "split"; autosave?: boolean; vim?: boolean };
   notifications?: { enabled?: boolean };
   tabs?: { pinned_layout?: "inline" | "row"; overflow?: "scroll" | "wrap" };
   terminal?: { font?: string; font_size?: number; ligatures?: boolean; cursor?: "block" | "bar" | "underline" };
