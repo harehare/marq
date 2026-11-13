@@ -34,12 +34,35 @@ pub fn create(vault: &Path, scratch: bool) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// The title of an untitled note: its first heading, else its first line, shortened.
+/// The title of an untitled note: its first heading, else its first line of text, as plain text and
+/// shortened. Code blocks are passed over (their first line is used only when there is nothing else),
+/// and Markdown syntax is dropped, so the tree shows `Plan` rather than `**Plan**` or a fence.
 pub fn title_from_body(text: &str) -> Option<String> {
     let body = vault::split_frontmatter(text).1;
-    let line = body.lines().map(str::trim).find(|l| l.starts_with("# "))
-        .or_else(|| body.lines().map(str::trim).find(|l| !l.is_empty()))?;
-    let t = line.trim_start_matches('#').trim();
+    let mut fence: Option<&str> = None;
+    let (mut heading, mut first, mut code) = (None, None, None);
+    for line in body.lines().map(str::trim) {
+        if let Some(f) = fence {
+            if line.starts_with(f) && line.trim_start_matches(f.chars().next().unwrap()).trim().is_empty() {
+                fence = None;
+            } else if code.is_none() && !line.is_empty() {
+                code = Some(line);
+            }
+            continue;
+        }
+        if let Some(f) = ["```", "~~~"].into_iter().find(|f| line.starts_with(f)) {
+            fence = Some(f);
+            continue;
+        }
+        if line.starts_with("# ") {
+            heading = Some(line);
+            break;
+        }
+        if first.is_none() && !is_rule(line) {
+            first = Some(line).filter(|l| !plain(l).is_empty());
+        }
+    }
+    let t = plain(heading.or(first).or(code)?);
     if t.is_empty() {
         return None;
     }
@@ -48,6 +71,87 @@ pub fn title_from_body(text: &str) -> Option<String> {
         s.push('…');
     }
     Some(s)
+}
+
+/// A thematic break or table divider (`---`, `***`, `|---|---|`), which says nothing.
+fn is_rule(line: &str) -> bool {
+    !line.is_empty() && line.chars().all(|c| matches!(c, '-' | '*' | '_' | '=' | '|' | ':' | ' '))
+}
+
+/// A line of Markdown as plain text: block markers, emphasis, code spans, links and HTML removed.
+fn plain(line: &str) -> String {
+    let mut l = line.trim();
+    // Block markers: headings, quotes, list items, task boxes.
+    loop {
+        let before = l;
+        l = l.trim_start_matches('#').trim_start();
+        l = l.strip_prefix('>').unwrap_or(l).trim_start();
+        for m in ["- ", "* ", "+ "] {
+            l = l.strip_prefix(m).unwrap_or(l);
+        }
+        if let Some((n, rest)) = l.split_once(". ").or_else(|| l.split_once(") "))
+            && !n.is_empty() && n.len() <= 3 && n.chars().all(|c| c.is_ascii_digit())
+        {
+            l = rest;
+        }
+        for m in ["[ ] ", "[x] ", "[X] "] {
+            l = l.strip_prefix(m).unwrap_or(l);
+        }
+        l = l.trim_start();
+        if l == before {
+            break;
+        }
+    }
+    let chars: Vec<char> = l.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            // `[[note]]` and `[[note|label]]`: the label, else the note.
+            '[' if chars.get(i + 1) == Some(&'[') => {
+                let rest: String = chars[i + 2..].iter().collect();
+                if let Some(end) = rest.find("]]") {
+                    let inner = &rest[..end];
+                    out.push_str(inner.rsplit('|').next().unwrap_or(inner));
+                    i += 2 + rest[..end + 2].chars().count();
+                    continue;
+                }
+                out.push(c);
+            }
+            // `[text](url)` and `![alt](src)`: the text.
+            '[' | '!' => {
+                let start = if c == '!' && chars.get(i + 1) == Some(&'[') { i + 1 } else { i };
+                let rest: String = chars[start..].iter().collect();
+                if rest.starts_with('[')
+                    && let Some(close) = rest.find("](")
+                    && let Some(end) = rest[close..].find(')')
+                {
+                    out.push_str(&rest[1..close]);
+                    i = start + rest[..close + end + 1].chars().count();
+                    continue;
+                }
+                out.push(c);
+            }
+            // HTML tags.
+            '<' => match chars[i..].iter().position(|&c| c == '>') {
+                Some(end) if chars.get(i + 1).is_some_and(|c| c.is_ascii_alphabetic() || *c == '/' || *c == '!') => i += end,
+                _ => out.push(c),
+            },
+            '`' => {}
+            // Emphasis markers; a lone `*` or `_` inside a word (snake_case) stays.
+            '*' | '~' => {}
+            '_' => {
+                let inside = i > 0 && chars[i - 1].is_alphanumeric() && chars.get(i + 1).is_some_and(|c| c.is_alphanumeric());
+                if inside {
+                    out.push(c);
+                }
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn is_untitled(text: &str) -> bool {
@@ -139,6 +243,16 @@ mod tests {
         assert_eq!(title_from_body("---\nuntitled: true\n---\n\nhello\n# Plan\n").as_deref(), Some("Plan"));
         assert_eq!(title_from_body("---\nuntitled: true\n---\n\nbuy milk\n").as_deref(), Some("buy milk"));
         assert_eq!(title_from_body("---\nuntitled: true\n---\n\n").as_deref(), None);
+        let t = |body: &str| title_from_body(&format!("---\nuntitled: true\n---\n{body}"));
+        // Code blocks are passed over, headings inside them too.
+        assert_eq!(t("```rust\n# not a heading\nfn main() {}\n```\nafter the code\n").as_deref(), Some("after the code"));
+        assert_eq!(t("~~~\nonly code\n~~~\n").as_deref(), Some("only code"));
+        assert_eq!(t("```\n```\n").as_deref(), None);
+        // Markdown is dropped.
+        assert_eq!(t("- [ ] **Fix** the `parser`\n").as_deref(), Some("Fix the parser"));
+        assert_eq!(t("> see [the spec](notes/spec.md) and [[Roadmap|plan]]\n").as_deref(), Some("see the spec and plan"));
+        assert_eq!(t("---\n\n1. keep snake_case _names_\n").as_deref(), Some("keep snake_case names"));
+        assert_eq!(t("## Notes\n# **Plan** <br>\n").as_deref(), Some("Plan"));
     }
 
     #[test]

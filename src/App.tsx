@@ -1484,14 +1484,14 @@ export default function App() {
         renameTab(t);
       }}>
       <span className={`tab-icon kind-${t.kind}`}>
-        <Icon size={14} />
+        <Icon size={12} />
         {status && <span className={`tab-status ${status}`} />}
       </span>
       <span className="ellipsis">{t.title}</span>
       {status === "waiting" && <span className="tab-badge">needs you</span>}
       {t.pinned
-        ? <button className="tab-close tab-pin" title="Unpin" onClick={(e) => { e.stopPropagation(); togglePin(t.key); }}><Pin size={12} /></button>
-        : <button className="tab-close" onClick={(e) => { e.stopPropagation(); closeTab(t.key); }}><X size={13} /></button>}
+        ? <button className="tab-close tab-pin" title="Unpin" onClick={(e) => { e.stopPropagation(); togglePin(t.key); }}><Pin size={11} /></button>
+        : <button className="tab-close" onClick={(e) => { e.stopPropagation(); closeTab(t.key); }}><X size={12} /></button>}
     </div>
     );
   };
@@ -1744,15 +1744,15 @@ export default function App() {
       <main>
         {pinnedRow ? (
           <>
-            {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu}>
+            {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
               {pinned.map(tabEl)}
             </TabStrip>}
-            <TabStrip lead={pinned.length === 0 && showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu}>
+            <TabStrip lead={pinned.length === 0 && showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
               {unpinned.map(tabEl)}
             </TabStrip>
           </>
         ) : (
-          <TabStrip lead={showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu}>
+          <TabStrip lead={showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
             {pinned.map(tabEl)}
             {pinned.length > 0 && unpinned.length > 0 && <span className="tab-sep" />}
             {unpinned.map(tabEl)}

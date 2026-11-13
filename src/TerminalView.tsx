@@ -89,6 +89,16 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
       if (e.payload.id === pty) setExited(true);
     });
     const input = term.onData((d) => api.terminalWrite(pty, d).catch(() => {}));
+    // xterm sends a bare CR for Enter whatever the modifiers, so Shift+Enter would submit. Send
+    // ESC CR instead (Meta+Enter), which Claude Code and most line editors take as a new line.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.key !== "Enter" || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return true;
+      if (e.type === "keydown") {
+        e.preventDefault();
+        api.terminalWrite(pty, "\x1b\r").catch(() => {});
+      }
+      return false;
+    });
     const title = term.onTitleChange((t) => t && onTitleRef.current(t));
     const resize = term.onResize(({ cols, rows }) => api.terminalResize(pty, cols, rows).catch(() => {}));
     // Start the shell once listening, so its first prompt is not lost; close it if unmounted meanwhile.

@@ -344,7 +344,9 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   // Mark and scroll to the current match.
   useEffect(() => {
     const highlights = (CSS as unknown as { highlights?: Map<string, Highlight> }).highlights;
-    if (current < 0) return;
+    // `found` is state and lags the matches by a render: when the query is cleared (Esc closes the
+    // find bar) or edits remove matches, `current` can point past them for that render.
+    if (current < 0 || current >= Math.max(ranges.current.length, offsets.current.length)) return;
     if (ranges.current.length) {
       highlights?.set("marq-find", new Highlight(...ranges.current));
       highlights?.set("marq-find-current", new Highlight(ranges.current[current]));
@@ -352,7 +354,8 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     } else {
       const view = ref.current?.view;
       const from = offsets.current[current];
-      view?.dispatch({ selection: { anchor: from, head: from + q.length }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+      if (!view || from + q.length > view.state.doc.length) return;
+      view.dispatch({ selection: { anchor: from, head: from + q.length }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
     }
     return () => {
       highlights?.delete("marq-find");

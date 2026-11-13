@@ -9,7 +9,7 @@ const NONE: Hidden = { left: [], right: [] };
  * shows how many tabs are out of sight there. Clicking the count lists them (`onShowHidden`).
  * Tabs are found by their `data-key`.
  */
-export function TabStrip({ className, lead, trail, wrap, active, onShowHidden, children }: {
+export function TabStrip({ className, lead, trail, wrap, active, onShowHidden, onBlankDoubleClick, children }: {
   className?: string;
   /** Shown before the tabs, outside the scrolling part. */
   lead?: React.ReactNode;
@@ -18,6 +18,8 @@ export function TabStrip({ className, lead, trail, wrap, active, onShowHidden, c
   wrap: boolean;
   active: string | null;
   onShowHidden: (keys: string[], x: number, y: number) => void;
+  /** A double-click on the bar's empty space, not on a tab or button. */
+  onBlankDoubleClick?: () => void;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -73,12 +75,17 @@ export function TabStrip({ className, lead, trail, wrap, active, onShowHidden, c
     );
   };
 
+  const blank = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) onBlankDoubleClick?.();
+  };
+
   return (
-    <nav className={`tabs ${wrap ? "wrap" : ""} ${className ?? ""}`}>
+    <nav className={`tabs ${wrap ? "wrap" : ""} ${className ?? ""}`} onDoubleClick={blank}>
       {lead}
       {more("left")}
       <div ref={ref} className={`tabs-scroll ${hidden.left.length ? "fade-l" : ""} ${hidden.right.length ? "fade-r" : ""}`}
         onScroll={measure}
+        onDoubleClick={blank}
         // A plain mouse wheel scrolls the tabs sideways.
         onWheel={(e) => { if (!wrap && e.deltaX === 0 && ref.current) ref.current.scrollLeft += e.deltaY; }}>
         {children}

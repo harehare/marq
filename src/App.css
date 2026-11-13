@@ -605,7 +605,7 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .board-new-list { display: inline-flex; align-items: center; gap: 4px; }
 .board-columns { flex: 1; min-height: 0; display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; overflow: auto; }
 .board-columns .board-list { width: 284px; flex: none; max-height: 100%; display: flex; flex-direction: column; }
-.board-rows { flex: 1; overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
+.board-rows { flex: 1; overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
 .board-list { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 12px; padding: 8px; }
 .board-list.over { border-color: var(--accent); }
 /* The dragged list's place: an empty slot where it will land. */
@@ -744,10 +744,33 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .board-add { margin-top: 6px; font: inherit; background: transparent; border: 1px solid transparent; color: var(--muted); }
 .board-add:hover { background: var(--bg-hover); }
 .board-add:focus { background: var(--bg-raised); border-color: var(--accent); color: var(--fg); }
+/* List view: each card is one full-width row, title first and the rest in aligned columns on the right. */
+.board-rows .board-list { padding: 6px 0 4px; }
+.board-rows .board-list-head { padding: 2px 14px 6px; }
+.board-rows .board-cards { gap: 0; padding: 0; overflow: visible; }
+.board-rows .board-card {
+  flex-direction: row; align-items: center; gap: 12px; min-height: 36px; padding: 5px 14px;
+  border: none; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none;
+}
+.board-rows .board-card:hover { background: var(--bg-hover); box-shadow: none; }
+.board-rows .board-card-main { order: 0; flex: 1; min-width: 0; align-items: center; }
+.board-rows .board-card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+/* In a row the check is the row's checkbox, so it always shows. */
+.board-rows .board-card .board-check { display: grid; }
+.board-rows .board-card-links { order: 1; flex: 0 1 auto; max-width: 28%; flex-wrap: nowrap; overflow: hidden; }
+.board-rows .board-card-labels { order: 2; flex: 0 1 auto; max-width: 24%; flex-wrap: nowrap; overflow: hidden; }
+.board-rows .board-card-foot { order: 3; flex: none; width: 120px; justify-content: flex-end; }
+.board-rows .board-card-foot .spacer { display: none; }
+.board-rows .board-card.drop-before::before { top: -2px; }
+.board-rows .board-card.drop-after::after { bottom: -2px; }
+.board-rows .board-add { margin: 4px 10px 0; width: calc(100% - 20px); box-sizing: border-box; }
+@media (max-width: 640px) {
+  .board-rows .board-card-links, .board-rows .board-card-labels { display: none; }
+}
 .vault-switch { flex: none; color: var(--muted); }
 .vault:hover .vault-switch { color: var(--fg); }
 .theme-btn + .theme-btn { margin-left: 0; }
-.sidebar-show { flex: none; align-self: center; margin: 0 4px 6px 0; padding: 4px; color: var(--muted); }
+.sidebar-show { flex: none; align-self: center; margin: 0 4px 4px 0; padding: 4px; color: var(--muted); }
 .sidebar-show:hover { color: var(--fg); }
 .theme-btn { margin-left: auto; padding: 3px; border: none; background: transparent; color: var(--muted); opacity: 0; }
 .vault:hover .theme-btn { opacity: 1; }
@@ -844,7 +867,7 @@ kbd {
 
 main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tabs {
-  display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0;
+  display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0;
   background: var(--bg-sunken); border-bottom: 1px solid var(--border); flex: none; min-width: 0;
 }
 /* The tabs themselves scroll sideways; the bar's border stays put, and the shown tab still covers it. */
@@ -860,7 +883,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tabs-scroll .tab { margin-bottom: 0; }
 /* How many tabs are out of sight at that end; a click lists them. */
 .tabs-more {
-  flex: none; align-self: center; display: flex; align-items: center; gap: 1px; margin-bottom: 6px; padding: 2px 6px;
+  flex: none; align-self: center; display: flex; align-items: center; gap: 1px; margin-bottom: 4px; padding: 2px 6px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--muted);
   font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
@@ -868,8 +891,9 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tabs-more.right { margin-left: 4px; padding-right: 3px; }
 .tabs-more:hover { color: var(--fg); border-color: var(--muted); }
 .tab {
-  display: flex; align-items: center; gap: 7px; max-width: 220px; padding: 7px 6px 7px 12px;
-  border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+  /* Tabs keep their width and the row scrolls, rather than squeezing every title down. */
+  display: flex; align-items: center; gap: 6px; flex: none; min-width: 90px; max-width: 320px; padding: 4px 5px 4px 10px; font-size: 12px;
+  border: 1px solid transparent; border-bottom: none; border-radius: 7px 7px 0 0;
   color: var(--muted); cursor: pointer; margin-bottom: -1px;
 }
 .tab:hover { color: var(--fg); }
@@ -877,7 +901,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tab.dragging { opacity: 0.5; }
 /* Each kind of tab has its own tint, so tabs can be told apart at a glance. */
 .tab-icon {
-  position: relative; display: grid; place-items: center; width: 22px; height: 22px; flex: none; border-radius: 6px;
+  position: relative; display: grid; place-items: center; width: 18px; height: 18px; flex: none; border-radius: 5px;
   color: var(--tint, var(--muted)); background: color-mix(in srgb, var(--tint, var(--muted)) 14%, transparent);
 }
 .tab:not(.on):not(:hover) .tab-icon { opacity: 0.8; }
@@ -890,7 +914,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tab-icon.kind-query, .tab-icon.kind-search { --tint: var(--run); }
 /* What the tab's sessions are doing, on the icon's corner. */
 .tab-status {
-  position: absolute; right: -3px; top: -3px; width: 9px; height: 9px; border-radius: 50%;
+  position: absolute; right: -3px; top: -3px; width: 7px; height: 7px; border-radius: 50%;
   border: 2px solid var(--bg-sunken); box-sizing: content-box; background: var(--accent);
 }
 .tab.on .tab-status { border-color: var(--bg); }
@@ -909,16 +933,16 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .tab-close { padding: 2px; background: transparent; border: none; color: var(--muted); opacity: 0; }
 .tab:hover .tab-close, .tab.on .tab-close { opacity: 1; }
 .tab.pinned .tab-pin { opacity: 1; color: var(--accent); }
-.tab-sep { align-self: center; width: 1px; height: 18px; margin: 0 4px 6px; background: var(--border); flex: none; }
+.tab-sep { align-self: center; width: 1px; height: 14px; margin: 0 4px 4px; background: var(--border); flex: none; }
 /* The pinned row sits above the tab bar, so its tabs are pills rather than joined to the content. */
 .tabs.pinned-row { align-items: center; padding: 5px 8px; }
-.tabs.pinned-row .tab { padding: 4px 6px 4px 10px; border-bottom: 1px solid transparent; border-radius: 6px; margin-bottom: 0; }
+.tabs.pinned-row .tab { padding: 3px 5px 3px 8px; border-bottom: 1px solid transparent; border-radius: 6px; margin-bottom: 0; }
 .tabs.pinned-row .tabs-scroll { align-items: center; margin-bottom: 0; }
 .tabs.pinned-row .tabs-more { margin-bottom: 0; }
 /* Wrapped tabs sit on several rows, so they are pills like the pinned row's. */
 .tabs.wrap { align-items: flex-start; padding: 5px 8px; }
 .tabs.wrap .tabs-scroll { flex-wrap: wrap; align-items: center; gap: 3px; margin-bottom: 0; max-height: 30vh; overflow-y: auto; mask-image: none; }
-.tabs.wrap .tab { padding: 4px 6px 4px 10px; border-bottom: 1px solid transparent; border-radius: 6px; }
+.tabs.wrap .tab { padding: 3px 5px 3px 8px; border-bottom: 1px solid transparent; border-radius: 6px; }
 .tabs.wrap .tab.on { border-bottom-color: var(--border); }
 .tabs.wrap .sidebar-show { margin-bottom: 0; }
 .tabs.wrap .tab-sep { margin-bottom: 0; }
@@ -939,7 +963,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .pane.split > .pane-inner.focused::before { opacity: 1; }
 /* The tab shown in the other pane. */
 .tab.side { color: var(--fg); background: color-mix(in srgb, var(--bg) 55%, transparent); border-color: color-mix(in srgb, var(--border) 60%, transparent); }
-.split-controls { flex: none; display: flex; align-items: center; gap: 2px; align-self: center; margin: 0 0 6px 6px; }
+.split-controls { flex: none; display: flex; align-items: center; gap: 2px; align-self: center; margin: 0 0 4px 6px; }
 .split-controls .icon { padding: 4px; color: var(--muted); }
 .split-controls .icon:hover { color: var(--fg); }
 .tabs.pinned-row .split-controls, .tabs.wrap .split-controls { margin-bottom: 0; }
@@ -1505,14 +1529,17 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; -webkit-user
 .modal.ask { width: min(560px, calc(100vw - 32px)); }
 
 /* New task: what you write on the left, how it runs on the right */
-.modal.task-modal { width: min(1000px, calc(100vw - 32px)); height: min(660px, 84vh); }
+.modal.task-modal { width: min(1000px, calc(100vw - 32px)); height: min(780px, calc(100vh - 64px)); }
+/* Centred rather than hung from 12vh, so the dialog can use the window's height and its sections fit. */
+.modal-backdrop:has(> .task-modal) { place-items: center; padding-top: 0; }
 .task-body { display: flex; gap: 16px; min-height: 0; flex: 1; }
 .task-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 /* The prompt takes whatever height the column has left. */
 .task-main .slash-wrap { flex: 1; min-height: 0; }
 .task-main .slash-wrap > textarea.task-prompt { flex: 1; min-height: 160px; height: auto; overflow-y: auto; }
 .task-side {
-  flex: none; width: 400px; display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto;
+  flex: none; width: 400px; display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-x: hidden; overflow-y: auto;
+  scrollbar-width: thin;
   padding-left: 16px; border-left: 1px solid var(--border);
 }
 .task-section { display: flex; flex-direction: column; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
