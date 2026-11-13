@@ -1,11 +1,16 @@
-//! Per-session git worktrees and their changes.
+//! Per-session git worktrees and their changes, through libgit2: no `git` process is run.
+//! (`gh pr create` is the one external command, since it is GitHub's CLI rather than git.)
 
 use std::path::{Path, PathBuf};
-use crate::shell;
 
+use git2::{
+    BranchType, Delta, Diff, DiffFindOptions, DiffFormat, DiffOptions, IndexAddOption, Oid,
+    Repository, Status, StatusOptions,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::shell;
 
 /// Where a session works when its project is a git repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,29 +49,53 @@ pub struct Changes {
     pub branch: Option<String>,
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = shell::command("git").arg("-C").arg(dir).args(args).output()?;
-    if !out.status.success() {
-        return Err(Error::Other(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
+impl From<git2::Error> for Error {
+    fn from(e: git2::Error) -> Self {
+        Error::Other(format!("git: {}", e.message()))
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn open(dir: &Path) -> Result<Repository> {
+    Ok(Repository::open(dir)?)
+}
+
+/// The branch checked out in `repo`; None on a detached or unborn HEAD.
+fn head_name(repo: &Repository) -> Option<String> {
+    let head = repo.head().ok()?;
+    if repo.head_detached().unwrap_or(false) || !head.is_branch() {
+        return None;
+    }
+    head.shorthand().ok().map(str::to_string)
+}
+
+fn short_id(repo: &Repository, id: Oid) -> String {
+    repo.find_object(id, None)
+        .and_then(|o| o.short_id())
+        .ok()
+        .and_then(|b| b.as_str().ok().map(str::to_string))
+        .unwrap_or_else(|| id.to_string().chars().take(7).collect())
+}
+
+/// `<short id> <subject>`, as `git log --format='%h %s'` prints it.
+fn describe(repo: &Repository, id: Oid) -> Result<String> {
+    let commit = repo.find_commit(id)?;
+    Ok(format!("{} {}", short_id(repo, id), commit.summary().ok().flatten().unwrap_or_default()))
 }
 
 /// The repository root, if `dir` is inside a git work tree.
 pub fn repo_root(dir: &Path) -> Option<PathBuf> {
-    git(dir, &["rev-parse", "--show-toplevel"]).ok().map(|s| PathBuf::from(s.trim()))
+    let repo = Repository::discover(dir).ok()?;
+    let root = repo.workdir()?;
+    Some(PathBuf::from(root.to_string_lossy().trim_end_matches('/')))
 }
 
 /// The checkout at `dir` as a pseudo-worktree for a session that ran in its project: the repo root,
 /// diffed against `HEAD`, so only uncommitted changes show. None outside a repo or before the first commit.
 pub fn checkout(dir: &Path) -> Option<Worktree> {
     let root = repo_root(dir)?;
-    git(&root, &["rev-parse", "--verify", "--quiet", "HEAD"]).ok()?;
-    let branch = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?.trim().to_string();
+    let repo = open(&root).ok()?;
+    repo.head().ok()?.peel_to_commit().ok()?;
+    let branch = head_name(&repo).unwrap_or_else(|| "HEAD".into());
     Some(Worktree {
         repo: root.to_string_lossy().into_owned(),
         path: root.to_string_lossy().into_owned(),
@@ -76,17 +105,17 @@ pub fn checkout(dir: &Path) -> Option<Worktree> {
     })
 }
 
-/// Checks a branch name with git's own rules and returns it normalized.
-pub fn check_branch_name(repo: &Path, name: &str) -> Result<String> {
-    let out = shell::command("git").arg("-C").arg(repo).args(["check-ref-format", "--branch", name.trim()]).output()?;
-    if !out.status.success() || name.trim().is_empty() {
+/// Checks a branch name with git's own rules and returns it trimmed.
+pub fn check_branch_name(_repo: &Path, name: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() || !git2::Branch::name_is_valid(name)? {
         return Err(Error::Other(format!("not a valid branch name: {name}")));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(name.to_string())
 }
 
-fn branch_exists(repo: &Path, name: &str) -> bool {
-    git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{name}")]).is_ok()
+fn branch_exists(repo: &Repository, name: &str) -> bool {
+    repo.find_branch(name, BranchType::Local).is_ok()
 }
 
 /// The branch for a new worktree: `wanted` if given, otherwise `marq/<short id>`. The name can be
@@ -96,9 +125,10 @@ pub fn branch_name(repo: &Path, wanted: Option<&str>, session_id: &str) -> Resul
         Some(w) => check_branch_name(repo, w)?,
         None => format!("marq/{}", &session_id[session_id.len().saturating_sub(8)..]),
     };
+    let repo = open(repo)?;
     let mut name = base.clone();
     let mut n = 2;
-    while branch_exists(repo, &name) {
+    while branch_exists(&repo, &name) {
         name = format!("{base}-{n}");
         n += 1;
     }
@@ -107,22 +137,35 @@ pub fn branch_name(repo: &Path, wanted: Option<&str>, session_id: &str) -> Resul
 
 /// Creates `~/.marq/worktrees/<repo>/<short id>` on a new `branch` from HEAD.
 /// With `carry`, the repo's uncommitted changes and untracked files are copied into it as well.
-pub fn create(repo: &Path, session_id: &str, branch: &str, carry: bool) -> Result<Worktree> {
+pub fn create(repo_dir: &Path, session_id: &str, branch: &str, carry: bool) -> Result<Worktree> {
     let short = &session_id[session_id.len().saturating_sub(8)..];
-    let name = repo.file_name().unwrap_or_default().to_string_lossy();
+    let name = repo_dir.file_name().unwrap_or_default().to_string_lossy();
     let path = dirs::home_dir().unwrap_or_default().join(".marq/worktrees").join(&*name).join(short);
+    create_at(repo_dir, &path, short, branch, carry)
+}
+
+/// [`create`] at a given `path`, registered as worktree `name`.
+fn create_at(repo_dir: &Path, path: &Path, short: &str, branch: &str, carry: bool) -> Result<Worktree> {
     std::fs::create_dir_all(path.parent().unwrap())?;
-    let base = git(repo, &["rev-parse", "HEAD"])?.trim().to_string();
-    let base_branch = git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
-    git(repo, &["worktree", "add", "-b", branch, &path.to_string_lossy(), &base])?;
+    let repo = open(repo_dir)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let base_branch = head_name(&repo).unwrap_or_else(|| "HEAD".into());
+    let created = repo.branch(branch, &head, false)?;
+    let mut opts = git2::WorktreeAddOptions::new();
+    opts.reference(Some(created.get()));
+    if let Err(e) = repo.worktree(short, path, Some(&opts)) {
+        // Do not leave the branch behind without its worktree.
+        let _ = repo.find_branch(branch, BranchType::Local).and_then(|mut b| b.delete());
+        return Err(e.into());
+    }
     if carry {
-        carry_changes(repo, &path)?;
+        carry_changes(repo_dir, path)?;
     }
     Ok(Worktree {
-        repo: repo.to_string_lossy().into_owned(),
+        repo: repo_dir.to_string_lossy().into_owned(),
         path: path.to_string_lossy().into_owned(),
         branch: branch.to_string(),
-        base,
+        base: head.id().to_string(),
         base_branch,
     })
 }
@@ -134,14 +177,13 @@ pub fn sync_branch(wt: &Worktree) -> Result<Worktree> {
     if !dir.exists() {
         return Ok(wt.clone());
     }
-    let head = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
-    if head == "HEAD" {
-        return Err(Error::Other(format!(
+    match head_name(&open(dir)?) {
+        Some(head) => Ok(Worktree { branch: head, ..wt.clone() }),
+        None => Err(Error::Other(format!(
             "the worktree is on a detached HEAD, not on a branch. Check out a branch in {} first",
             wt.path
-        )));
+        ))),
     }
-    Ok(Worktree { branch: head, ..wt.clone() })
 }
 
 /// `<repo>/.git/worktrees/<name>`, from the worktree's `.git` file.
@@ -151,7 +193,7 @@ fn git_dir(wt: &Worktree) -> Option<PathBuf> {
     Some(if dir.is_absolute() { dir } else { Path::new(&wt.path).join(dir) })
 }
 
-/// Checked-out branch from the HEAD file, without running git. None when detached or missing.
+/// Checked-out branch from the HEAD file, without opening the repository. None when detached or missing.
 pub fn head_branch(wt: &Worktree) -> Option<String> {
     let head = std::fs::read_to_string(git_dir(wt)?.join("HEAD")).ok()?;
     head.trim().strip_prefix("ref: refs/heads/").map(str::to_string)
@@ -164,20 +206,41 @@ pub fn state_stamp(wt: &Worktree) -> Option<(std::time::SystemTime, std::time::S
     Some((mtime("HEAD")?, mtime("index").unwrap_or(std::time::UNIX_EPOCH)))
 }
 
-/// `changes` totals (added, deleted) with two git calls instead of eight.
+/// Untracked files (not ignored), one entry per file.
+fn untracked(repo: &Repository) -> Result<Vec<String>> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(false);
+    let statuses = repo.statuses(Some(&mut opts))?;
+    Ok(statuses
+        .iter()
+        .filter(|s| s.status() == Status::WT_NEW)
+        .filter_map(|s| s.path().ok().map(str::to_string))
+        .collect())
+}
+
+fn line_count(path: &Path) -> u32 {
+    std::fs::read_to_string(path).map(|t| t.lines().count() as u32).unwrap_or(0)
+}
+
+/// The diff from `base` to the working tree (staged and unstaged), with renames detected.
+fn diff_against<'r>(repo: &'r Repository, base: &str, opts: &mut DiffOptions) -> Result<Diff<'r>> {
+    let tree = repo.revparse_single(base)?.peel_to_tree()?;
+    let mut diff = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(opts))?;
+    diff.find_similar(Some(DiffFindOptions::new().renames(true)))?;
+    Ok(diff)
+}
+
+/// `changes` totals (added, deleted).
 pub fn diffstat(wt: &Worktree) -> Result<(u32, u32)> {
     let dir = Path::new(&wt.path);
     if !dir.exists() {
         return Ok((0, 0));
     }
-    let (mut add, mut del) = (0, 0);
-    for line in git(dir, &["diff", "--numstat", "-M", &wt.base])?.lines() {
-        let mut f = line.split('\t');
-        add += f.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
-        del += f.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
-    }
-    for path in git(dir, &["ls-files", "--others", "--exclude-standard"])?.lines() {
-        add += std::fs::read_to_string(dir.join(path)).map(|t| t.lines().count() as u32).unwrap_or(0);
+    let repo = open(dir)?;
+    let stats = diff_against(&repo, &wt.base, &mut DiffOptions::new())?.stats()?;
+    let (mut add, del) = (stats.insertions() as u32, stats.deletions() as u32);
+    for path in untracked(&repo)? {
+        add += line_count(&dir.join(path));
     }
     Ok((add, del))
 }
@@ -185,77 +248,56 @@ pub fn diffstat(wt: &Worktree) -> Result<(u32, u32)> {
 /// Renames the session's branch. Commits and an upstream already pushed under the old name stay
 /// as they are; the next push goes to the new name.
 pub fn rename_branch(wt: &Worktree, new_name: &str) -> Result<Worktree> {
-    let repo = Path::new(&wt.repo);
-    let name = check_branch_name(repo, new_name)?;
+    let name = check_branch_name(Path::new(&wt.repo), new_name)?;
     if name == wt.branch {
         return Ok(wt.clone());
     }
-    if branch_exists(repo, &name) {
+    // From the worktree itself, so that its HEAD follows the branch to the new name.
+    let dir = if Path::new(&wt.path).exists() { &wt.path } else { &wt.repo };
+    let repo = open(Path::new(dir))?;
+    if branch_exists(&repo, &name) {
         return Err(Error::Other(format!("a branch named {name} already exists")));
     }
-    git(repo, &["branch", "-m", &wt.branch, &name])?;
+    repo.find_branch(&wt.branch, BranchType::Local)?.rename(&name, false)?;
     Ok(Worktree { branch: name, ..wt.clone() })
 }
 
 /// Applies `repo`'s uncommitted diff to `dest` and copies its untracked files.
-fn carry_changes(repo: &Path, dest: &Path) -> Result<()> {
-    use std::io::Write;
-    let patch = shell::command("git").arg("-C").arg(repo).args(["diff", "HEAD", "--binary"]).output()?.stdout;
-    if !patch.is_empty() {
-        let mut child = shell::command("git")
-            .arg("-C")
-            .arg(dest)
-            .args(["apply", "--whitespace=nowarn", "-"])
-            .stdin(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-        child.stdin.take().unwrap().write_all(&patch)?;
-        let out = child.wait_with_output()?;
-        if !out.status.success() {
-            return Err(Error::Other(format!("git apply: {}", String::from_utf8_lossy(&out.stderr).trim())));
+fn carry_changes(repo_dir: &Path, dest: &Path) -> Result<()> {
+    let repo = open(repo_dir)?;
+    let tree = repo.head()?.peel_to_tree()?;
+    let diff = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(DiffOptions::new().show_binary(true)))?;
+    let mut patch = vec![];
+    diff.print(DiffFormat::Patch, |_, _, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            patch.push(line.origin() as u8);
         }
+        patch.extend_from_slice(line.content());
+        true
+    })?;
+    if !patch.is_empty() {
+        let to_apply = Diff::from_buffer(&patch)?;
+        open(dest)?
+            .apply(&to_apply, git2::ApplyLocation::WorkDir, None)
+            .map_err(|e| Error::Other(format!("applying uncommitted changes: {}", e.message())))?;
     }
-    for file in git(repo, &["ls-files", "--others", "--exclude-standard"])?.lines() {
-        let to = dest.join(file);
+    for file in untracked(&repo)? {
+        let to = dest.join(&file);
         std::fs::create_dir_all(to.parent().unwrap())?;
-        std::fs::copy(repo.join(file), to)?;
+        std::fs::copy(repo_dir.join(&file), to)?;
     }
     Ok(())
 }
 
-/// Counts per file from `git diff --numstat -z`. A rename is `add\tdel\t\0old\0new\0`; binary files count as 0.
-fn parse_numstat(out: &str) -> Vec<(u32, u32)> {
-    let mut rows = vec![];
-    let mut tokens = out.split('\0');
-    while let Some(t) = tokens.next() {
-        if t.is_empty() {
-            continue;
-        }
-        let mut f = t.splitn(3, '\t');
-        let add = f.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        let del = f.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        if f.next() == Some("") {
-            // Rename or copy: the old and new paths follow as separate entries.
-            tokens.next();
-            tokens.next();
-        }
-        rows.push((add, del));
+fn status_letter(d: Delta) -> &'static str {
+    match d {
+        Delta::Added => "A",
+        Delta::Deleted => "D",
+        Delta::Renamed => "R",
+        Delta::Copied => "C",
+        Delta::Typechange => "T",
+        _ => "M",
     }
-    rows
-}
-
-/// Status letter and (new) path per file from `git diff --name-status -z`.
-fn parse_name_status(out: &str) -> Vec<(String, String)> {
-    let mut rows = vec![];
-    let mut tokens = out.split('\0');
-    while let Some(status) = tokens.next() {
-        let Some(letter) = status.chars().next() else { continue };
-        if matches!(letter, 'R' | 'C') {
-            tokens.next();
-        }
-        rows.push((letter.to_string(), tokens.next().unwrap_or_default().to_string()));
-    }
-    rows
 }
 
 /// Committed and uncommitted changes since `base`, including untracked files.
@@ -264,32 +306,46 @@ pub fn changes(wt: &Worktree) -> Result<Changes> {
     if !dir.exists() {
         return Ok(Changes::default());
     }
-    // `-z` keeps non-ASCII and special-character paths literal; otherwise git quotes them
-    // (`"\346\227\245.md"`), and that string matches nothing when passed back to `file_diff`.
+    let repo = open(dir)?;
     let mut files: Vec<FileChange> = vec![];
-    let numstat = parse_numstat(&git(dir, &["diff", "--numstat", "-z", "-M", &wt.base])?);
-    let names = parse_name_status(&git(dir, &["diff", "--name-status", "-z", "-M", &wt.base])?);
-    for ((add, del), (status, path)) in numstat.into_iter().zip(names) {
-        files.push(FileChange { path, status, additions: add, deletions: del });
+    let diff = diff_against(&repo, &wt.base, &mut DiffOptions::new())?;
+    for i in 0..diff.deltas().len() {
+        let delta = diff.get_delta(i).unwrap();
+        let path = delta.new_file().path().or(delta.old_file().path()).unwrap_or(Path::new(""));
+        let (additions, deletions) = match git2::Patch::from_diff(&diff, i)? {
+            Some(p) => p.line_stats().map(|(_, a, d)| (a as u32, d as u32))?,
+            None => (0, 0),
+        };
+        files.push(FileChange { path: path.to_string_lossy().into_owned(), status: status_letter(delta.status()).into(), additions, deletions });
     }
-    for path in git(dir, &["ls-files", "--others", "--exclude-standard", "-z"])?.split('\0').filter(|p| !p.is_empty()) {
-        let lines = std::fs::read_to_string(dir.join(path)).map(|t| t.lines().count() as u32).unwrap_or(0);
-        files.push(FileChange { path: path.to_string(), status: "?".into(), additions: lines, deletions: 0 });
+    for path in untracked(&repo)? {
+        let additions = line_count(&dir.join(&path));
+        files.push(FileChange { path, status: "?".into(), additions, deletions: 0 });
     }
-    let commits: Vec<String> = git(dir, &["log", "--format=%h %s", &format!("{}..HEAD", wt.base)])?
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let dirty = !git(dir, &["status", "--porcelain"])?.trim().is_empty();
-    let upstream = git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        .ok()
-        .map(|u| u.trim().to_string())
-        .filter(|u| !u.is_empty());
-    let ahead = match &upstream {
-        Some(_) => git(dir, &["rev-list", "--count", "@{u}..HEAD"])?.trim().parse().unwrap_or(0),
+
+    let head = repo.head()?.peel_to_commit()?.id();
+    let mut commits = vec![];
+    if let Ok(base) = repo.revparse_single(&wt.base).and_then(|o| o.peel_to_commit()) {
+        let mut walk = repo.revwalk()?;
+        walk.set_sorting(git2::Sort::TIME)?;
+        walk.push(head)?;
+        walk.hide(base.id())?;
+        for id in walk {
+            commits.push(describe(&repo, id?)?);
+        }
+    }
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).include_ignored(false);
+    let dirty = !repo.statuses(Some(&mut opts))?.is_empty();
+
+    let branch = head_name(&repo);
+    let upstream_ref = branch.as_deref().and_then(|b| repo.find_branch(b, BranchType::Local).ok()).and_then(|b| b.upstream().ok());
+    let upstream = upstream_ref.as_ref().and_then(|u| u.name().ok().flatten().map(str::to_string));
+    let ahead = match upstream_ref.as_ref().and_then(|u| u.get().target()) {
+        Some(up) => repo.graph_ahead_behind(head, up)?.0 as u32,
         None => commits.len() as u32,
     };
-    let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).ok().map(|b| b.trim().to_string()).filter(|b| b != "HEAD");
     Ok(Changes {
         dirty,
         upstream,
@@ -302,44 +358,123 @@ pub fn changes(wt: &Worktree) -> Result<Changes> {
     })
 }
 
+/// A diff as unified-diff text.
+fn patch_text(diff: &Diff) -> Result<String> {
+    let mut out = vec![];
+    diff.print(DiffFormat::Patch, |_, _, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            out.push(line.origin() as u8);
+        }
+        out.extend_from_slice(line.content());
+        true
+    })?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
 /// Unified diff of one file against `base`. Untracked files are shown as all-added.
 pub fn file_diff(wt: &Worktree, file: &str) -> Result<String> {
     let dir = Path::new(&wt.path);
-    let untracked = !git(dir, &["ls-files", "--others", "--exclude-standard", "--", file])?.trim().is_empty();
-    if untracked {
-        // `git diff --no-index` exits 1 when files differ, so read stdout directly.
-        let out = shell::command("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["diff", "--no-index", "--", "/dev/null", file])
-            .output()?;
-        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    let repo = open(dir)?;
+    let is_untracked = repo.status_file(Path::new(file)).is_ok_and(|s| s == Status::WT_NEW);
+    if is_untracked {
+        let Ok(content) = std::fs::read(dir.join(file)) else { return Ok(String::new()) };
+        let mut patch = git2::Patch::from_buffers(&[], None, &content, Some(Path::new(file)), None)?;
+        let text = patch.to_buf()?.as_str().unwrap_or_default().to_string();
+        // As `git diff --no-index /dev/null file` prints it: an added file, not a change to an empty one.
+        return Ok(match text.find("\n@@") {
+            Some(at) => format!("diff --git a/{file} b/{file}\nnew file mode 100644\n--- /dev/null\n+++ b/{file}{}", &text[at..]),
+            None => text,
+        });
     }
-    git(dir, &["diff", "-M", &wt.base, "--", file])
+    let mut opts = DiffOptions::new();
+    // The path is literal: no globbing of `[`, `*` or `?` in file names.
+    opts.pathspec(file).disable_pathspec_match(true);
+    patch_text(&diff_against(&repo, &wt.base, &mut opts)?)
 }
 
 pub fn commit_all(wt: &Worktree, message: &str) -> Result<String> {
-    let dir = Path::new(&wt.path);
-    git(dir, &["add", "-A"])?;
-    git(dir, &["commit", "-m", message])?;
-    Ok(git(dir, &["log", "-1", "--format=%h %s"])?.trim().to_string())
+    let repo = open(Path::new(&wt.path))?;
+    let mut index = repo.index()?;
+    // `git add -A`: new and changed files, and removals.
+    index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+    index.update_all(["*"], None)?;
+    index.write()?;
+    let tree = repo.find_tree(index.write_tree()?)?;
+    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    if parent.as_ref().is_some_and(|p| p.tree_id() == tree.id()) {
+        return Err(Error::Other("nothing to commit".into()));
+    }
+    let sig = repo.signature().map_err(|e| {
+        Error::Other(format!("git needs user.name and user.email to commit ({})", e.message()))
+    })?;
+    let message = if message.ends_with('\n') { message.to_string() } else { format!("{message}\n") };
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    let id = repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parents)?;
+    describe(&repo, id)
+}
+
+/// Credentials for a remote, tried in turn: the SSH agent, the usual key files, the credential helper.
+fn callbacks<'a>() -> git2::RemoteCallbacks<'a> {
+    let mut cb = git2::RemoteCallbacks::new();
+    let mut attempt = 0;
+    cb.credentials(move |url, user, allowed| {
+        attempt += 1;
+        let user = user.unwrap_or("git");
+        if allowed.contains(git2::CredentialType::SSH_KEY) {
+            let keys = ["id_ed25519", "id_ecdsa", "id_rsa"];
+            return match attempt {
+                1 => git2::Cred::ssh_key_from_agent(user),
+                n if n <= 1 + keys.len() => {
+                    let key = dirs::home_dir().unwrap_or_default().join(".ssh").join(keys[n - 2]);
+                    git2::Cred::ssh_key(user, None, &key, None)
+                }
+                _ => Err(git2::Error::from_str("no SSH key was accepted (is your key loaded in ssh-agent?)")),
+            };
+        }
+        if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT) && attempt <= 2 {
+            return git2::Config::open_default().and_then(|c| git2::Cred::credential_helper(&c, url, Some(user)));
+        }
+        if allowed.contains(git2::CredentialType::DEFAULT) && attempt <= 1 {
+            return git2::Cred::default();
+        }
+        Err(git2::Error::from_str("authentication failed"))
+    });
+    cb
+}
+
+/// Pushes `branch` to `origin` and makes `origin/<branch>` its upstream. Returns the upstream name.
+fn push_branch(repo: &Repository, branch: &str) -> Result<String> {
+    let mut remote = repo.find_remote("origin")?;
+    let rejected = std::cell::RefCell::new(None::<String>);
+    let mut cb = callbacks();
+    cb.push_update_reference(|name, status| {
+        if let Some(why) = status {
+            *rejected.borrow_mut() = Some(format!("{name}: {why}"));
+        }
+        Ok(())
+    });
+    let mut opts = git2::PushOptions::new();
+    opts.remote_callbacks(cb);
+    remote.push(&[format!("refs/heads/{branch}:refs/heads/{branch}")], Some(&mut opts))?;
+    drop(opts);
+    if let Some(why) = rejected.into_inner() {
+        return Err(Error::Other(format!("push rejected, {why}")));
+    }
+    let upstream = format!("origin/{branch}");
+    repo.find_branch(branch, BranchType::Local)?.set_upstream(Some(&upstream))?;
+    Ok(upstream)
 }
 
 /// Pushes the session's branch to `origin` and sets it as the upstream. Returns the upstream name.
 pub fn push(wt: &Worktree) -> Result<String> {
-    let dir = Path::new(&wt.path);
-    git(dir, &["push", "-u", "origin", &wt.branch])?;
-    Ok(git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])?.trim().to_string())
+    push_branch(&open(Path::new(&wt.path))?, &wt.branch)
 }
 
 /// Pushes the branch checked out in `dir` (a session without a worktree). Returns the upstream.
 pub fn push_dir(dir: &Path) -> Result<String> {
-    let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
-    if branch == "HEAD" {
-        return Err(Error::Other("detached HEAD: check out a branch to push".into()));
-    }
-    git(dir, &["push", "-u", "origin", &branch])?;
-    Ok(git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])?.trim().to_string())
+    let repo = open(dir)?;
+    let branch = head_name(&repo).ok_or_else(|| Error::Other("detached HEAD: check out a branch to push".into()))?;
+    push_branch(&repo, &branch)
 }
 
 /// Splits a commit-style message into a PR title (first line) and body (the rest), adding a footer.
@@ -366,27 +501,40 @@ pub fn create_pr(wt: &Worktree, title: &str, body: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Drops the registration of worktrees whose directory is gone, as `git worktree prune` does.
+fn prune(repo: &Repository) -> Result<()> {
+    for name in repo.worktrees()?.iter() {
+        let Some(name) = name? else { continue };
+        let w = repo.find_worktree(name)?;
+        if w.validate().is_err() {
+            w.prune(None)?;
+        }
+    }
+    Ok(())
+}
+
 /// Removes the worktree. The branch is kept so committed work is never lost.
 ///
 /// The directory is first renamed out of the way, which is instant. Deleting it in place takes a
 /// while for a large checkout, and anything that diffs it meanwhile sees every file as deleted.
 pub fn remove(wt: &Worktree) -> Result<()> {
     let path = Path::new(&wt.path);
+    let repo = open(Path::new(&wt.repo))?;
     if path.exists() {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         let doomed = path.with_file_name(format!(".{name}.removing-{}", std::process::id()));
         std::fs::rename(path, &doomed)?;
         // The worktree's directory is gone, so prune drops its registration (the branch stays).
-        git(Path::new(&wt.repo), &["worktree", "prune"])?;
+        prune(&repo)?;
         std::fs::remove_dir_all(&doomed)?;
     } else {
-        git(Path::new(&wt.repo), &["worktree", "prune"])?;
+        prune(&repo)?;
     }
     Ok(())
 }
 
 pub fn delete_branch(wt: &Worktree) -> Result<()> {
-    git(Path::new(&wt.repo), &["branch", "-D", &wt.branch])?;
+    open(Path::new(&wt.repo))?.find_branch(&wt.branch, BranchType::Local)?.delete()?;
     Ok(())
 }
 
@@ -395,8 +543,17 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    /// Fixtures are set up with the git CLI, which also checks that libgit2 reads what git writes.
     fn sh(dir: &Path, args: &[&str]) {
         assert!(Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success());
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> Result<String> {
+        let out = Command::new("git").arg("-C").arg(dir).args(args).output()?;
+        if !out.status.success() {
+            return Err(Error::Other(String::from_utf8_lossy(&out.stderr).into_owned()));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     #[test]
@@ -594,5 +751,84 @@ mod tests {
         assert_eq!(std::fs::read_to_string(wt.join("sub/new.txt")).unwrap(), "new\n");
         // The original repo is left as it was.
         assert_eq!(std::fs::read_to_string(r.join("a.txt")).unwrap(), "one\nedited\n");
+    }
+
+    #[test]
+    fn commit_edge_cases() {
+        let repo = tempfile::tempdir().unwrap();
+        let r = repo.path();
+        sh(r, &["init", "-q", "-b", "main"]);
+        sh(r, &["config", "user.email", "t@example.com"]);
+        sh(r, &["config", "user.name", "t"]);
+        std::fs::write(r.join("gone.txt"), "x\n").unwrap();
+        std::fs::write(r.join("[a].md"), "one\n").unwrap();
+        sh(r, &["add", "."]);
+        sh(r, &["commit", "-qm", "init"]);
+        let wt = Worktree {
+            repo: r.to_string_lossy().into(),
+            path: r.to_string_lossy().into(),
+            branch: "main".into(),
+            base: "HEAD".into(),
+            base_branch: "main".into(),
+        };
+        assert!(commit_all(&wt, "nothing").unwrap_err().to_string().contains("nothing to commit"));
+
+        // Deletions are committed too, and a path with glob characters is taken literally.
+        std::fs::remove_file(r.join("gone.txt")).unwrap();
+        std::fs::write(r.join("[a].md"), "one\ntwo\n").unwrap();
+        std::fs::write(r.join("b.md"), "other\n").unwrap();
+        let d = file_diff(&wt, "[a].md").unwrap();
+        assert!(d.contains("+two") && !d.contains("other"), "{d}");
+        let new = file_diff(&wt, "b.md").unwrap();
+        assert!(new.contains("new file") && new.contains("+other"), "{new}");
+        let line = commit_all(&wt, "update").unwrap();
+        assert!(line.ends_with(" update"), "{line}");
+        assert_eq!(git(r, &["status", "--porcelain"]).unwrap(), "");
+        assert!(git(r, &["ls-files"]).unwrap().lines().all(|f| f != "gone.txt"));
+        assert_eq!(git(r, &["log", "-1", "--format=%B"]).unwrap().trim_end(), "update");
+    }
+
+    #[test]
+    fn carries_binary_files_and_deletions() {
+        let repo = tempfile::tempdir().unwrap();
+        let r = repo.path();
+        sh(r, &["init", "-q", "-b", "main"]);
+        sh(r, &["config", "user.email", "t@example.com"]);
+        sh(r, &["config", "user.name", "t"]);
+        std::fs::write(r.join("img.bin"), [0u8, 1, 2, 255, 0]).unwrap();
+        std::fs::write(r.join("old.txt"), "old\n").unwrap();
+        sh(r, &["add", "."]);
+        sh(r, &["commit", "-qm", "init"]);
+        std::fs::write(r.join("img.bin"), [0u8, 9, 9, 9, 255, 0]).unwrap();
+        std::fs::remove_file(r.join("old.txt")).unwrap();
+
+        let dest = tempfile::tempdir().unwrap();
+        let wt = dest.path().join("wt");
+        git(r, &["worktree", "add", "-b", "marq/z", &wt.to_string_lossy(), "HEAD"]).unwrap();
+        carry_changes(r, &wt).unwrap();
+        assert_eq!(std::fs::read(wt.join("img.bin")).unwrap(), [0u8, 9, 9, 9, 255, 0]);
+        assert!(!wt.join("old.txt").exists());
+    }
+
+    #[test]
+    fn creates_a_worktree_with_the_library() {
+        let repo = tempfile::tempdir().unwrap();
+        let r = repo.path();
+        sh(r, &["init", "-q", "-b", "main"]);
+        sh(r, &["config", "user.email", "t@example.com"]);
+        sh(r, &["config", "user.name", "t"]);
+        std::fs::write(r.join("a.txt"), "x\n").unwrap();
+        sh(r, &["add", "."]);
+        sh(r, &["commit", "-qm", "init"]);
+        let home = tempfile::tempdir().unwrap();
+        let wt = create_at(r, &home.path().join("wt"), "abcd1234", "marq/lib", false).unwrap();
+        assert_eq!(wt.base_branch, "main");
+        assert!(Path::new(&wt.path).join("a.txt").exists());
+        assert_eq!(git(Path::new(&wt.path), &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap().trim(), "marq/lib");
+        assert!(git(r, &["worktree", "list"]).unwrap().contains("marq/lib"));
+        // The branch is taken, so the same name cannot be created again.
+        assert!(create_at(r, &home.path().join("wt2"), "efgh5678", "marq/lib", false).is_err());
+        remove(&wt).unwrap();
+        assert!(!git(r, &["worktree", "list"]).unwrap().contains("marq/lib"));
     }
 }
