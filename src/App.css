@@ -596,6 +596,12 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .search-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .search-bar input { flex: 1; font: inherit; font-size: 15px; padding: 8px 10px; }
 .search-results { display: flex; flex-direction: column; gap: 10px; }
+.seg { display: inline-flex; flex: none; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; background: transparent; color: var(--muted); padding: 5px 11px; font-size: 12.5px; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.search-filter { margin: -2px 0 10px; }
+.search-filter input { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 6px 10px; }
 .search-file { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 8px 4px 6px; }
 .search-file .query-file { padding: 0 8px 4px; }
 .search-file .query-file strong { color: var(--fg-strong); font-family: var(--font); font-size: 13px; }
@@ -803,7 +809,29 @@ kbd {
 .side-scroll > .section.fill > .section-body { flex: 1; min-height: 0; }
 /* With Notes closed nothing is left to fill: the sections shrink to their rows and Recent takes the room. */
 .sidebar:has(.section.fill.closed) .side-scroll { flex: 0 1 auto; }
-.sidebar:has(.section.fill.closed) .recent-dock { flex: 1; min-height: 0; }
+.sidebar:has(.section.fill.closed) /* Active sessions: grouped under their project, a card each with branch, diff and age. */
+.active-group { margin-bottom: 6px; }
+.active-project {
+  display: flex; align-items: center; gap: 5px; padding: 2px 8px; font-size: 11px; font-weight: 650;
+  color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.active-row {
+  display: flex; align-items: flex-start; gap: 9px; padding: 6px 8px; margin: 0 0 3px; border-radius: 7px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+}
+.active-row .dot { margin-top: 5px; }
+.active-row:hover { border-color: var(--border-strong); }
+.active-row.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.active-row.waiting { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.active-row.unread .active-title { font-weight: 650; }
+.active-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.active-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--fg-strong); }
+.active-meta { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.active-meta svg { vertical-align: -1px; }
+.active-diff b { color: var(--ok); font-weight: 600; }
+.active-diff i { color: var(--err); font-style: normal; }
+.active-ago { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+.recent-dock { flex: 1; min-height: 0; }
 .sidebar:has(.section.fill.closed) .recent-list { flex: 1; height: auto !important; }
 .sidebar:has(.section.fill.closed) .recent-dock > .resizer.y { display: none; }
 /* Recent sessions: docked at the bottom of the sidebar, scrolling on their own. */
@@ -818,16 +846,23 @@ kbd {
 .recent-row .dot { flex: none; }
 .recent-row svg { flex: none; }
 .recent-ago { flex: none; margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.section { padding: 0 6px 6px; }
+.section { padding: 0 6px 8px; }
 /* Sticky, tinted headers set the top-level sections apart from their rows. */
 .section-title {
-  position: sticky; top: -8px; z-index: 1; margin: 0 0 4px;
-  display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
-  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg);
-  background: linear-gradient(color-mix(in srgb, var(--accent) 9%, transparent), color-mix(in srgb, var(--accent) 9%, transparent)), var(--bg-sunken);
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  position: sticky; top: -8px; z-index: 1; margin: 0 0 5px;
+  display: flex; align-items: center; gap: 7px; padding: 7px 8px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-strong);
+  background: linear-gradient(color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 18%, transparent)), var(--bg-sunken);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.section-title:hover {
+  background: linear-gradient(color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 26%, transparent)), var(--bg-sunken);
 }
 .section-title > svg { color: var(--accent); }
+.section-title .count {
+  margin-left: 2px; padding: 0 6px; border-radius: 9px; font-size: 10.5px; line-height: 16px; letter-spacing: 0;
+  background: var(--accent-fill); color: var(--accent-fg);
+}
 .schedule-row .row-action { padding: 2px; opacity: 0; }
 .schedule-row:hover .row-action { opacity: 1; }
 .schedule-row.off { color: var(--muted); }
@@ -847,7 +882,14 @@ kbd {
 .tree-row > .ellipsis {
   white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
-.tree-row.dir { font-weight: 600; }
+.tree-row.dir { font-weight: 600; color: var(--fg-strong); padding-top: 5px; padding-bottom: 5px; }
+/* Folders read as folders: an accent-tinted icon, and the branch holding the open note is marked. */
+.tree-row.dir > svg:not(.chev) { color: color-mix(in srgb, var(--accent) 65%, var(--muted)); }
+.tree-row.dir > .chev { color: var(--muted); }
+.tree-row.dir.has-active { color: var(--accent); }
+.tree-row.dir.has-active > svg:not(.chev) { color: var(--accent); }
+.tree-count { margin-left: auto; flex: none; font-size: 10.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tree-row.dir:hover .tree-count { visibility: hidden; }
 .tree-row .chev-slot { width: 12px; flex: none; }
 .tree-row .icon-slot { display: inline-flex; width: 13px; flex: none; }
 .tree-row .icon-slot svg { margin-top: 2.5px; }
@@ -1593,7 +1635,6 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .send-targets { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .send-group { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px 2px; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10.5px; }
 .send-group .icon { padding: 2px; }
-.send-helper-name { margin: 2px 0 4px; }
 .send-edit { color: var(--accent); padding: 0 4px; }
 .send-edit:hover { text-decoration: underline; }
 .send-target {
@@ -1749,7 +1790,3 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .query-agent { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .query-agent input { flex: 1; }
 
-.helper-row .helper-edit { margin-left: auto; padding: 2px; opacity: 0; background: none; border: none; color: var(--muted); }
-.helper-row:hover .helper-edit { opacity: 1; }
-.helper-row .dot + .helper-edit { margin-left: 4px; }
-.helper-row .ellipsis { flex: 1; }

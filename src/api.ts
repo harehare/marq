@@ -22,6 +22,12 @@ async function timed<T>(cmd: string, args?: Parameters<typeof rawInvoke>[1], opt
 }
 
 export type SearchHit = { path: string; rel: string; title: string | null; lines: [number, string][]; more: number };
+/** A past session that matches a search: its best lines, and how many lines matched in all. */
+export type SessionHit = {
+  id: string; title: string; status: string; project: string; started: string;
+  /** The session's note, relative to the vault. */
+  note: string; matching_lines: number; matches: { line: number; text: string }[];
+};
 export type Card = { id: string; title: string; done: boolean; owner: string | null; labels: string[]; notes: string[] };
 export type Board = { lists: { name: string; cards: Card[] }[]; queue: Queue | null };
 /** A list marq works through: each card put there starts a session (see automation.rs). */
@@ -150,16 +156,6 @@ export type CrewState = {
 // Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit.
 export type SessionEvent = { type: string; [k: string]: any };
 
-/** A standing session with a role, defined by a note under `helpers/`. */
-export type Helper = {
-  path: string;
-  name: string;
-  summary: string;
-  model: string | null;
-  agent: string | null;
-  session: string | null;
-};
-
 export type AgentInfo = { id: string; label: string; command: string; args: string[]; installed: boolean };
 
 export const api = {
@@ -202,11 +198,6 @@ export const api = {
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
   /** Agents a task can run on: Claude, and others that speak ACP. */
   listAgents: () => invoke<AgentInfo[]>("list_agents"),
-  listHelpers: (vault: string) => invoke<Helper[]>("list_helpers", { vault }),
-  createHelper: (vault: string, name: string) => invoke<string>("create_helper", { vault, name }),
-  /** Returns the helper's session id. `from` gets the answer back when `reply`. */
-  sendToHelper: (vault: string, path: string, text: string, from: string | null, reply: boolean, fresh: boolean) =>
-    invoke<string>("send_to_helper", { vault, path, text, from, reply, fresh }),
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
@@ -271,6 +262,9 @@ export const api = {
   /** `expanded`: each word the glossary or aliases widened, with what it also matched (the word first). */
   searchText: (vault: string, query: string, includeSessions: boolean) =>
     invoke<{ hits: SearchHit[]; expanded: string[][] }>("search_text", { vault, query, includeSessions }),
+  /** Past sessions that mention every word, best matches first; `project` is part of a directory, `since` a YYYY-MM-DD date. */
+  searchSessions: (vault: string, query: string, project?: string, since?: string) =>
+    invoke<{ hits: SessionHit[]; expanded: string[][] }>("search_sessions", { vault, query, project, since }),
   /** glossary.md, created with an example entry when missing. */
   glossaryPath: (vault: string) => invoke<string>("glossary_path", { vault }),
   /** Marks a knowledge note as checked by the user. */

@@ -5,7 +5,6 @@ mod config;
 mod crew;
 mod error;
 mod git;
-mod helpers;
 mod knowledge;
 mod links;
 mod mq;
@@ -731,6 +730,18 @@ async fn search_text(vault: String, query: String, include_sessions: bool) -> Re
     .await
 }
 
+/// Past sessions that mention every word of a search (or a synonym), best matches first.
+#[tauri::command]
+async fn search_sessions(vault: String, query: String, project: Option<String>, since: Option<String>) -> Result<serde_json::Value> {
+    blocking(move || {
+        let v = Path::new(&vault);
+        let q = thesaurus::Query::parse(&query, &thesaurus::Thesaurus::load(&vault::list_files(v)));
+        let hits = sidecar::search_sessions_for(v, &q, project.as_deref().filter(|p| !p.is_empty()), since.as_deref().filter(|d| !d.is_empty()), 100, "");
+        Ok(serde_json::json!({"hits": hits, "expanded": q.expanded()}))
+    })
+    .await
+}
+
 /// Links into and out of a note, and mentions of it that are not links yet.
 #[tauri::command]
 async fn note_links(vault: String, path: String) -> Result<links::Backlinks> {
@@ -1112,22 +1123,6 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
 }
 
 /// Fills in `## Summary` and `## Learnings` from a forked one-turn summary.
-#[tauri::command]
-async fn list_helpers(vault: String) -> Result<Vec<helpers::Helper>> {
-    blocking(move || Ok(helpers::list(Path::new(&vault)))).await
-}
-
-#[tauri::command]
-async fn create_helper(vault: String, name: String) -> Result<String> {
-    blocking(move || helpers::create(Path::new(&vault), &name)).await
-}
-
-/// Sends a request to a helper, starting its session when needed. Returns that session's id.
-#[tauri::command]
-async fn send_to_helper(app: AppHandle, vault: String, path: String, text: String, from: Option<String>, reply: bool, fresh: bool) -> Result<String> {
-    blocking(move || helpers::send(&app, Path::new(&vault), &path, &text, from.as_deref(), reply, fresh)).await
-}
-
 /// The agents a task can run on, with whether each is installed.
 #[tauri::command]
 async fn list_agents() -> Result<Vec<agents::AgentInfo>> {
@@ -1435,6 +1430,7 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         let at = if cfg!(target_os = "macos") { 1 } else { 0 };
         sub.insert_items(&[&PredefinedMenuItem::separator(app)?, &settings], at)?;
     }
+    add_command_menus(app, &menu)?;
     // ⌘W closes the tab in the webview, not the window.
     for item in menu.items()? {
         let Some(sub) = item.as_submenu() else { continue };
@@ -1448,12 +1444,111 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     Ok(menu)
 }
 
+/// A menu item that runs an app command (the ids of the ⌘K palette) in the webview. It has no
+/// native accelerator on purpose: the webview handles keys itself, so rebinding them in config.toml works.
+fn command_item(app: &AppHandle, command: &str, text: &str) -> tauri::Result<MenuItem<Wry>> {
+    MenuItem::with_id(app, format!("cmd:{command}"), text, true, None::<&str>)
+}
+
+/// File, Edit and View get the app's own items; Split and Tab are new menus before Window.
+fn add_command_menus(app: &AppHandle, menu: &Menu<Wry>) -> tauri::Result<()> {
+    use tauri::menu::Submenu;
+    let sep = || PredefinedMenuItem::separator(app);
+    let items = |list: &[(&str, &str)]| -> tauri::Result<Vec<MenuItem<Wry>>> {
+        list.iter().map(|(c, t)| command_item(app, c, t)).collect()
+    };
+    let append = |sub: &Submenu<Wry>, list: &[(&str, &str)], leading_separator: bool| -> tauri::Result<()> {
+        if leading_separator {
+            sub.append(&sep()?)?;
+        }
+        for it in items(list)? {
+            sub.append(&it)?;
+        }
+        Ok(())
+    };
+    let find = |name: &str| -> Option<Submenu<Wry>> {
+        menu.items().ok()?.into_iter().filter_map(|i| i.as_submenu().cloned()).find(|s| s.text().ok().as_deref() == Some(name))
+    };
+
+    if let Some(file) = find("File") {
+        let new = items(&[
+            ("task.new", "New Task…"),
+            ("note.new", "New Note…"),
+            ("note.quick", "Quick Note"),
+            ("scratch.new", "Scratch Memo"),
+            ("board.new", "New Board…"),
+            ("terminal.new", "New Terminal"),
+        ])?;
+        for (i, it) in new.iter().enumerate() {
+            file.insert(it, i)?;
+        }
+        file.insert(&sep()?, new.len())?;
+        file.insert(&command_item(app, "file.open", "Open…")?, new.len() + 1)?;
+        file.insert(&sep()?, new.len() + 2)?;
+        file.append(&command_item(app, "tab.close", "Close Tab")?)?;
+    }
+    if let Some(edit) = find("Edit") {
+        append(&edit, &[("find", "Find…"), ("search.open", "Search Notes…"), ("palette", "Command Palette…")], true)?;
+    }
+    if let Some(view) = find("View") {
+        append(
+            &view,
+            &[
+                ("sidebar.toggle", "Show or Hide Sidebar"),
+                ("theme.next", "Next Theme"),
+                ("note.toggleEdit", "Switch Note Between Preview and Edit"),
+            ],
+            true,
+        )?;
+    }
+    let split = Submenu::with_items(
+        app,
+        "Split",
+        true,
+        &[
+            &command_item(app, "split.open", "Split View (Show Tab Beside the Previous One)")?,
+            &command_item(app, "split.focus", "Focus the Other Side")?,
+            &command_item(app, "split.direction", "Side by Side / Stacked")?,
+            &command_item(app, "split.close", "Close Split")?,
+            &sep()?,
+            &command_item(app, "terminal.splitRight", "Terminal: Split Right")?,
+            &command_item(app, "terminal.splitDown", "Terminal: Split Down")?,
+            &command_item(app, "terminal.paneNext", "Terminal: Next Pane")?,
+            &command_item(app, "terminal.paneZoom", "Terminal: Zoom Pane")?,
+            &command_item(app, "terminal.paneClose", "Terminal: Close Pane")?,
+        ],
+    )?;
+    let tab = Submenu::with_items(
+        app,
+        "Tab",
+        true,
+        &[
+            &command_item(app, "tab.next", "Next Tab")?,
+            &command_item(app, "tab.prev", "Previous Tab")?,
+            &command_item(app, "tab.pin", "Pin or Unpin Tab")?,
+            &command_item(app, "tab.rename", "Rename Tab or Session…")?,
+            &sep()?,
+            &command_item(app, "session.nextActive", "Go to Next Running or Waiting Session")?,
+            &command_item(app, "query.open", "mq Query")?,
+            &command_item(app, "glossary.open", "Glossary")?,
+        ],
+    )?;
+    let at = menu.items()?.iter().position(|i| i.as_submenu().and_then(|s| s.text().ok()).as_deref() == Some("Window"));
+    match at {
+        Some(at) => menu.insert_items(&[&split, &tab], at)?,
+        None => menu.append_items(&[&split, &tab])?,
+    }
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .menu(app_menu)
         .on_menu_event(|app, e| {
             if e.id() == "settings" {
                 let _ = app.emit("menu://settings", ());
+            } else if let Some(command) = e.id().0.strip_prefix("cmd:") {
+                let _ = app.emit("menu://command", command);
             }
         })
         .plugin(tauri_plugin_opener::init())
@@ -1475,6 +1570,7 @@ pub fn run() {
             ollama_models,
             save_query,
             search_text,
+            search_sessions,
             glossary_path,
             note_links,
             knowledge_review,
@@ -1520,9 +1616,6 @@ pub fn run() {
             list_approvals,
             summarize_session,
             list_agents,
-            list_helpers,
-            create_helper,
-            send_to_helper,
             list_commands,
             session_events,
             list_sessions,

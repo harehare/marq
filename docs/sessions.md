@@ -161,14 +161,6 @@ Select text in a note or a session and choose **Send to session** (⌘⇧↵ in 
 
 The ↪ button next to Send in a session's message box sends what you typed, with that session's latest answer, to another session. When the text comes from a session (this button or a selection in it), **Send its answer back** returns the other session's answer to the first one when it finishes that turn, so two sessions can work on something together. Both sessions show where a message came from and went; click it to open the other session.
 
-### Helpers
-
-A helper is a session with a standing role, such as translating or proofreading, that you send requests to. Add one with **+** on **Helpers** in the sidebar, the **New helper** command, or **+** next to Helpers in the Send to session dialog. Each names a new helper and opens its note, `helpers/<name>.md`: write the role's instructions in the body. The frontmatter can also set `model`, `agent`, `project` (where it runs; the vault by default) and `permission_mode`.
-
-Pick the helper and send as you would to a session. The first request starts its session on the instructions; later ones go to the same conversation, so it keeps your terms and style. Sent from a session with **Send its answer back**, the answer returns there and you stay where you are. **Start over in a new conversation** begins a fresh session; marq keeps the current one in the note's `session:`.
-
-The sidebar's **Helpers** lists them with their session's status. Click one to open its conversation (or its note before the first request) and chat with it directly; the pencil opens its instructions.
-
 Agents can also coordinate with each other through `list_sessions`, `read_session` and `send_to_session`; every send needs your approval. A message sent with `send_to_session` gets its answer back the same way unless the agent passes `reply: false`. See [Vault tools for agents](tools.md).
 
 ## Summarize

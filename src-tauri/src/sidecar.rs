@@ -776,6 +776,11 @@ fn search(vault: &Path, text: &str) -> Vec<Value> {
 /// or repository, `since` a `YYYY-MM-DD` start date.
 fn search_sessions(vault: &Path, text: &str, project: Option<&str>, since: Option<&str>, limit: usize, exclude: &str) -> Vec<Value> {
     let q = Query::parse(text, &Thesaurus::load(&vault::list_files(vault)));
+    search_sessions_for(vault, &q, project, since, limit, exclude)
+}
+
+/// [`search_sessions`] for a parsed query, so a caller can also show how its words were expanded.
+pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since: Option<&str>, limit: usize, exclude: &str) -> Vec<Value> {
     if q.words.is_empty() {
         return vec![];
     }

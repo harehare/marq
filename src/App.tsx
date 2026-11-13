@@ -4,12 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
-  Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff, Bot,
-  PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen,
+  Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, FileEntry, Helper, Schedule, SessionInfo } from "./api";
+import { api, FileEntry, Schedule, SessionInfo } from "./api";
 import { ScheduleDialog } from "./AutomationDialogs";
 import { setVaultFiles } from "./wikilinks";
 import { NoteEditor } from "./NoteEditor";
@@ -184,17 +184,18 @@ function useDropTarget(dir: string, onDrop: (from: string, to: string) => void) 
   };
 }
 
-function DirRow({ name, path, depth, open, toggle, props }: {
-  name: string; path: string; depth: number; open: boolean; toggle: (deep: boolean) => void; props: TreeProps;
+function DirRow({ name, path, depth, open, count, hasActive, toggle, props }: {
+  name: string; path: string; depth: number; open: boolean; count: number; hasActive: boolean; toggle: (deep: boolean) => void; props: TreeProps;
 }) {
   const drop = useDropTarget(path, props.onDrop);
   return (
-    <a className={`tree-row dir ${drop.over ? "drop" : ""} ${props.cursor === path ? "cursor" : ""}`} style={{ paddingLeft: indent(depth) }} onClick={(e) => toggle(e.altKey)}
+    <a className={`tree-row dir ${hasActive ? "has-active" : ""} ${drop.over ? "drop" : ""} ${props.cursor === path ? "cursor" : ""}`} style={{ paddingLeft: indent(depth) }} onClick={(e) => toggle(e.altKey)}
       draggable onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, path); e.dataTransfer.effectAllowed = "move"; }}
       title="⌥-click to open or close its subfolders too"
       onContextMenu={(e) => props.onDirMenu(e, path)} {...drop.props}>
       <ChevronRight size={12} className={`chev ${open ? "open" : ""}`} />
       {open ? <FolderOpen size={13} /> : <Folder size={13} />} <span className="ellipsis">{name}</span>
+      <span className="tree-count">{count}</span>
       <button className="tree-add" title={`New note in ${path}/`}
         onClick={(e) => { e.stopPropagation(); props.onNewIn(`${path}/`); }}>
         <Plus size={12} />
@@ -203,13 +204,18 @@ function DirRow({ name, path, depth, open, toggle, props }: {
   );
 }
 
-const INDENT = 12;
+const INDENT = 14;
 const indent = (depth: number) => 8 + depth * INDENT;
 
 /** Whether `path` is one of the files somewhere under `tree`. */
 function containsPath(tree: Tree, path?: string | null): boolean {
   if (!path) return false;
   return tree.files.some((f) => f.path === path) || [...tree.dirs.values()].some((t) => containsPath(t, path));
+}
+
+/** How many notes are somewhere under `tree`. */
+function countFiles(tree: Tree): number {
+  return tree.files.length + [...tree.dirs.values()].reduce((n, t) => n + countFiles(t), 0);
 }
 
 /** An icon for notes with a special kind; plain notes get none. */
@@ -229,7 +235,8 @@ function TreeView(props: TreeProps) {
         const path = `${prefix}${name}`;
         return (
           <div key={name}>
-            <DirRow name={name} path={path} depth={depth} open={!closed.has(path)} toggle={(deep) => onToggle(path, deep)} props={props} />
+            <DirRow name={name} path={path} depth={depth} open={!closed.has(path)} count={countFiles(sub)}
+              hasActive={containsPath(sub, activePath)} toggle={(deep) => onToggle(path, deep)} props={props} />
             {!closed.has(path) && (
               <div className={`tree-children ${containsPath(sub, activePath) ? "active" : ""}`}
                 style={{ "--guide": `${indent(depth) + 6}px` } as React.CSSProperties}>
@@ -569,18 +576,6 @@ export default function App() {
     setSchedules(same(sc));
   }, [vault]);
 
-  // Helper notes live under helpers/; a send writes the session it started into the note.
-  const [helpers, setHelpers] = useState<Helper[]>([]);
-  const [newHelper, setNewHelper] = useState(false);
-  useEffect(() => {
-    if (vault) api.listHelpers(vault).then(setHelpers).catch(() => {});
-  }, [vault, files, sessions]);
-  /** A helper's conversation, or its note while it has none. */
-  const openHelper = (h: Helper) => {
-    const s = h.session && sessions.find((x) => x.id === h.session);
-    if (s) openSession(s.id, s.title);
-    else openNote(h.path);
-  };
 
   // Board queues and schedules run for the open vault, and only while Marq runs.
   useEffect(() => {
@@ -778,6 +773,15 @@ export default function App() {
     }
   };
   const { active: activeSessions, groups, recent } = useMemo(() => groupSessions(sessions), [sessions]);
+  // Active sessions under their project, the one with something waiting for you first.
+  const activeByProject = useMemo(() => {
+    const by = new Map<string, SessionInfo[]>();
+    for (const s of activeSessions) {
+      const name = (s.worktree?.repo ?? s.cwd).split("/").filter(Boolean).pop() ?? "~";
+      by.set(name, [...(by.get(name) ?? []), s]);
+    }
+    return [...by.entries()];
+  }, [activeSessions]);
   const recentHeight = usePaneSize("recent", 180, 60, 600);
   const recentRef = useRef<HTMLDivElement>(null);
   const [recentOpen, setRecentOpen] = useSectionOpen("Recent");
@@ -841,6 +845,12 @@ export default function App() {
         { label: "Open another folder…", icon: FolderInput, onClick: pickVault },
       ],
     });
+  };
+
+  /** Runs an open as if it were ⌥-clicked: the tab it opens goes to the side. */
+  const beside = (open: () => void) => {
+    sideClick.current = performance.now();
+    open();
   };
 
   const openTab = (tab: Tab) => {
@@ -1023,6 +1033,7 @@ export default function App() {
       y: e.clientY,
       items: [
         { label: "Open", icon: ExternalLink, onClick: () => openSession(s.id, s.title) },
+        { label: "Open to the side", icon: Columns2, onClick: () => beside(() => openSession(s.id, s.title)) },
         { label: "Rename…", icon: Pencil, onClick: () => setRenamingSession({ id: s.id, title: s.title }) },
         {
           label: "Open origin note",
@@ -1072,6 +1083,7 @@ export default function App() {
       y: e.clientY,
       items: [
         { label: "Open", icon: ExternalLink, onClick: () => openNote(f.path) },
+        { label: "Open to the side", icon: Columns2, onClick: () => beside(() => openNote(f.path)) },
         ...(f.kind === "crew" ? [{ label: "Open crew", icon: Users, onClick: () => openCrew(f) }] : []),
         ...(f.kind === "scratch"
           ? [{ label: "Keep as note…", icon: NotebookPen, onClick: () => setPathDialog({ mode: "keep", from: f.rel, initial: `notes/${slugOf(fileLabel(f))}` }) }]
@@ -1207,6 +1219,15 @@ export default function App() {
     };
   }, []);
 
+  // Menu items run the command with their id, the same ones ⌘K lists.
+  const runCommand = useRef<(id: string) => void>(() => {});
+  useEffect(() => {
+    const un = listen<string>("menu://command", (e) => runCommand.current(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
   // Reloaded on focus, so edits to config.toml apply without a restart.
   useEffect(() => {
     loadConfig();
@@ -1286,7 +1307,6 @@ export default function App() {
     "note.quick": { label: "Quick note (untitled, in notes/)", run: () => void createUntitled(false) },
     "scratch.new": { label: "Scratch memo (temporary, in scratch/)", run: () => void createUntitled(true) },
     "board.new": { label: "New board", run: () => setNewBoard(true) },
-    "helper.new": { label: "New helper (a standing session with a role, such as a translator)", run: () => setNewHelper(true) },
     "query.open": { label: "mq query", run: () => openTab({ key: "query", kind: "query", title: "mq query" }) },
     "terminal.new": { label: "New terminal", run: () => openTerminal(terminalCwd()) },
     // In a terminal tab with split panes, ⌘W closes the focused pane first; the tab goes with its last pane.
@@ -1357,6 +1377,10 @@ export default function App() {
     "schedule.new": { label: "New schedule…", run: () => setNewSchedule(true) },
   };
 
+  useLayoutEffect(() => {
+    runCommand.current = (id) => vault && commands[id]?.run();
+  });
+
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
   // Kept current after each render; the listener below calls the latest.
   useLayoutEffect(() => {
@@ -1365,11 +1389,12 @@ export default function App() {
     const key = eventKey(e);
     if (!key) return;
     // Dialogs and menus keep their own keys.
-    if (showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || menu || renaming || renamingSession || newBoard || newHelper || showSettings || newSchedule) return;
+    if (showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || menu || renaming || renamingSession || newBoard || showSettings || newSchedule) return;
     let cmd: string | undefined;
     if (mode === "normal") {
       // ⌃T, ⌃P, ⌃G… belong to whatever runs in a terminal; the ⌘ shortcuts still work there.
-      if (!key.includes("Cmd") && (e.target as Element).closest?.(".terminal-view")) return;
+      // Likewise in the note editor with Vim keys on.
+      if (!key.includes("Cmd") && (e.target as Element).closest?.(".terminal-view, .marq-vim")) return;
       cmd = lookup(keymap.normal, key) ?? (treeFocus ? lookup(TREE_KEYS, key) : undefined);
       // Unmodified keys never steal typing from editors and terminals.
       const typing = (e.target as Element).closest?.("input, textarea, [contenteditable=true], .cm-editor");
@@ -1403,7 +1428,7 @@ export default function App() {
   }, [treeCursor, treeFocus]);
 
   // Back into the active tab after a dialog or menu closes, and on tab switches.
-  const dialogOpen = !!(showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || renaming || renamingSession || menu || newBoard || newHelper || showSettings || newSchedule);
+  const dialogOpen = !!(showQuickOpen || showPalette || showNewTask || naming || pathDialog || sending || deleting || renaming || renamingSession || menu || newBoard || showSettings || newSchedule);
   const wasOpen = useRef(false);
   useEffect(() => {
     if (wasOpen.current && !dialogOpen && !treeFocus) requestAnimationFrame(focusContent);
@@ -1525,7 +1550,7 @@ export default function App() {
     </span>
   ) : tabs.length > 1 && (
     <span className="split-controls">
-      <button className="icon" title="Split: show this tab next to the one before it (⌘\; ⌥-click a tab or link to open it to the side)"
+      <button className="icon" title="Split the screen: two tabs side by side (⌘\). Or ⌥-click any tab, note or session to open it to the side"
         onClick={() => active && openToSide(active)}><Columns2 size={14} /></button>
     </span>
   );
@@ -1566,16 +1591,29 @@ export default function App() {
         <div className="side-scroll">
           <Collapsible title="Active" count={activeSessions.length}
             icon={activeSessions.length ? <span className={`dot ${activeSessions[0].status}`} /> : undefined}>
-            {activeSessions.map((s) => (
-              <a key={s.id} className={`recent-row ${current?.kind === "session" && current.id === s.id ? "on" : ""}`}
-                onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
-                title={[s.title, s.worktree?.branch, s.started.slice(0, 16).replace("T", " ")].filter(Boolean).join("\n")}>
-                <span className={`dot ${s.status}`} />
-                {s.crew && <Users size={11} className="muted" />}
-                <span className="ellipsis">{s.title}</span>
-                {s.status === "waiting" && <span className="row-badge waiting">needs you</span>}
-                <span className="recent-ago">{ago(s.started)}</span>
-              </a>
+            {activeByProject.map(([project, list]) => (
+              <div key={project} className="active-group">
+                <div className="active-project" title={list[0].worktree?.repo ?? list[0].cwd}><FolderGit2 size={11} /> {project}</div>
+                {list.map((s) => (
+                  <a key={s.id} className={`active-row ${s.status} ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
+                    onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
+                    title={[s.title, s.worktree?.branch, s.started.slice(0, 16).replace("T", " ")].filter(Boolean).join("\n")}>
+                    <span className={`dot ${s.status}`} />
+                    <span className="active-body">
+                      <span className="active-title">
+                        {s.crew && <Users size={11} className="muted" />}
+                        <span className="ellipsis">{s.title}</span>
+                        {s.status === "waiting" && <span className="row-badge waiting">needs you</span>}
+                      </span>
+                      <span className="active-meta">
+                        {s.worktree && <span className="ellipsis"><GitBranch size={10} /> {s.worktree.branch}</span>}
+                        {(s.additions || s.deletions) ? <span className="active-diff"><b>+{s.additions ?? 0}</b> <i>−{s.deletions ?? 0}</i></span> : null}
+                        <span className="active-ago">{ago(s.started)}</span>
+                      </span>
+                    </span>
+                  </a>
+                ))}
+              </div>
             ))}
             {activeSessions.length === 0 && <div className="muted small" style={{ padding: "2px 12px 6px" }}>Nothing is running.</div>}
           </Collapsible>
@@ -1626,26 +1664,6 @@ export default function App() {
               </a>
             ))}
             {boards.length === 0 && <a className="muted small pad" onClick={() => setNewBoard(true)}>Create a board for your tasks</a>}
-          </Collapsible>
-          <Collapsible title="Helpers" icon={<Bot size={11} />} count={helpers.length}
-            action={<button className="section-action" title="New helper" onClick={() => setNewHelper(true)}><Plus size={13} /></button>}>
-            {helpers.map((h) => {
-              const s = h.session ? sessions.find((x) => x.id === h.session) : undefined;
-              const on = s ? current?.kind === "session" && current.id === s.id : current?.kind === "note" && current.path === h.path;
-              return (
-                <a key={h.path} className={`inbox-row helper-row ${on ? "on" : ""}`} onClick={() => openHelper(h)}
-                  title={`${h.summary}\nClick: ${s ? "open its conversation" : "edit its instructions"}`}>
-                  <Bot size={13} /> <span className="ellipsis">{h.name}</span>
-                  {s && <span className={`dot ${s.status}`} />}
-                  <button className="helper-edit" title="Edit its instructions" onClick={(e) => { e.stopPropagation(); openNote(h.path); }}>
-                    <Pencil size={11} />
-                  </button>
-                </a>
-              );
-            })}
-            {helpers.length === 0 && (
-              <a className="muted small pad" onClick={() => setNewHelper(true)}>Add a helper, such as a translator, to send requests to</a>
-            )}
           </Collapsible>
           {/* Capped from the start, so many crews do not push Notes away. */}
           <Collapsible title="Crews" icon={<Users size={11} />} count={crews.length} size={{ key: "crews", initial: 240 }}
@@ -1800,7 +1818,8 @@ export default function App() {
                 onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
                 onStartTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }} />}
               {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active}
-                onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))} />}
+                onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))}
+                onOpenSession={openSession} />}
               {t.kind === "query" && <QueryView vault={vault} saved={files.filter((f) => f.kind === "query")} onOpenNote={(p) => openNote(p)} />}
               {t.kind === "crew" && <CrewView vault={vault} crewKey={t.crew} onOpenNote={openNote} onOpenSession={openSession}
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} onOpenCrew={openCrewAt}
@@ -1893,7 +1912,6 @@ export default function App() {
               openToSide(`session:${id}`);
             } else openSession(id, title);
           }}
-          onOpenFile={openFile}
           onNewTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }}
           onClose={() => setSending(null)}
         />
@@ -1923,12 +1941,6 @@ export default function App() {
         <NameDialog title="New board" label="Board name" placeholder="e.g. sprint-12 or personal" submit="Create"
           hint="Saved as boards/<name>.md with Todo, Doing and Done. Add lists on the board or as ## headings in the Markdown."
           onSubmit={async (v) => openBoard(await api.boardCreate(vault, v))} onClose={() => setNewBoard(false)} />
-      )}
-      {newHelper && (
-        <NameDialog title="New helper" label="Name" placeholder="e.g. 翻訳 or Proofreader" submit="Create"
-          hint="Saved as helpers/<name>.md. Write its role in the note; then pick it in Send to session, or open it here and chat."
-          onSubmit={async (v) => { const p = await api.createHelper(vault, v); await refreshFiles(); openNote(p); }}
-          onClose={() => setNewHelper(false)} />
       )}
       {showSettings && (
         <SettingsDialog onSaved={loadConfig} onClose={() => setShowSettings(false)}
