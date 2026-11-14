@@ -1,0 +1,25 @@
+/* Match the Marq site: navy surface with the logo's cyan-to-teal accent. */
+.navy {
+  --bg: #1e293b;
+  --fg: #cbd5e1;
+  --sidebar-bg: #172033;
+  --sidebar-fg: #94a3b8;
+  --sidebar-active: #85d4ff;
+  --sidebar-spacer: #2a3444;
+  --links: #85d4ff;
+  --inline-code-color: #56d4d4;
+  --theme-popup-bg: #232e3d;
+  --theme-popup-border: #3d4a5c;
+  --quote-bg: #232e3d;
+  --quote-border: #3d4a5c;
+  --table-border-color: #3d4a5c;
+  --table-header-bg: #232e3d;
+  --table-alternate-bg: #202a3a;
+  --searchbar-bg: #232e3d;
+  --searchbar-border-color: #3d4a5c;
+  --searchresults-header-fg: #94a3b8;
+  --searchresults-border-color: #3d4a5c;
+  --search-mark-bg: #17a3a3;
+}
+.content main { max-width: 860px; }
+.menu-title { font-weight: 700; letter-spacing: -0.01em; }

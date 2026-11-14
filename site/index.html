@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Marq – Run agents. Keep everything.</title>
+    <meta
+      name="description"
+      content="Marq is a Markdown knowledge base and an IDE for coding agents, in one app. Run agents in parallel git worktrees and keep every prompt, session and doc as Markdown."
+    />
+    <meta name="theme-color" content="#1e293b" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Marq" />
+    <meta property="og:title" content="Marq – Run agents. Keep everything." />
+    <meta
+      property="og:description"
+      content="A Markdown knowledge base and an IDE for coding agents, in one app."
+    />
+    <meta property="og:image" content="/assets/logo.svg" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Marq",
+        "description": "A Markdown knowledge base and an IDE for coding agents, in one app.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Windows, Linux",
+        "codeRepository": "https://github.com/harehare/marq"
+      }
+    </script>
+    <style>
+      :root {
+        --bg: #1e293b;
+        --bg-deep: #172033;
+        --surface: #232e3d;
+        --surface-2: #2a3444;
+        --line: #3d4a5c;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --cyan: #85d4ff;
+        --teal: #56d4d4;
+        --grad: linear-gradient(135deg, #85d4ff, #56d4d4);
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.65 var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--cyan); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      code { font-family: var(--mono); }
+      .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+      /* Nav */
+      nav {
+        position: sticky; top: 0; z-index: 10;
+        background: rgba(30, 41, 59, 0.88);
+        backdrop-filter: blur(14px);
+        border-bottom: 1px solid rgba(61, 74, 92, 0.6);
+      }
+      nav .wrap { display: flex; align-items: center; height: 64px; gap: 28px; }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 22px; color: var(--cyan); letter-spacing: -0.02em; }
+      .brand:hover { text-decoration: none; }
+      .brand img { width: 30px; height: 30px; }
+      nav .links { display: flex; gap: 22px; margin-left: 8px; }
+      nav .links a { color: var(--muted); font-size: 14px; }
+      nav .links a:hover { color: var(--text); text-decoration: none; }
+      nav .spacer { flex: 1; }
+      .btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 10px 18px; border-radius: 8px; font-weight: 600; font-size: 15px;
+        border: 1px solid var(--line); color: var(--text); background: var(--surface);
+        transition: transform 0.1s, border-color 0.15s;
+      }
+      .btn:hover { text-decoration: none; border-color: var(--cyan); }
+      .btn:active { transform: scale(0.98); }
+      .btn.primary { background: var(--grad); color: #0f1b2d; border-color: transparent; }
+      .btn.primary:hover { filter: brightness(1.06); }
+      .btn.small { padding: 7px 14px; font-size: 14px; }
+
+      /* Hero */
+      .hero { padding: 88px 0 72px; text-align: center; position: relative; overflow: hidden; }
+      .hero::before {
+        content: ""; position: absolute; inset: -20% 0 auto; height: 520px; z-index: 0;
+        background: radial-gradient(ellipse at 50% 0%, rgba(133, 212, 255, 0.18), transparent 62%);
+        pointer-events: none;
+      }
+      .hero .wrap { position: relative; z-index: 1; }
+      .hero img.mark { width: 84px; height: 84px; }
+      h1 {
+        font-size: clamp(40px, 7vw, 72px); line-height: 1.05; letter-spacing: -0.035em;
+        margin: 22px 0 18px; font-weight: 800;
+      }
+      h1 span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .lead { max-width: 680px; margin: 0 auto; color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); }
+      .lead strong { color: var(--text); font-weight: 600; }
+      .cta { display: flex; justify-content: center; gap: 12px; margin-top: 34px; flex-wrap: wrap; }
+      .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
+
+      /* Sections */
+      section { padding: 72px 0; }
+      section.alt { background: var(--bg-deep); border-block: 1px solid rgba(61, 74, 92, 0.5); }
+      .eyebrow { color: var(--teal); font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+      h2 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; letter-spacing: -0.025em; margin: 8px 0 14px; }
+      .sub { color: var(--muted); max-width: 640px; margin: 0 0 40px; }
+      .center { text-align: center; }
+      .center .sub { margin-inline: auto; }
+
+      /* Code cards */
+      .code {
+        background: #111a2b; border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+        box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.6);
+      }
+      .code .bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
+      .code .bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--line); }
+      .code .bar span { margin-left: 8px; color: var(--muted); font: 12px var(--mono); }
+      .code pre { margin: 0; padding: 18px 20px; overflow-x: auto; font: 13.5px/1.7 var(--mono); color: #cbd5e1; }
+      .c-dim { color: #64748b; }
+      .c-key { color: var(--cyan); }
+      .c-str { color: #9be8c8; }
+      .c-h { color: #f0c987; font-weight: 600; }
+      .c-cmd { color: var(--teal); }
+
+      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+      .split p { color: var(--muted); }
+      .split ul { color: var(--muted); padding-left: 20px; }
+      .split li { margin: 6px 0; }
+      .split li strong { color: var(--text); }
+
+      /* Feature grid */
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+      .card {
+        background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 24px;
+        transition: border-color 0.15s, transform 0.15s;
+      }
+      .card:hover { border-color: rgba(133, 212, 255, 0.5); transform: translateY(-2px); }
+      .card h3 { margin: 0 0 6px; font-size: 17px; letter-spacing: -0.01em; }
+      .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+      /* Downloads */
+      .dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 8px; }
+      .dl .card { text-align: left; }
+      .dl .card h3 { display: flex; align-items: center; gap: 10px; }
+      .dl .card .files { margin-top: 12px; font: 13px var(--mono); color: var(--muted); }
+      .dl .card .files div + div { margin-top: 2px; }
+
+      .warn {
+        max-width: 760px; margin: 36px auto 0; padding: 14px 18px; border-radius: 10px;
+        border: 1px solid rgba(240, 201, 135, 0.35); background: rgba(240, 201, 135, 0.07);
+        color: #e8d3a8; font-size: 14.5px;
+      }
+      .warn strong { color: #f0c987; }
+
+      footer { padding: 40px 0 56px; color: var(--muted); font-size: 14px; border-top: 1px solid rgba(61, 74, 92, 0.5); }
+      footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; }
+      footer .spacer { flex: 1; }
+      footer a { color: var(--muted); }
+      footer a:hover { color: var(--text); }
+
+      @media (max-width: 860px) {
+        .grid, .dl { grid-template-columns: 1fr; }
+        .split { grid-template-columns: 1fr; }
+        nav .links { display: none; }
+        .hero { padding: 56px 0 48px; }
+        section { padding: 52px 0; }
+      }
+      @media (min-width: 861px) and (max-width: 1040px) {
+        .grid { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        .card, .btn { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <div class="wrap">
+        <a class="brand" href="#top"><img src="/assets/logo.svg" alt="" />Marq</a>
+        <div class="links">
+          <a href="#features">Features</a>
+          <a href="#markdown">Markdown in, out</a>
+          <a href="#mq">Query with mq</a>
+          <a href="#download">Download</a>
+          <a href="/book/">Docs</a>
+        </div>
+        <div class="spacer"></div>
+        <a class="btn small" href="https://github.com/harehare/marq">GitHub</a>
+      </div>
+    </nav>
+
+    <header class="hero" id="top">
+      <div class="wrap">
+        <img class="mark" src="/assets/logo.svg" alt="Marq logo" />
+        <h1>Run agents.<br /><span>Keep everything.</span></h1>
+        <p class="lead">
+          A <strong>Markdown knowledge base</strong> and an <strong>IDE for coding agents</strong>, in one app.
+          Run agents in parallel, and keep every prompt, session, task and doc they produce as Markdown in your
+          vault, ready to search, query, and hand to the next agent.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="#download">Download</a>
+          <a class="btn" href="/book/">Read the docs</a>
+        </div>
+        <p class="note">Open source · macOS, Windows, Linux · Works with your own <code>claude</code> login, local Ollama models, or ACP agents like Gemini CLI and Codex</p>
+      </div>
+    </header>
+
+    <section id="features" class="alt">
+      <div class="wrap">
+        <div class="center">
+          <div class="eyebrow">Agent IDE</div>
+          <h2>Everything you need to run agents side by side</h2>
+          <p class="sub">Each task gets its own git worktree and branch, so several agents can work on one repository at once without stepping on each other.</p>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <h3>Parallel tasks in worktrees</h3>
+            <p>One worktree and branch per task. Give a task several directories and save the set as a workspace.</p>
+          </div>
+          <div class="card">
+            <h3>Review in the app</h3>
+            <p>See the diff against the base commit, comment on lines and send the review back to the agent. Then commit, push and open a PR.</p>
+          </div>
+          <div class="card">
+            <h3>Ask from a note</h3>
+            <p>Hover a heading and choose <b>Ask</b>. The session links to the heading and the result lands as a card under the section.</p>
+          </div>
+          <div class="card">
+            <h3>Crews and boards</h3>
+            <p>Several sessions work as a team by role with a shared task list. Kanban boards are Markdown too.</p>
+          </div>
+          <div class="card">
+            <h3>Checks, phases and specs</h3>
+            <p>Run a command after each turn, verify hidden acceptance criteria, or go research → plan → implement with a fresh context per phase.</p>
+          </div>
+          <div class="card">
+            <h3>Compare models</h3>
+            <p>Run one task on 2 to 4 models, each in its own worktree, look at the diffs side by side and keep your favorite.</p>
+          </div>
+          <div class="card">
+            <h3>Notifications</h3>
+            <p>A system notification and a Dock badge when a session finishes, fails or needs approval.</p>
+          </div>
+          <div class="card">
+            <h3>Approvals and resume</h3>
+            <p>Approval cards for tool calls, resume for interrupted sessions, and follow-ups while an agent is working.</p>
+          </div>
+          <div class="card">
+            <h3>Terminals built in</h3>
+            <p>Terminal tabs next to your sessions, split into panes, for dev servers and builds.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="markdown">
+      <div class="wrap split">
+        <div>
+          <div class="eyebrow">Knowledge base</div>
+          <h2>Markdown in, Markdown out</h2>
+          <p>A request is a note. Its body is the prompt, and <code>context:</code> attaches pieces of other notes. When the session finishes, Marq writes the result back under <code>## Result</code> and the full transcript to <code>sessions/</code>, also Markdown.</p>
+          <ul>
+            <li><strong>Plain files.</strong> Notes, requests, sessions, crews and boards are all <code>.md</code> files in a folder you own.</li>
+            <li><strong>Any editor.</strong> Marq only rewrites the parts between its own markers.</li>
+            <li><strong>Feeds back.</strong> Summaries and learnings go into the session note, and agents can search your vault.</li>
+          </ul>
+        </div>
+        <div class="code">
+          <div class="bar"><i></i><i></i><i></i><span>notes/show-types-on-hover.md</span></div>
+<pre><span class="c-dim">---</span>
+<span class="c-key">type:</span> request
+<span class="c-key">status:</span> todo
+<span class="c-key">project:</span> ~/dev/git/mq
+<span class="c-key">context:</span>
+  - <span class="c-key">query:</span> <span class="c-str">'import "section" | nodes
+      | section::find("Design") | section::body()'</span>
+    <span class="c-key">from:</span> notes/design.md
+<span class="c-dim">---</span>
+<span class="c-h"># Show types on hover</span>
+
+Implement what the design note says.</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="mq" class="alt">
+      <div class="wrap split">
+        <div class="code">
+          <div class="bar"><i></i><i></i><i></i><span>terminal</span></div>
+<pre><span class="c-dim"># Learnings from every session</span>
+<span class="c-cmd">mq</span> -A <span class="c-str">'import "section"
+  | section::find("Learnings")
+  | section::body()'</span> sessions/*.md
+
+<span class="c-dim"># Every command the agent ran</span>
+<span class="c-cmd">mq</span> <span class="c-str">'select(.code.lang == "tool:Bash")
+  | .code.value'</span> sessions/*.md</pre>
+        </div>
+        <div>
+          <div class="eyebrow">Query with mq</div>
+          <h2>Hand the agent exactly what you pick</h2>
+          <p><a href="https://github.com/harehare/mq">mq</a> is a jq-like query language for Markdown, embedded in Marq. <code>mq</code> code blocks run in the preview and show their output right below.</p>
+          <ul>
+            <li><strong>Extract</strong> a section with mq, select text in a note or session, or attach <code>context:</code> queries to a request.</li>
+            <li><strong>Reuse</strong> the same queries for the inbox, learnings across sessions and the Query tab.</li>
+            <li><strong>Search</strong> past sessions by what was said or done in them.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="download">
+      <div class="wrap center">
+        <div class="eyebrow">Download</div>
+        <h2>Get Marq</h2>
+        <p class="sub">Installers for every platform are attached to each GitHub release.</p>
+        <div class="dl">
+          <div class="card">
+            <h3>macOS</h3>
+            <p>Apple Silicon and Intel.</p>
+            <div class="files"><div>Marq_x.y.z_universal.dmg</div></div>
+          </div>
+          <div class="card">
+            <h3>Windows</h3>
+            <p>Windows 10 and later.</p>
+            <div class="files"><div>Marq_x.y.z_x64-setup.exe</div><div>Marq_x.y.z_x64.msi</div></div>
+          </div>
+          <div class="card">
+            <h3>Linux</h3>
+            <p>Debian, Fedora and AppImage.</p>
+            <div class="files"><div>marq_x.y.z_amd64.deb</div><div>marq-x.y.z.x86_64.rpm</div><div>marq_x.y.z_amd64.AppImage</div></div>
+          </div>
+        </div>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/harehare/marq/releases">All releases on GitHub</a>
+          <a class="btn" href="/book/building.html">Build from source</a>
+        </div>
+        <div class="warn">
+          <strong>Under active development.</strong> Features, file formats and keybindings may change without
+          notice. Claude and Ollama are fully supported, other agents work through ACP with fewer features, and release builds do not bundle the
+          Node sidecar yet, so run sessions from source with <code>pnpm tauri dev</code>. Developed and used on macOS.
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <a class="brand" href="#top" style="font-size:18px"><img src="/assets/logo.svg" alt="" style="width:24px;height:24px" />Marq</a>
+        <span>Run agents. Keep everything.</span>
+        <div class="spacer"></div>
+        <a href="/book/">Docs</a>
+        <a href="https://github.com/harehare/marq">GitHub</a>
+        <a href="https://github.com/harehare/mq">mq</a>
+      </div>
+    </footer>
+  </body>
+</html>
