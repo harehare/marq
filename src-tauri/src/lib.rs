@@ -723,6 +723,9 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
             return Err(error::Error::Other(format!("unknown review state: {state}")));
         }
         if let Some(path) = session::set_review(Path::new(&vault), &session_id, &state, None)? {
+            if state == "done" && let Some(board) = automation::card_done(Path::new(&vault), Path::new(&path)) {
+                let _ = app.emit("vault://changed", serde_json::json!({"path": board}));
+            }
             let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
         }
         let _ = app.emit("sessions://changed", &session_id);
@@ -1269,7 +1272,7 @@ fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktre
 
 /// Sets a request's `status` (todo, running, review, done, dropped).
 #[tauri::command]
-async fn set_note_status(vault: String, path: String, status: String) -> Result<()> {
+async fn set_note_status(app: AppHandle, vault: String, path: String, status: String) -> Result<()> {
     blocking(move || {
         if !["todo", "running", "review", "done", "dropped"].contains(&status.as_str()) {
             return Err(error::Error::Other(format!("unknown status: {status}")));
@@ -1278,6 +1281,9 @@ async fn set_note_status(vault: String, path: String, status: String) -> Result<
         let t = std::fs::read_to_string(&p)?;
         let t = vault::fm_set(&t, "status", &status);
         std::fs::write(&p, vault::fm_set(&t, "updated", &vault::now()))?;
+        if status == "done" && let Some(board) = automation::card_done(Path::new(&vault), &p) {
+            let _ = app.emit("vault://changed", serde_json::json!({"path": board}));
+        }
         Ok(())
     })
     .await

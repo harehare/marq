@@ -2444,6 +2444,7 @@ dependencies = [
  "git2",
  "glob",
  "mq-lang",
+ "mq-markdown",
  "portable-pty",
  "regex",
  "serde",

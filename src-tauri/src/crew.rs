@@ -340,7 +340,7 @@ pub fn tasks_path(vault: &Path, crew: &Crew) -> Result<PathBuf> {
     if let Some((f, text)) = found {
         // Lists from before task lists were boards become one, so the Tasks tab can show them as a board.
         if f.kind.as_deref() == Some("crew-tasks") {
-            std::fs::write(&f.path, tasks::render(&tasks::parse(&vault::fm_set(&text, "type", "board"))))?;
+            std::fs::write(&f.path, tasks::render(&tasks::parse(&vault::fm_set(&text, "type", "board"))?))?;
         }
         return Ok(PathBuf::from(f.path));
     }
@@ -361,7 +361,7 @@ pub fn docs_folder(vault: &Path, crew_id: &str) -> Result<String> {
 fn read_tasks(vault: &Path, crew: &Crew) -> Result<(PathBuf, TaskList)> {
     let path = tasks_path(vault, crew)?;
     let text = std::fs::read_to_string(&path)?;
-    Ok((path, tasks::parse(&text)))
+    Ok((path, tasks::parse(&text)?))
 }
 
 fn write_tasks(app: &AppHandle, path: &Path, list: &TaskList) -> Result<()> {

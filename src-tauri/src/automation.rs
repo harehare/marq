@@ -138,6 +138,10 @@ fn start_card(app: &AppHandle, vault: &Path, board: &Path, queue: &Queue, card: 
         }
         None => (vec![], None),
     };
+    // So the card can follow its request to Done once the user marks the session done (see `card_done`).
+    let mut extra = extra;
+    extra.push(("board".into(), board_rel.clone()));
+    extra.push(("card".into(), card.id.clone()));
     let inherited = |k: &str| extra.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
     let task = NewTask {
         title: card.title.clone(),
@@ -232,6 +236,21 @@ fn rel(vault: &Path, p: &Path) -> String {
 pub fn link(from: &str, title: &str, to: &str) -> String {
     let up = from.matches('/').count();
     format!("[{title}]({}{})", "../".repeat(up), to.replace(' ', "%20"))
+}
+
+/// A request that a queue started is done: its card moves to the board's Done list. Returns the board
+/// when it changed. Left alone if the card is gone or already there.
+pub fn card_done(vault: &Path, request: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(request).ok()?;
+    let (board, card) = (vault::fm_get(&text, "board")?, vault::fm_get(&text, "card")?);
+    let board = vault::resolve(vault, &board).ok()?;
+    let b = boards::read(&board).ok()?;
+    let done = b.lists.iter().find(|l| l.name.eq_ignore_ascii_case("done"))?;
+    if done.cards.iter().any(|c| c.id == card) || !b.lists.iter().any(|l| l.cards.iter().any(|c| c.id == card)) {
+        return None;
+    }
+    boards::update(&board, &card, Change { list: Some(done.name.clone()), ..Default::default() }).ok()?;
+    Some(board)
 }
 
 fn on_turn_end(app: &AppHandle, session: &str, note: Option<String>) {
@@ -479,5 +498,21 @@ mod tests {
         assert_eq!(note_link("[x](https://a.md)"), None);
         assert_eq!(link("boards/a.md", "S", "requests/b c.md"), "[S](../requests/b%20c.md)");
         assert_eq!(normalize(Path::new("/v/boards/../notes/x.md")), PathBuf::from("/v/notes/x.md"));
+    }
+
+    #[test]
+    fn a_done_request_moves_its_card_to_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = &dir.path().canonicalize().unwrap();
+        let board = boards::create(v, "sprint", &[]).unwrap();
+        let card = boards::add(&board, "Fix it", Some("Doing"), None, None).unwrap();
+        std::fs::create_dir(v.join("requests")).unwrap();
+        let req = v.join("requests/r.md");
+        std::fs::write(&req, format!("---\nstatus: done\nboard: boards/sprint.md\ncard: {}\n---\n", card.id)).unwrap();
+        assert_eq!(card_done(v, &req), Some(board.clone()));
+        let b = boards::read(&board).unwrap();
+        assert_eq!(b.lists[2].cards[0].id, card.id);
+        assert!(b.lists[2].cards[0].done);
+        assert_eq!(card_done(v, &req), None);
     }
 }

@@ -196,27 +196,45 @@ fn parse_card(item: &str, done: bool) -> Card {
     Card { id, title, done, owner, labels, notes: vec![] }
 }
 
-pub fn parse(text: &str) -> Board {
+/// The query that picks the headings and list items out of the Markdown.
+const PARSE_QUERY: &str = include_str!("boards.mq");
+
+/// Splits the Markdown with mq (`boards.mq`). mq says what each node is and where it is; the text of
+/// a heading or item is the source line itself, so nothing is re-rendered or escaped. The card's own
+/// syntax is read by `parse_card`.
+pub fn parse(text: &str) -> Result<Board> {
+    let mut engine = mq_lang::DefaultEngine::default();
+    engine.load_builtin_module();
+    engine.set_timeout(std::time::Duration::from_secs(10));
+    let input = mq_lang::parse_markdown_input(text).map_err(|e| Error::Mq(e.to_string()))?;
+    let nodes = engine.eval(PARSE_QUERY, input.into_iter()).map_err(|e| Error::Mq(format!("{e:?}")))?;
+
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let mut b = Board::default();
-    for line in text.lines() {
-        if let Some(h) = line.strip_prefix("## ") {
-            b.lists.push(List { name: h.trim().to_string(), cards: vec![] });
-            continue;
-        }
-        let Some(list) = b.lists.last_mut() else {
-            b.head.push_str(line);
-            b.head.push('\n');
-            continue;
-        };
-        let item = line.strip_prefix("- [ ] ").map(|i| (i, false)).or_else(|| {
-            line.strip_prefix("- [x] ").or_else(|| line.strip_prefix("- [X] ")).map(|i| (i, true))
-        });
-        if let Some((item, done)) = item {
-            list.cards.push(parse_card(item, done));
-        } else if let Some(note) = line.strip_prefix("  - ")
-            && let Some(c) = list.cards.last_mut()
-        {
-            c.notes.push(note.trim().into());
+    for value in nodes {
+        let mq_lang::RuntimeValue::Markdown(node, _) = value else { continue };
+        let Some(line) = node.position().and_then(|p| lines.get((p.start.line as usize).checked_sub(1)?).copied()) else { continue };
+        let line = line.trim_end_matches(['\n', '\r']);
+        match &*node {
+            mq_markdown::Node::Heading(h) if h.depth == 2 => {
+                if b.lists.is_empty() {
+                    // Everything before the first list is kept as written.
+                    b.head = lines[..(node.position().unwrap().start.line as usize - 1)].concat();
+                }
+                b.lists.push(List { name: line.trim_start_matches('#').trim().to_string(), cards: vec![] });
+            }
+            mq_markdown::Node::List(l) => {
+                let Some(list) = b.lists.last_mut() else { continue };
+                let item = line.trim_start();
+                let item = item.strip_prefix("- ").or_else(|| item.strip_prefix("* ")).or_else(|| item.strip_prefix("+ ")).unwrap_or(item);
+                if l.level == 0 {
+                    let item = item.strip_prefix("[ ] ").or_else(|| item.strip_prefix("[x] ")).or_else(|| item.strip_prefix("[X] ")).unwrap_or(item);
+                    list.cards.push(parse_card(item, l.checked == Some(true)));
+                } else if let Some(c) = list.cards.last_mut() {
+                    c.notes.push(item.trim().into());
+                }
+            }
+            _ => {}
         }
     }
     b.queue = queue_of(&b.head);
@@ -226,7 +244,7 @@ pub fn parse(text: &str) -> Board {
         next += 1;
         c.id = format!("T{next}");
     }
-    b
+    Ok(b)
 }
 
 pub fn render(b: &Board) -> String {
@@ -283,7 +301,7 @@ fn edit<T>(path: &Path, f: impl FnOnce(&mut Board) -> Result<T>) -> Result<T> {
 }
 
 pub fn read(path: &Path) -> Result<Board> {
-    Ok(parse(&std::fs::read_to_string(path)?))
+    parse(&std::fs::read_to_string(path)?)
 }
 
 /// Creates `boards/<name>.md` with `lists` (Todo, Doing and Done when empty). Returns its path.
@@ -484,20 +502,37 @@ mod tests {
 
     #[test]
     fn hand_written_items_get_ids_and_round_trip() {
-        let b = parse("# B\n\n## Ideas\n\n- [ ] **T3** Old — @me\n  - n\n- [ ] new one\n\n## Done\n\n- [x] finished\n");
+        let b = parse("# B\n\n## Ideas\n\n- [ ] **T3** Old — @me\n  - n\n- [ ] new one\n\n## Done\n\n- [x] finished\n").unwrap();
         assert_eq!(b.lists.len(), 2);
         assert_eq!(b.lists[0].cards[1].id, "T4");
         assert_eq!(b.lists[1].cards[0], Card { id: "T5".into(), title: "finished".into(), done: true, owner: None, labels: vec![], notes: vec![] });
-        assert_eq!(parse(&render(&b)), b);
+        assert_eq!(parse(&render(&b)).unwrap(), b);
+    }
+
+    #[test]
+    fn a_heading_inside_a_code_block_is_not_a_list() {
+        let b = parse("---\ntype: board\n---\n# B\n\n```\n## no\n```\n\n## Todo\n\n- [ ] **T1** A\n  - n\n").unwrap();
+        assert_eq!(b.lists.len(), 1);
+        assert!(b.head.contains("## no") && b.head.ends_with("```\n\n"));
+        assert_eq!(b.lists[0].cards[0].notes, ["n"]);
+    }
+
+    #[test]
+    fn brackets_and_underscores_are_kept_as_written() {
+        let text = "## A\n\n- [ ] **T1** a [x] b \\[e\\] _u_ x_y\n  - see [[Note]] and [L](a.md)\n";
+        let b = parse(text).unwrap();
+        assert_eq!(b.lists[0].cards[0].title, "a [x] b \\[e\\] _u_ x_y");
+        assert_eq!(b.lists[0].cards[0].notes, ["see [[Note]] and [L](a.md)"]);
+        assert!(render(&b).ends_with(&format!("\n\n{text}")));
     }
 
     #[test]
     fn labels_end_the_title() {
-        let b = parse("## Todo\n\n- [ ] **T1** Fix #12 crash #bug #ui — @me\n- [ ] #only\n");
+        let b = parse("## Todo\n\n- [ ] **T1** Fix #12 crash #bug #ui — @me\n- [ ] #only\n").unwrap();
         let c = &b.lists[0].cards[0];
         assert_eq!((c.title.as_str(), c.labels.as_slice(), c.owner.as_deref()), ("Fix #12 crash", &["bug".to_string(), "ui".into()][..], Some("me")));
         assert_eq!(b.lists[0].cards[1].title, "#only");
-        assert_eq!(parse(&render(&b)).lists, b.lists);
+        assert_eq!(parse(&render(&b)).unwrap().lists, b.lists);
         assert_eq!(split_labels("Ship it #v2 #12"), ("Ship it #v2 #12".into(), vec![]));
         assert_eq!(labels_of(["#Bug", "bug", " needs review ", "7"]), ["Bug", "needs-review"]);
     }

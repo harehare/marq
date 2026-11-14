@@ -1,0 +1,4 @@
+# The nodes a board is made of: `## ` headings and list items. Anything else, such as a `## `
+# inside a code block, is dropped. `parse` in boards.rs reads each node's kind, level, checked
+# state and line, and takes the text from the source itself.
+select(is_h2() || is_list())

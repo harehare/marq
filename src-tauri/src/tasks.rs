@@ -48,7 +48,7 @@ fn status_of(list: &str) -> Option<&'static str> {
 
 /// Reads a task list. Items are parsed as board cards (see `boards`), so the two formats cannot drift
 /// apart; only the lists named after a status hold tasks, and anything before the first one is kept as the head.
-pub fn parse(text: &str) -> TaskList {
+pub fn parse(text: &str) -> crate::error::Result<TaskList> {
     let mut head = String::new();
     let mut body = String::new();
     for line in text.lines() {
@@ -57,7 +57,7 @@ pub fn parse(text: &str) -> TaskList {
         dest.push_str(line);
         dest.push('\n');
     }
-    let lists = boards::parse(&body).lists;
+    let lists = boards::parse(&body)?.lists;
     let tasks = lists
         .iter()
         .filter_map(|l| Some((status_of(&l.name)?, &l.cards)))
@@ -65,7 +65,7 @@ pub fn parse(text: &str) -> TaskList {
             cards.iter().map(move |c| Task { id: c.id.clone(), title: c.title.clone(), status: status.into(), owner: c.owner.clone(), labels: c.labels.clone(), notes: c.notes.clone() })
         })
         .collect();
-    TaskList { head, tasks, lists }
+    Ok(TaskList { head, tasks, lists })
 }
 
 /// Writes the list back as a board with every status list, other lists where they were.
@@ -136,12 +136,12 @@ mod tests {
     #[test]
     fn round_trips_a_list() {
         let text = "---\ntype: crew-tasks\n---\n# X — Tasks\n\nIntro.\n\n## Todo\n\n- [ ] **T2** Write tests — @tester\n  - after T1\n\n## Doing\n\n- [ ] **T1** Hover types — @impl\n\n## Done\n\n- [x] **T3** Design\n";
-        let list = parse(text);
+        let list = parse(text).unwrap();
         assert_eq!(list.tasks.len(), 3);
         assert_eq!(list.tasks[0], Task { id: "T2".into(), title: "Write tests".into(), status: "todo".into(), owner: Some("tester".into()), labels: vec![], notes: vec!["after T1".into()] });
         assert_eq!(list.tasks[2].owner, None);
         assert_eq!(list.next_id(), "T4");
-        let again = parse(&render(&list));
+        let again = parse(&render(&list)).unwrap();
         assert_eq!(again.tasks, list.tasks);
         assert!(render(&list).contains("Intro.\n\n## Todo\n\n- [ ] **T2**"));
         assert!(render(&list).contains("## Done\n\n- [x] **T3** Design\n"));
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn other_lists_are_kept() {
-        let list = parse("# T\n\n## Todo\n\n- [ ] **T1** A\n\n## Ideas\n\n- [ ] **T5** Later\n");
+        let list = parse("# T\n\n## Todo\n\n- [ ] **T1** A\n\n## Ideas\n\n- [ ] **T5** Later\n").unwrap();
         assert_eq!(list.tasks.len(), 1);
         assert_eq!(list.next_id(), "T6");
         assert!(render(&list).contains("## Ideas\n\n- [ ] **T5** Later\n"));
@@ -159,14 +159,14 @@ mod tests {
 
     #[test]
     fn a_hand_moved_item_takes_its_section_status() {
-        let list = parse("# T\n\n## Review\n\n- [ ] **T1** A — @impl\n");
+        let list = parse("# T\n\n## Review\n\n- [ ] **T1** A — @impl\n").unwrap();
         assert_eq!(list.tasks[0].status, "review");
     }
 
     #[test]
     fn text_before_the_first_status_is_kept() {
         let text = "# T\n\n## Background\n\nWhy.\n\n## Todo\n\n- [ ] **T1** A\n";
-        let list = parse(text);
+        let list = parse(text).unwrap();
         assert_eq!(list.tasks.len(), 1);
         assert!(render(&list).contains("## Background\n\nWhy.\n\n## Todo\n\n- [ ] **T1** A\n"));
     }
