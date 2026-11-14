@@ -16,9 +16,9 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 > [!WARNING]
 > Marq is under active development. Features, file formats and keybindings may change without notice.
 >
-> - Only **Claude** and **Ollama** are supported as agents for now.
-> - Sessions run from source with `pnpm tauri dev`. Release builds do not bundle the Node sidecar yet.
-> - Developed and used on macOS.
+> - **Claude** and **Ollama** are fully supported. Other agents that speak [ACP](https://agentclientprotocol.com) (Gemini CLI, Codex, OpenCode, Qwen Code, Goose) run with fewer features; see [Agents and models](docs/agents.md).
+> - Release builds (`just build`) bundle the agent sidecar, so Node is not needed to run the app. The `claude` CLI still is.
+> - Developed and used on macOS. Linux and Windows build, but are not tested yet.
 
 ## Features
 
@@ -30,16 +30,16 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 - **Run an agent from a note.** Hover a heading and choose **Ask**. The session is linked to the heading, and the result comes back as a card under the section.
 - **Crews.** Several sessions work on one project as a team by role, with a shared task list. Kanban boards are Markdown too.
 - **Checks, phases and specs.** A request can run a command after each turn and send failures back to the agent (or to a fresh session), have a separate session check hidden acceptance criteria, run as research → plan → implement with a fresh context per phase, and run in Claude Code's sandbox. Specs break down into board cards that a queue runs with those checks.
-- **Compare models.** Run one task on 2 to 4 models, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
+- **Compare agents and models.** Run one task on 2 to 4 runs, Claude models or other agents such as Codex, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
 - **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar.
 - **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed, and you can send follow-ups while an agent is working.
 - **Terminal tabs** next to your sessions, for dev servers and builds.
-- **Claude and Ollama.** Use your own `claude` login, or a local model served by Ollama.
+- **Claude, Ollama and ACP agents.** Use your own `claude` login, a local model served by Ollama, or another agent that speaks ACP (Gemini CLI, Codex, OpenCode, Qwen Code, Goose).
 
 ### Knowledge base
 
 - **Everything is Markdown.** Notes, requests, session logs, crews, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only rewrites the parts between its own markers.
-- **Query with mq.** `mq` code blocks run in the preview and show their output right below. The same queries power the inbox, the learnings across sessions, and the Query tab.
+- **Query with mq.** `mq` code blocks run in the preview and show their output right below. The same queries power the todo list, the learnings across sessions, and the Query tab.
 - **Pick what the agent sees.** Extract a section with mq, select text in a note or a session, or attach `context:` queries to a request, then send exactly that to an agent.
 - **Sessions feed back into notes.** Summaries and learnings are written into the session note, and agents can search your notes and save documents to the vault.
 
@@ -96,7 +96,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | [mq queries](docs/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
 | [Crews and boards](docs/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
 | [Workflows](docs/workflows.md) | Checks after each turn, acceptance criteria, phases, the sandbox, specs, skills |
-| [Agents and models](docs/agents.md) | Claude, Ollama, permission modes, how sessions run |
+| [Agents and models](docs/agents.md) | Claude, Ollama, ACP agents, permission modes, how sessions run |
 | [Vault tools for agents](docs/tools.md) | The MCP tools agents use to read and organize the vault |
 | [Settings and keys](docs/settings.md) | `~/.marq/config.toml`, keybindings, shell environment |
 
@@ -106,6 +106,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | --- | --- |
 | Claude (through your `claude` CLI) | Supported |
 | Ollama (`ollama:<model>`) | Supported, except for crews |
-| Other agents | Not supported |
+| Gemini CLI, Codex, OpenCode, Qwen Code, Goose (through [ACP](https://agentclientprotocol.com)) | Supported with limits: no crews, model choice or sandbox |
+| Other ACP agents | Add one under `[agents.<id>]` in `config.toml` |
 
 mq queries use [mq-lang](https://github.com/harehare/mq) 0.9.3, embedded in the app.

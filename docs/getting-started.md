@@ -1,13 +1,13 @@
 # Getting started
 
 > [!WARNING]
-> Marq is under active development. Sessions run from source for now, and only Claude and Ollama are supported as agents.
+> Marq is under active development. Sessions run from source for now, and Claude and Ollama are fully supported, and other agents work through ACP with fewer features.
 
 ## Requirements
 
 - Rust (stable), Node.js and pnpm
 - The `claude` CLI, logged in. Sessions run through the Claude Agent SDK in a Node sidecar (`sidecar/`), using your own `claude` and its login and settings.
-- Optional: [Ollama](https://ollama.com) for local models (see [Agents and models](agents.md)), `git` and `gh` for worktrees and pull requests.
+- Optional: [Ollama](https://ollama.com) for local models, or another agent such as Gemini CLI, Codex or OpenCode (see [Agents and models](agents.md)), `git` and `gh` for worktrees and pull requests.
 
 ## Run from source
 
@@ -38,13 +38,12 @@ To work on a repository instead, press ⌘N for **New task**. See [Sessions](ses
 | Section | Contents |
 | --- | --- |
 | Notes | The folder tree. Create, rename, move and drag notes and folders; relative links are rewritten |
-| Inbox | Requests that have not been started (`status: todo`) |
 | Needs you | Sessions waiting for an approval |
 | Needs review | Stopped sessions with changes in their worktree and no review state |
 | Running / Recent | Sessions. Crew members appear only under their crew |
 | Crews | Teams of sessions. See [Crews and boards](crews-and-boards.md) |
 | Boards | Kanban boards stored as Markdown |
-| Query | A query tab with presets (inbox, learnings, Bash commands). See [mq queries](mq.md) |
+| Query | A query tab with presets (todo requests, drafts, learnings, Bash commands). See [mq queries](mq.md) |
 
 Find things with **⌘P** (open a note, board, crew or session by fuzzy title or path: crews open in the crew view and sessions in their conversation, sessions at work listed first; ⇧↵ searches text instead) and **⇧⌘F** (the Search tab: lines that contain every word, grouped by note). **⌘F** finds within the open note (in the preview, or in the source when only the editor is shown) or, on a session tab, in the Changes panel's diffs; ↵ and ⇧↵ move between matches. ⌘K lists every command with its keys.
 

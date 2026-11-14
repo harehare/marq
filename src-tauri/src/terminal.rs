@@ -27,22 +27,13 @@ impl Terminals {
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| Error::Other(format!("could not open a terminal: {e}")))?;
         let (configured, args) = config::terminal_shell();
-        let shell = configured.unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()));
+        let shell = configured.unwrap_or_else(shell::default_shell);
         let mut cmd = match command {
-            // Commands are written for sh, which nu, fish and the like don't parse.
-            Some(c) => {
-                let sh = [Some(shell.clone()), std::env::var("SHELL").ok(), Some("/bin/zsh".into())]
-                    .into_iter()
-                    .flatten()
-                    .find(|s| posix(s) && std::path::Path::new(s).exists())
-                    .unwrap_or_else(|| "/bin/sh".into());
-                let mut cmd = CommandBuilder::new(sh);
-                cmd.args(["-l", "-i", "-c", c]);
-                cmd
-            }
+            Some(c) => command_builder(&shell, c),
             None => {
                 let mut cmd = CommandBuilder::new(&shell);
-                cmd.args(args.unwrap_or_else(|| vec!["-l".into()]));
+                // A login shell on Unix; PowerShell and cmd have no such thing.
+                cmd.args(args.unwrap_or_else(|| if cfg!(unix) { vec!["-l".into()] } else { vec![] }));
                 cmd
             }
         };
@@ -121,10 +112,42 @@ impl Terminals {
     }
 }
 
+/// `command` run by `shell`. Commands are written for sh, which nu, fish and the like don't parse, so those
+/// run it through an sh-style shell instead. PowerShell and cmd run it in their own syntax.
+fn command_builder(shell: &str, command: &str) -> CommandBuilder {
+    if let Some(args) = shell::command_args(shell, command) {
+        let mut cmd = CommandBuilder::new(shell);
+        cmd.args(args);
+        return cmd;
+    }
+    let sh = [Some(shell.to_string()), std::env::var("SHELL").ok(), Some(shell::default_shell())]
+        .into_iter()
+        .flatten()
+        .find(|s| posix(s) && std::path::Path::new(s).exists());
+    match sh {
+        Some(sh) => {
+            let mut cmd = CommandBuilder::new(sh);
+            cmd.args(["-l", "-i", "-c", command]);
+            cmd
+        }
+        None if cfg!(unix) => {
+            let mut cmd = CommandBuilder::new("/bin/sh");
+            cmd.args(["-l", "-i", "-c", command]);
+            cmd
+        }
+        // Windows without an sh-style shell: the default shell, in its own syntax.
+        None => {
+            let default = shell::default_shell();
+            let mut cmd = CommandBuilder::new(&default);
+            cmd.args(shell::command_args(&default, command).unwrap_or_else(|| vec!["/C".into(), command.into()]));
+            cmd
+        }
+    }
+}
+
 /// Whether the shell runs sh syntax.
 fn posix(shell: &str) -> bool {
-    let name = shell.rsplit('/').next().unwrap_or(shell);
-    matches!(name, "sh" | "bash" | "zsh" | "dash" | "ksh")
+    matches!(shell::shell_name(shell).as_str(), "sh" | "bash" | "zsh" | "dash" | "ksh")
 }
 
 #[cfg(test)]
@@ -133,5 +156,6 @@ mod tests {
     fn tells_posix_shells() {
         assert!(super::posix("/bin/zsh") && super::posix("/opt/homebrew/bin/bash") && super::posix("sh"));
         assert!(!super::posix("/opt/homebrew/bin/nu") && !super::posix("/opt/homebrew/bin/fish"));
+        assert!(super::posix(r"C:\Program Files\Git\bin\bash.exe") && !super::posix("pwsh.exe"));
     }
 }

@@ -1,7 +1,7 @@
 # Agents and models
 
 > [!WARNING]
-> Only **Claude** and **Ollama** are supported for now. Support for other agents may be added later.
+> **Claude** (and Ollama models through it) is the fully supported agent. Other agents that speak [ACP](https://agentclientprotocol.com) work with fewer features; see [Other agents (ACP)](#other-agents-acp).
 
 ## How sessions run
 
@@ -39,6 +39,31 @@ Limitations:
 
 - Crews always use Claude.
 - Quality depends on the model. Smaller local models may follow tool instructions less reliably than Claude.
+
+## Other agents (ACP)
+
+Tasks can run on any agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead of Claude Code. The New task dialog lists these built-in agents, and shows which of them are installed:
+
+| Agent | Command |
+| --- | --- |
+| Gemini CLI | `gemini --experimental-acp` |
+| Codex | `codex-acp` |
+| OpenCode | `opencode acp` |
+| Qwen Code | `qwen --experimental-acp` |
+| Goose | `goose acp` |
+
+Install the agent yourself and log in to it; Marq runs its command as found through your login shell, and the session uses the agent's own model and tools. Open **Settings → Agents** to change an agent's command and arguments, or to add another ACP agent with **Add agent** (an id, a name, the command and its arguments). The same settings live under `[agents.<id>]` in [`~/.marq/config.toml`](settings.md):
+
+```toml
+[agents]
+kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
+```
+
+Marq's [vault tools](tools.md) reach the agent over MCP (HTTP) when it supports that, and its permission requests show up as approval cards. Limitations compared with Claude:
+
+- Crews and model choice are Claude only. An ACP agent can be one of the runs of a [comparison](sessions.md#compare-agents-and-models), on its own model.
+- The sandbox is Claude only; an ACP agent with `sandbox:` set refuses to start.
+- A summary is written from the session note.
 
 ## Permission modes
 

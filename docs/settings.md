@@ -17,7 +17,7 @@ default_mode = "preview"        # preview | edit | split; new notes always open 
 vim = false                     # Vim keys in the note editor; :w saves
 
 [terminal]
-shell = "/bin/zsh"              # default: $SHELL
+shell = "/bin/zsh"              # default: $SHELL (Windows: pwsh, else powershell)
 args = ["-l"]
 font = "Fira Code"              # default: mono_font
 font_size = 13
@@ -49,9 +49,9 @@ kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
 
 ## Agents
 
-Tasks run on Claude Code by default. The New task dialog can run one on another agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead: Gemini CLI (`gemini --experimental-acp`), Codex (`codex-acp`), OpenCode (`opencode acp`), Qwen Code (`qwen --experimental-acp`) or Goose (`goose acp`). `[agents.<id>]` changes an agent's `command` or `args`, or adds another ACP agent.
+Tasks run on Claude Code by default. The New task dialog can run one on another agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead: Gemini CLI (`gemini --experimental-acp`), Codex (`codex-acp`), OpenCode (`opencode acp`), Qwen Code (`qwen --experimental-acp`) or Goose (`goose acp`). **Settings → Agents** changes an agent's `command` or `args`, or adds another ACP agent; they are saved as `[agents.<id>]`, which you can also edit in the file.
 
-Such a session uses the agent's own model and tools. Marq's tools reach it over MCP (HTTP) when the agent supports that, and its permission requests show up as approval cards. Teams, model choice and comparisons are Claude only, and a summary is written from the session note.
+Such a session uses the agent's own model and tools. Marq's tools reach it over MCP (HTTP) when the agent supports that, and its permission requests show up as approval cards. Teams and model choice are Claude only (such an agent can still be one run of a comparison), and a summary is written from the session note.
 
 ## Keys
 
@@ -113,4 +113,4 @@ Drag a divider to resize. A pane closes when its shell exits, unless it is the l
 
 ## Shell environment
 
-Apps started from Finder get a minimal `PATH`. Marq reads the `PATH` of an interactive login shell (`$SHELL -ilc`) once and uses it to find `git`, `gh`, `node` and `claude`. It is also passed to the sidecar, so an agent's Bash tool sees the same commands as your terminal.
+Apps started from Finder get a minimal `PATH`. On macOS and Linux, Marq reads the `PATH` of an interactive login shell (`$SHELL -ilc`) once and uses it to find `git`, `gh`, `node` and `claude`. It is also passed to the sidecar, so an agent's Bash tool sees the same commands as your terminal. On Windows, apps get your own `PATH`, which is used as is.

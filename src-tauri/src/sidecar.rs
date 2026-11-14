@@ -71,10 +71,23 @@ fn agent_session(vault: &Path, id: &str) -> Option<String> {
     events.iter().rev().filter(|e| e["type"] == "init").find_map(|e| e["session"].as_str().map(str::to_string))
 }
 
-fn sidecar_script() -> PathBuf {
-    std::env::var_os("MARQ_SIDECAR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.ts"))
+/// How the sidecar is started.
+enum Launch {
+    /// The executable built by `sidecar/build.mjs`, next to the app's own. It needs no Node.
+    Bundled(PathBuf),
+    /// `sidecar/main.ts` run by `node`, when running from source (or `MARQ_SIDECAR`).
+    Script(PathBuf),
+}
+
+fn launch() -> Launch {
+    if let Some(script) = std::env::var_os("MARQ_SIDECAR") {
+        return Launch::Script(script.into());
+    }
+    let name = if cfg!(windows) { "marq-sidecar.exe" } else { "marq-sidecar" };
+    if let Some(bundled) = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(name))).filter(|p| p.is_file()) {
+        return Launch::Bundled(bundled);
+    }
+    Launch::Script(Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.ts"))
 }
 
 const SYSTEM_APPEND: &str = "You are running inside marq, the user's Markdown knowledge base (the vault). \
@@ -135,7 +148,9 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
 /// Resolves the default agent and `node` and starts the sidecar ahead of the first session.
 pub fn prewarm(app: &AppHandle) {
     executable(None);
-    which("node");
+    if matches!(launch(), Launch::Script(_)) {
+        which("node");
+    }
     if let Err(e) = app.state::<Runner>().sender(app) {
         eprintln!("marq: {e}");
     }
@@ -342,23 +357,32 @@ fn spawn(app: AppHandle) -> Result<mpsc::UnboundedSender<String>> {
     // Sync commands run on the main thread, outside the tokio runtime that tokio::process needs.
     let rt = tauri::async_runtime::handle();
     let _guard = rt.inner().enter();
-    let script = sidecar_script();
+    let launch = launch();
     // The sidecar and every agent process under it get the shell's PATH, so the agent's Bash tool
     // finds the same commands as in a terminal.
-    let mut cmd = tokio::process::Command::new(which("node"));
+    let (mut cmd, program) = match &launch {
+        Launch::Bundled(exe) => (tokio::process::Command::new(exe), exe.clone()),
+        Launch::Script(script) => {
+            let mut c = tokio::process::Command::new(which("node"));
+            c.arg(script).current_dir(script.parent().unwrap());
+            (c, script.clone())
+        }
+    };
     if let Some(url) = crate::config::ollama_url() {
         cmd.env("OLLAMA_HOST", url);
     }
+    // The plugin of skills ships in the app's resources; from source the sidecar finds its own folder.
+    if let Some(plugin) = app.path().resource_dir().ok().map(|d| d.join("plugin")).filter(|p| p.is_dir()) {
+        cmd.env("MARQ_PLUGIN", plugin);
+    }
     let mut child = cmd
         .env("PATH", crate::shell::path())
-        .arg(&script)
-        .current_dir(script.parent().unwrap())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| Error::Other(format!("failed to start the sidecar ({}): {e}", script.display())))?;
+        .map_err(|e| Error::Other(format!("failed to start the sidecar ({}): {e}", program.display())))?;
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
@@ -821,6 +845,7 @@ pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since
 mod tests {
     /// Commands call `spawn` from the main thread, which has no tokio runtime of its own.
     #[test]
+    #[cfg(unix)] // runs `true`
     fn spawns_a_process_outside_the_runtime() {
         std::thread::spawn(|| {
             let rt = tauri::async_runtime::handle();
@@ -862,6 +887,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // runs `true`
     fn spawning_without_the_runtime_panics() {
         let r = std::thread::spawn(|| tokio::process::Command::new("true").spawn().map(|_| ())).join();
         assert!(r.is_err(), "tokio::process should panic outside a runtime");

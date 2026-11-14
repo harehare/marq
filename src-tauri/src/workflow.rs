@@ -229,9 +229,7 @@ fn run_check(command: &str, cwd: &Path, others: &[PathBuf], timeout: Duration, s
         c.args(["-p", &sandbox_profile(&cwd.canonicalize().unwrap_or(cwd.to_path_buf()), others), "/bin/sh", "-c", command]);
         c
     } else {
-        let mut c = std::process::Command::new("/bin/sh");
-        c.args(["-c", command]);
-        c
+        shell::system_command(command)
     };
     cmd.current_dir(cwd).env("PATH", shell::path()).env("CI", "1").stdin(Stdio::null()).stdout(out).stderr(err);
     if sandboxed {

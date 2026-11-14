@@ -97,7 +97,8 @@ export function* toEvents(m: SDKMessage): Generator<AgentEvent> {
 }
 
 /** Skills marq ships for its workflows (specs, retros), loaded into every session as the `marq` plugin. */
-const PLUGIN = fileURLToPath(new URL("./plugin", import.meta.url));
+// A bundled app has no `plugin` folder next to the sidecar, so the app passes where its resources are.
+const PLUGIN = process.env.MARQ_PLUGIN ?? fileURLToPath(new URL("./plugin", import.meta.url));
 
 /**
  * Claude Code's OS sandbox for Bash. `on` lets a command that fails in the sandbox ask to run outside it;

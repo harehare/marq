@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronRight, ExternalLink, Loader2, Trophy } from "lucide-react";
-import { api, Changes, SessionInfo } from "../api";
+import { AgentInfo, api, Changes, SessionInfo } from "../api";
 import { DiffView } from "./DiffView";
 
 type Props = {
@@ -17,8 +17,15 @@ type Props = {
 
 const modelLabel = (m?: string | null) => (m ? (m.startsWith("ollama:") ? `${m.slice("ollama:".length)} (Ollama)` : `Claude ${m}`) : "Claude (default)");
 
-/** The same task run on several models, side by side, to pick one and drop the rest. */
+/** The same task run on several agents or models, side by side, to pick one and drop the rest. */
 export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: Props) {
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  useEffect(() => {
+    api.listAgents().then(setAgents, () => {});
+  }, []);
+  // Claude by its model; any other agent by its name, since it runs on its own model.
+  const runLabel = (r: SessionInfo) =>
+    r.agent && r.agent !== "claude" ? agents.find((a) => a.id === r.agent)?.label ?? r.agent : modelLabel(r.model);
   const runs = useMemo(() => ids.map((id) => sessions.find((s) => s.id === id)).filter((s): s is SessionInfo => !!s), [ids, sessions]);
   const [changes, setChanges] = useState<Record<string, Changes>>({});
   // Expanded diffs, keyed by session and file.
@@ -61,7 +68,7 @@ export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: 
   const keep = async (winner: SessionInfo) => {
     const others = runs.filter((r) => r.id !== winner.id && r.worktree);
     const ok = await ask(
-      `Keep ${modelLabel(winner.model)} and remove the worktrees of the other ${others.length} run${others.length === 1 ? "" : "s"}?\n\n` +
+      `Keep ${runLabel(winner)} and remove the worktrees of the other ${others.length} run${others.length === 1 ? "" : "s"}?\n\n` +
         "Their branches and session logs are kept.",
       { title: "Keep this result", kind: "warning", okLabel: "Keep" },
     );
@@ -93,7 +100,7 @@ export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: 
             <section key={r.id} className="compare-col">
               <header>
                 <div className="compare-title">
-                  <strong>{modelLabel(r.model)}</strong>
+                  <strong>{runLabel(r)}</strong>
                   <span className={`pill status-${r.status}`}>{r.status}</span>
                 </div>
                 <div className="muted small">

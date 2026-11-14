@@ -86,7 +86,7 @@ fn describe(repo: &Repository, id: Oid) -> Result<String> {
 pub fn repo_root(dir: &Path) -> Option<PathBuf> {
     let repo = Repository::discover(dir).ok()?;
     let root = repo.workdir()?;
-    Some(PathBuf::from(root.to_string_lossy().trim_end_matches('/')))
+    Some(PathBuf::from(root.to_string_lossy().trim_end_matches(['/', '\\'])))
 }
 
 /// The checkout at `dir` as a pseudo-worktree for a session that ran in its project: the repo root,
@@ -413,56 +413,21 @@ pub fn commit_all(wt: &Worktree, message: &str) -> Result<String> {
     describe(&repo, id)
 }
 
-/// Credentials for a remote, tried in turn: the SSH agent, the usual key files, the credential helper.
-fn callbacks<'a>() -> git2::RemoteCallbacks<'a> {
-    let mut cb = git2::RemoteCallbacks::new();
-    let mut attempt = 0;
-    cb.credentials(move |url, user, allowed| {
-        attempt += 1;
-        let user = user.unwrap_or("git");
-        if allowed.contains(git2::CredentialType::SSH_KEY) {
-            let keys = ["id_ed25519", "id_ecdsa", "id_rsa"];
-            return match attempt {
-                1 => git2::Cred::ssh_key_from_agent(user),
-                n if n <= 1 + keys.len() => {
-                    let key = dirs::home_dir().unwrap_or_default().join(".ssh").join(keys[n - 2]);
-                    git2::Cred::ssh_key(user, None, &key, None)
-                }
-                _ => Err(git2::Error::from_str("no SSH key was accepted (is your key loaded in ssh-agent?)")),
-            };
-        }
-        if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT) && attempt <= 2 {
-            return git2::Config::open_default().and_then(|c| git2::Cred::credential_helper(&c, url, Some(user)));
-        }
-        if allowed.contains(git2::CredentialType::DEFAULT) && attempt <= 1 {
-            return git2::Cred::default();
-        }
-        Err(git2::Error::from_str("authentication failed"))
-    });
-    cb
-}
-
 /// Pushes `branch` to `origin` and makes `origin/<branch>` its upstream. Returns the upstream name.
+///
+/// This runs `git push`, so the user's SSH config, agent and credential helpers apply as they do
+/// in a terminal. It never prompts: a missing credential fails instead of waiting for input.
 fn push_branch(repo: &Repository, branch: &str) -> Result<String> {
-    let mut remote = repo.find_remote("origin")?;
-    let rejected = std::cell::RefCell::new(None::<String>);
-    let mut cb = callbacks();
-    cb.push_update_reference(|name, status| {
-        if let Some(why) = status {
-            *rejected.borrow_mut() = Some(format!("{name}: {why}"));
-        }
-        Ok(())
-    });
-    let mut opts = git2::PushOptions::new();
-    opts.remote_callbacks(cb);
-    remote.push(&[format!("refs/heads/{branch}:refs/heads/{branch}")], Some(&mut opts))?;
-    drop(opts);
-    if let Some(why) = rejected.into_inner() {
-        return Err(Error::Other(format!("push rejected, {why}")));
+    let dir = repo.workdir().unwrap_or_else(|| repo.path());
+    let out = shell::command("git")
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["push", "--set-upstream", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])
+        .output()?;
+    if !out.status.success() {
+        return Err(Error::Other(format!("git push: {}", String::from_utf8_lossy(&out.stderr).trim())));
     }
-    let upstream = format!("origin/{branch}");
-    repo.find_branch(branch, BranchType::Local)?.set_upstream(Some(&upstream))?;
-    Ok(upstream)
+    Ok(format!("origin/{branch}"))
 }
 
 /// Pushes the session's branch to `origin` and sets it as the upstream. Returns the upstream name.

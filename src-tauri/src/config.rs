@@ -28,15 +28,15 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # overflow = "scroll"             # scroll | wrap: tabs that do not fit scroll sideways, with a count of those out of sight, or wrap onto more rows
 
 [terminal]
-# shell = "/bin/zsh"              # default: $SHELL
-# args = ["-l"]
+# shell = "/bin/zsh"              # default: $SHELL (Windows: pwsh, else powershell)
+# args = ["-l"]                  # default: -l (none on Windows)
 # font_size = 13
 # cursor = "block"                # block | bar | underline
 
 [notifications]
 # enabled = true                  # notify when a session finishes, stops with an error or needs an approval
 
-[agents]                          # agents other than Claude talk ACP (Agent Client Protocol)
+[agents]                          # agents other than Claude talk ACP (Agent Client Protocol); also in Settings → Agents
 # gemini = { command = "gemini", args = ["--experimental-acp"] }
 # kimi = { label = "Kimi", command = "kimi", args = ["acp"] }   # any other ACP agent
 
@@ -117,12 +117,21 @@ fn to_toml(v: &Value) -> Option<toml_edit::Value> {
         Value::Number(n) => n.as_i64().map(Into::into).or_else(|| n.as_f64().map(Into::into))?,
         Value::String(s) => s.as_str().into(),
         Value::Array(a) => toml_edit::Value::Array(a.iter().filter_map(to_toml).collect()),
-        Value::Null | Value::Object(_) => return None,
+        Value::Object(o) => {
+            let mut t = toml_edit::InlineTable::new();
+            for (k, v) in o {
+                if let Some(v) = to_toml(v) {
+                    t.insert(k, v);
+                }
+            }
+            toml_edit::Value::InlineTable(t)
+        }
+        Value::Null => return None,
     })
 }
 
 /// Shells listed in /etc/shells, then common ones found on the shell PATH but not listed there
-/// (Homebrew does not add them).
+/// (Homebrew does not add them). Windows has no such list, so only the PATH is searched.
 pub fn shells() -> Vec<String> {
     let mut found: Vec<String> = std::fs::read_to_string("/etc/shells")
         .unwrap_or_default()
@@ -131,9 +140,9 @@ pub fn shells() -> Vec<String> {
         .filter(|l| l.starts_with('/'))
         .map(str::to_string)
         .collect();
-    for name in ["zsh", "bash", "fish", "nu", "elvish", "xonsh", "pwsh"] {
+    for name in ["zsh", "bash", "fish", "nu", "elvish", "xonsh", "pwsh", "powershell", "cmd"] {
         let p = crate::shell::which(name);
-        if p.starts_with('/') && !found.contains(&p) {
+        if std::path::Path::new(&p).is_absolute() && !found.contains(&p) {
             found.push(p);
         }
     }
@@ -185,5 +194,17 @@ mod tests {
         assert!(t["keys"]["tab"].is_table());
         let again = super::edit(&out, serde_json::json!({"terminal.shell": null}).as_object().unwrap()).unwrap();
         assert!(again.parse::<toml::Table>().unwrap()["terminal"].get("shell").is_none());
+    }
+
+    #[test]
+    fn edit_writes_and_removes_an_agent() {
+        let add = serde_json::json!({"agents.kimi": {"label": "Kimi", "command": "kimi", "args": ["acp"]}});
+        let out = super::edit(super::TEMPLATE, add.as_object().unwrap()).unwrap();
+        assert!(out.contains("# gemini = "), "{out}");
+        let t: toml::Table = out.parse().unwrap();
+        assert_eq!(t["agents"]["kimi"]["command"].as_str(), Some("kimi"));
+        assert_eq!(t["agents"]["kimi"]["args"].as_array().unwrap().len(), 1);
+        let gone = super::edit(&out, serde_json::json!({"agents.kimi": null}).as_object().unwrap()).unwrap();
+        assert!(gone.parse::<toml::Table>().unwrap()["agents"].get("kimi").is_none());
     }
 }

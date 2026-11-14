@@ -71,8 +71,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agent, setAgent] = useState(() => stored(AGENT_KEY, "claude"));
   const [carry, setCarry] = useState(false);
-  // More models to run the same task on, to compare the results.
-  const [extra, setExtra] = useState<string[]>([]);
+  // More agents or models to run the same task on, to compare the results.
+  const [extra, setExtra] = useState<{ agent: string; model: string }[]>([]);
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
   // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
@@ -152,10 +152,14 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     if (typeof dir === "string") setProject(dir);
   };
 
-  // Teams, model choice and comparisons are Claude's; other agents (ACP) run one session on their own model.
+  // Teams, model choice and the sandbox are Claude's; other agents (ACP) run on their own model.
   const other = !team && agent !== "claude";
-  const comparing = worktree && !team && !other && extra.length > 0;
+  const comparing = worktree && !team && extra.length > 0;
+  // A comparison with any non-Claude run cannot use what only Claude has.
+  const anyOther = other || (comparing && extra.some((x) => x.agent !== "claude"));
   const runOn = other ? { agent, model: undefined } : { model };
+  const targets = [{ agent, model }, ...extra].map((t) => (t.agent === "claude" ? { model: t.model } : { agent: t.agent }));
+  const agentLabel = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
   const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !team && !comparing;
   const splitting = canSplit && perFile;
   // The agent gets the instruction, then the results; a saved request keeps both.
@@ -168,7 +172,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     verify: verify.trim() || undefined,
     verifyRetry: verify.trim() && fresh ? "fresh" : undefined,
     acceptance: acceptance.trim() || undefined,
-    sandbox: other ? undefined : sandbox || undefined,
+    sandbox: anyOther ? undefined : sandbox || undefined,
     phases: phased ? RPI : undefined,
     workspace: asChosen ? wsRel : undefined,
     directories: asChosen ? undefined : dirs.filter((d) => d.path.trim()),
@@ -203,7 +207,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         const r = await api.newTaskCompare(
           vault,
           { title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, carryChanges: carry, worktree, autoTitle: !title.trim(), ...checks },
-          [model, ...extra],
+          targets,
         );
         onStartedCompare(r.sessions.map((x) => x.session_id), r.sessions[0]?.title ?? derivedTitle);
         onClose();
@@ -257,7 +261,9 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const runSummary = team
     ? "Set per member in the crew note"
     : [
-        other ? agents.find((a) => a.id === agent)?.label ?? agent : comparing ? [model, ...extra].map(modelLabel).join(" vs ") : modelLabel(model),
+        comparing
+          ? [{ agent, model }, ...extra].map((t) => (t.agent === "claude" ? modelLabel(t.model) : agentLabel(t.agent))).join(" vs ")
+          : other ? agentLabel(agent) : modelLabel(model),
         MODES.find((m) => m.value === mode)?.label,
         worktree ? (carry ? "worktree + my changes" : "worktree") : "in the project",
       ].join(" · ");
@@ -378,16 +384,28 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                 </select>
               )}
               {!other && <ModelSelect value={model} onChange={setModel} />}
-              {worktree && !other && extra.map((m, i) => (
+              {worktree && extra.map((t, i) => (
                 <div key={i} className="compare-row">
-                  <ModelSelect value={m} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? v : x)))} />
+                  {agents.length > 1 && (
+                    <select className="model-select" value={t.agent}
+                      onChange={(e) => setExtra(extra.map((x, j) => (j === i ? { ...x, agent: e.target.value } : x)))}>
+                      {agents.map((a) => (
+                        <option key={a.id} value={a.id} disabled={!a.installed && a.id !== t.agent}>
+                          {a.label}{a.installed ? "" : ` (not found: ${a.command})`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {t.agent === "claude" && (
+                    <ModelSelect value={t.model} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? { ...x, model: v } : x)))} />
+                  )}
                   <button className="icon" onClick={() => setExtra(extra.filter((_, j) => j !== i))} title="Remove"><X size={13} /></button>
                 </div>
               ))}
-              {worktree && !other && extra.length < 3 && (
-                <button className="link compare-add" onClick={() => setExtra([...extra, model])}
-                  title="Run the same task once per model, each in its own worktree, compare the results side by side and keep one">
-                  <GitCompare size={13} /> Compare with another model
+              {worktree && extra.length < 3 && (
+                <button className="link compare-add" onClick={() => setExtra([...extra, { agent: "claude", model }])}
+                  title="Run the same task once per agent or model, each in its own worktree, compare the results side by side and keep one">
+                  <GitCompare size={13} /> Compare with another agent or model
                 </button>
               )}
               <div className="modes">
@@ -431,7 +449,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                 title="Not shown to the agent: a separate session checks the work against them" />
             </Section>
 
-            {!team && !other && (
+            {!team && !anyOther && (
               <Section id="sandbox" title="Sandbox" summary={sandboxSummary}>
                 <div className="modes">
                   {SANDBOXES.map((m) => (

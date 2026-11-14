@@ -136,6 +136,8 @@ pub struct RunOptions {
     project: Option<String>,
     worktree: Option<bool>,
     model: Option<String>,
+    /// The agent to run on instead of the note's `agent:` (None keeps the note's).
+    agent: Option<String>,
     /// do (default), review, plan or explain.
     intent: Option<String>,
     /// What the user wants, in their words.
@@ -197,7 +199,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         _ => vault::fm_get(&text, "permission_mode").filter(|s| !s.is_empty()),
     };
     let model = opts.model.or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
-    let agent = vault::fm_get(&text, "agent").filter(|s| !s.is_empty() && s != agents::DEFAULT);
+    let agent = opts.agent.or_else(|| vault::fm_get(&text, "agent")).filter(|s| !s.is_empty() && s != agents::DEFAULT);
     let use_worktree = opts.worktree.unwrap_or_else(|| vault::fm_get(&text, "worktree").as_deref() != Some("false"));
     let is_request = vault::fm_get(&text, "type").as_deref() == Some("request");
     // A request in phases runs each phase in a new session, on the worktree of the one before.
@@ -553,11 +555,26 @@ struct StartedCompare {
     sessions: Vec<Started>,
 }
 
-/// Runs one request on several models at once, each session in its own worktree, to compare the results.
+/// One run of a comparison: an agent (None is Claude) and, for Claude, a model.
+#[derive(Debug, serde::Deserialize)]
+struct CompareTarget {
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+impl CompareTarget {
+    fn is_claude(&self) -> bool {
+        self.agent.as_deref().is_none_or(|a| a.is_empty() || a == agents::DEFAULT)
+    }
+}
+
+/// Runs one request on several agents and models at once, each session in its own worktree, to compare the results.
 #[tauri::command]
-async fn new_task_compare(app: AppHandle, vault: String, mut task: NewTask, models: Vec<String>) -> Result<StartedCompare> {
-    if !(2..=4).contains(&models.len()) {
-        return Err(error::Error::Other("compare needs 2 to 4 models".into()));
+async fn new_task_compare(app: AppHandle, vault: String, mut task: NewTask, targets: Vec<CompareTarget>) -> Result<StartedCompare> {
+    if !(2..=4).contains(&targets.len()) {
+        return Err(error::Error::Other("compare needs 2 to 4 runs".into()));
     }
     let in_repo = task.worktree && git::repo_root(&vault::expand_home(&task.project)).is_some();
     if !in_repo {
@@ -565,16 +582,32 @@ async fn new_task_compare(app: AppHandle, vault: String, mut task: NewTask, mode
             "comparing needs a git repository and a new worktree, so the runs do not overwrite each other".into(),
         ));
     }
+    // What only Claude has: a sandbox, and a model of its own choosing.
+    if task.sandbox.as_deref().is_some_and(|s| !s.is_empty()) && targets.iter().any(|t| !t.is_claude()) {
+        return Err(error::Error::Other("the sandbox is Claude only: turn it off to compare other agents".into()));
+    }
+    for t in targets.iter().filter(|t| !t.is_claude()) {
+        let agent = agents::find(t.agent.as_deref());
+        if !std::path::Path::new(&shell::which(&agent.command)).is_absolute() {
+            return Err(error::Error::Other(format!("{} is not installed (looked for `{}`)", agent.label, agent.command)));
+        }
+    }
     if task.auto_title {
         task.title = auto_title(&app, &task.prompt, task.title, None).await;
     }
-    // Each session gets its model from the options below, not from the note.
+    // Each session gets its agent and model from the options below, not from the note.
     task.model = None;
+    task.agent = None;
     blocking(move || {
         let request = write_request(&vault, task)?;
         let mut sessions = vec![];
-        for model in models {
-            let opts = RunOptions { model: Some(model), ..Default::default() };
+        for t in targets {
+            // An ACP agent runs on its own model.
+            let opts = if t.is_claude() {
+                RunOptions { model: t.model.filter(|m| !m.is_empty()), ..Default::default() }
+            } else {
+                RunOptions { agent: t.agent, ..Default::default() }
+            };
             sessions.push(start_from_note(app.clone(), &vault, &request, 0, opts)?);
         }
         Ok(StartedCompare { request, sessions })
@@ -582,7 +615,7 @@ async fn new_task_compare(app: AppHandle, vault: String, mut task: NewTask, mode
     .await
 }
 
-/// Saves the new-task dialog as a request note without running it. It waits in the Inbox.
+/// Saves the new-task dialog as a request note without running it. It waits as a todo request.
 #[tauri::command]
 async fn save_task(app: AppHandle, vault: String, mut task: NewTask) -> Result<String> {
     if task.auto_title {
@@ -711,13 +744,35 @@ async fn open_in(path: String, app: String) -> Result<()> {
 }
 
 fn open_with(path: &str, app: &str) -> Result<()> {
-    let mut cmd = std::process::Command::new("open");
-    match app {
-        "vscode" => cmd.args(["-a", "Visual Studio Code"]),
-        "reveal" => cmd.arg("-R"),
-        _ => &mut cmd,
-    };
-    cmd.arg(vault::expand_home(path)).status()?;
+    let path = vault::expand_home(path);
+    let mut cmd;
+    if cfg!(target_os = "macos") {
+        cmd = std::process::Command::new("open");
+        match app {
+            "vscode" => cmd.args(["-a", "Visual Studio Code"]),
+            "reveal" => cmd.arg("-R"),
+            _ => &mut cmd,
+        };
+        cmd.arg(&path);
+    } else if app == "vscode" {
+        // `code` is on the PATH where VS Code is installed (a .cmd file on Windows).
+        cmd = shell::command("code");
+        cmd.arg(&path);
+    } else if cfg!(windows) {
+        cmd = std::process::Command::new("explorer");
+        if app == "reveal" {
+            cmd.arg(format!("/select,{}", path.display()));
+        } else {
+            cmd.arg(&path);
+        }
+    } else {
+        // Linux file managers cannot select a file, so reveal opens its folder.
+        cmd = std::process::Command::new("xdg-open");
+        let target = if app == "reveal" && path.is_file() { path.parent().map(Path::to_path_buf).unwrap_or(path) } else { path };
+        cmd.arg(target);
+    }
+    // explorer exits with 1 even when it worked, so only a failure to start is an error.
+    cmd.status()?;
     Ok(())
 }
 
@@ -1658,4 +1713,21 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod compare_tests {
+    use super::CompareTarget;
+
+    fn target(json: &str) -> CompareTarget {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_run_without_an_agent_is_claude() {
+        assert!(target(r#"{"model":"sonnet"}"#).is_claude());
+        assert!(target(r#"{"agent":"claude"}"#).is_claude());
+        assert!(target(r#"{"agent":""}"#).is_claude());
+        assert!(!target(r#"{"agent":"codex"}"#).is_claude());
+    }
 }

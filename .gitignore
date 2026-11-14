@@ -28,3 +28,12 @@ dist-ssr
 
 .vscode
 
+
+# site (Cloudflare Pages output)
+/site/book/
+/target/
+/dist-app/
+
+# sidecar executable and its build output
+/src-tauri/binaries/
+/sidecar/dist/

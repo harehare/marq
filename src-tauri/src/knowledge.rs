@@ -33,7 +33,7 @@ pub const FOLDER: &str = "knowledge";
 
 /// `~` expanded, no trailing slash, so the same project compares equal however it was written.
 fn norm(project: &str) -> String {
-    vault::expand_home(project.trim()).to_string_lossy().trim_end_matches('/').to_string()
+    vault::expand_home(project.trim()).to_string_lossy().trim_end_matches(['/', '\\']).to_string()
 }
 
 /// The bullets under `## Learnings`, without the empty placeholder.

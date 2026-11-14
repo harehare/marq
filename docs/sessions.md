@@ -69,11 +69,11 @@ When the project is inside a git repository, each session gets its own worktree 
 - **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).
 - **Mark as done** moves a session out of **Needs review**. A created PR shows a badge in the sidebar.
 
-## Compare models
+## Compare agents and models
 
-In **New task**, choose **Compare with another model** under Model to add up to three more models. Marq saves one request note and starts one session per model, each in its own worktree, so the runs cannot overwrite each other. This needs a git repository and **Work in a new worktree**.
+In **New task**, choose **Compare with another agent or model** under Run to add up to three more runs. Each run is a Claude model, or another agent such as Codex or Gemini CLI, which runs on its own model. Marq saves one request note and starts one session per run, each in its own worktree, so the runs cannot overwrite each other. This needs a git repository and **Work in a new worktree**. The sandbox is Claude only, so it is left off when a comparison includes another agent.
 
-A **Compare** tab opens with one column per run: the model, status, branch and changed files. Open a file to see its diff. When every run has finished, **Keep this one** removes the worktrees of the other runs (their branches and session logs are kept) and opens the one you kept, where you commit and create a PR as usual. For runs you started earlier, right-click one of them in the sidebar and choose **Compare runs**.
+A **Compare** tab opens with one column per run: the model or agent, status, branch and changed files. Open a file to see its diff. When every run has finished, **Keep this one** removes the worktrees of the other runs (their branches and session logs are kept) and opens the one you kept, where you commit and create a PR as usual. For runs you started earlier, right-click one of them in the sidebar and choose **Compare runs**.
 
 ## Checks, phases and the sandbox
 

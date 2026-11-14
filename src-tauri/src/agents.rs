@@ -90,6 +90,11 @@ pub struct AgentInfo {
     pub agent: Agent,
     /// Whether the command was found on the PATH.
     pub installed: bool,
+    /// Built into Marq, as opposed to added in config.toml.
+    pub builtin: bool,
+    /// A built-in agent's command and arguments without config.toml's changes.
+    pub default_command: String,
+    pub default_args: Vec<String>,
 }
 
 /// Every agent, with whether it is installed.
@@ -98,7 +103,14 @@ pub fn list() -> Vec<AgentInfo> {
         .into_iter()
         .map(|agent| {
             let installed = std::path::Path::new(&which(&agent.command)).is_absolute();
-            AgentInfo { agent, installed }
+            let default = BUILTIN.iter().find(|b| b.0 == agent.id);
+            AgentInfo {
+                installed,
+                builtin: default.is_some(),
+                default_command: default.map(|b| b.2.to_string()).unwrap_or_default(),
+                default_args: default.map(|b| b.3.iter().map(|a| a.to_string()).collect()).unwrap_or_default(),
+                agent,
+            }
         })
         .collect()
 }

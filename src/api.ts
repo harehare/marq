@@ -88,6 +88,8 @@ export type SessionInfo = {
   pr_url: string | null;
   /** A Claude alias or `ollama:<name>`; empty for the default. */
   model?: string | null;
+  /** The agent backend; empty for Claude. */
+  agent?: string | null;
   /** Set for crew members. */
   crew?: { id: string; role: string };
 };
@@ -156,7 +158,12 @@ export type CrewState = {
 // Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit.
 export type SessionEvent = { type: string; [k: string]: any };
 
-export type AgentInfo = { id: string; label: string; command: string; args: string[]; installed: boolean };
+export type AgentInfo = {
+  id: string; label: string; command: string; args: string[]; installed: boolean;
+  /** Built into Marq, as opposed to added in config.toml. */
+  builtin: boolean;
+  default_command: string; default_args: string[];
+};
 
 export const api = {
   listFiles: (vault: string) => invoke<FileEntry[]>("list_files", { vault }),
@@ -202,11 +209,11 @@ export const api = {
   saveTask: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   } & TaskChecks) => invoke<string>("save_task", { vault, task }),
-  /** One request on 2 to 4 models, each in its own worktree. */
+  /** One request on 2 to 4 runs, each in its own worktree. A run is a Claude model, or another agent (which runs on its own model). */
   newTaskCompare: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
-  } & TaskChecks, models: string[]) =>
-    invoke<{ request: string; sessions: { session_id: string; title: string }[] }>("new_task_compare", { vault, task, models }),
+  } & TaskChecks, targets: { agent?: string; model?: string }[]) =>
+    invoke<{ request: string; sessions: { session_id: string; title: string }[] }>("new_task_compare", { vault, task, targets }),
   /** `answers`: for AskUserQuestion, question text -> chosen label(s), comma-separated. */
   answerApproval: (requestId: string, allow: boolean, always: boolean, message?: string, answers?: Record<string, string>) =>
     invoke<void>("answer_approval", { requestId, allow, always, message, answers }),
