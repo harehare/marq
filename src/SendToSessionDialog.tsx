@@ -27,7 +27,7 @@ type Props = {
 };
 
 /** The message a session receives: the instruction, then the excerpt with its source. */
-export function composeMessage(excerpt: Excerpt, instruction: string) {
+function composeMessage(excerpt: Excerpt, instruction: string) {
   const lines = excerpt.lines ? ` lines="${excerpt.lines[0]}-${excerpt.lines[1]}"` : "";
   const block = `<excerpt source="${excerpt.source.replace(/"/g, "'")}"${lines}>\n${excerpt.text.trim()}\n</excerpt>`;
   return instruction.trim() ? `${instruction.trim()}\n\n${block}` : block;

@@ -54,7 +54,7 @@ export type DirSpec = { path: string; worktree: boolean };
 /** A saved set of directories: `workspaces/<name>.md`. */
 export type Workspace = { path: string; rel: string; title: string; project: string | null; directories: DirSpec[]; notes: string };
 /** A directory a session got beyond its own: `path` is where the agent works (its worktree, if it has one). */
-export type ExtraDir = { path: string; source: string; worktree?: Worktree | null };
+type ExtraDir = { path: string; source: string; worktree?: Worktree | null };
 export type NoteRef = { path: string; rel: string; title: string | null; line: number; text: string };
 /** Links into a note, mentions of it that are not links, what it links to, and its `[[links]]` to no note. */
 export type NoteLinks = { linked: NoteRef[]; mentions: NoteRef[]; outgoing: string[]; missing: string[] };
@@ -94,7 +94,7 @@ export type SessionInfo = {
   crew?: { id: string; role: string };
 };
 export type Worktree = { repo: string; path: string; branch: string; base: string; base_branch: string };
-export type FileChange = { path: string; status: string; additions: number; deletions: number };
+type FileChange = { path: string; status: string; additions: number; deletions: number };
 export type Changes = { files: FileChange[]; additions: number; deletions: number; commits: string[]; dirty: boolean; upstream: string | null; ahead: number; branch: string | null };
 export type SlashCommand = { name: string; description: string; argumentHint: string; aliases?: string[]; builtin?: boolean };
 export type Approval = {
@@ -105,8 +105,8 @@ export type Approval = {
   title: string | null;
   reason: string | null;
 };
-export type CrewMember = { role: string; permission_mode: string | null; worktree: boolean; model: string | null; instructions: string };
-export type CrewMemberState = {
+type CrewMember = { role: string; permission_mode: string | null; worktree: boolean; model: string | null; instructions: string };
+type CrewMemberState = {
   role: string;
   session_id: string | null;
   /** idle (no session yet), running, waiting, done, error or interrupted. */

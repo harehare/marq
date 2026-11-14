@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 export type Palette = "tarn" | "amber" | "nord" | "solarized" | "rose-pine";
-export type Mode = "system" | "light" | "dark";
+type Mode = "system" | "light" | "dark";
 export type Theme = { palette: Palette; mode: Mode };
 
 export const PALETTES: { key: Palette; label: string }[] = [

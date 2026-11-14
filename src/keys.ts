@@ -14,7 +14,7 @@ export type Mode = "normal" | "tab" | "pane" | "locked";
 /** Mode -> command id -> keys. */
 export type Keymap = Record<Mode, Record<string, string[]>>;
 
-export const DEFAULT_KEYS: Keymap = {
+const DEFAULT_KEYS: Keymap = {
   normal: {
     "mode.tab": ["Ctrl+T"],
     "mode.pane": ["Ctrl+P"],
@@ -98,7 +98,7 @@ export function eventKey(e: KeyboardEvent): string | null {
 }
 
 /** Accepts "cmd+shift+t", "Mod+T", "ctrl-t"… and returns the canonical form. */
-export function normalize(key: string): string {
+function normalize(key: string): string {
   const parts = key.split(/[+-](?=.)/).map((p) => p.trim());
   const last = parts.pop() ?? "";
   const mods = new Set(parts.map((p) => p.toLowerCase()).map((p) =>
