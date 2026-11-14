@@ -58,6 +58,7 @@ permission_mode: acceptEdits
 worktree: false             # optional; skip the own worktree
 branch: marq/my-branch      # optional; name for the worktree's branch
 carry_changes: true         # optional; start from your uncommitted changes
+base: latest                # optional; head (default), latest, or a branch name
 sessions: [0192f0c5-...]    # all runs, including retries
 context:                    # attached to the prompt at run time
   - note: 0192e...          # a whole note by id

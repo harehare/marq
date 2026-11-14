@@ -61,9 +61,9 @@ Board queues (**Workspace** in the Queue dialog, `queue_workspace`), schedules (
 
 ## Worktrees and review
 
-When the project is inside a git repository, each session gets its own worktree at `~/.marq/worktrees/<repo>/<short id>` on a new branch `marq/<short id>`, created from HEAD. Set `worktree: false` in the note to work in the project directory, or `branch:` to name the branch.
+When the project is inside a git repository, each session gets its own worktree at `~/.marq/worktrees/<repo>/<short id>` on a new branch `marq/<short id>`. Where it starts is up to `base:` in the note, set by **Start from…** in New task: `head` (the project's current checkout; the default for notes without `base:`), `latest` (the tip of the default branch, taken from `origin/HEAD`, else `main` or `master`, after a `git fetch origin`) or a branch name. Your own checkout is never switched or pulled, and a pull request goes to the branch the work started from. If the fetch fails (offline, no access) the local branch is used. New task remembers the last choice and starts on `latest`. Set `worktree: false` in the note to work in the project directory, or `branch:` to name the branch.
 
-- Tick **Include my uncommitted changes** (`carry_changes: true`) to copy your uncommitted diff and untracked files into the new worktree.
+- Tick **Include my uncommitted changes** (`carry_changes: true`) to copy your uncommitted diff and untracked files into the new worktree. This only works when starting from `head`, since the changes are a diff against it.
 - The **Changes** panel diffs against the base commit, so it covers commits made in the worktree, uncommitted edits and untracked files.
 - From the panel you can commit everything, push (`git push -u origin <branch>`), push and create a pull request with `gh` (the message's first line is the title, the rest the body), rename the branch, open a terminal tab in the worktree, open it in Finder or VS Code, and remove the worktree. Removing keeps the branch.
 - **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).

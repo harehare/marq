@@ -217,8 +217,15 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
                 let carry = vault::fm_get(&text, "carry_changes").as_deref() == Some("true");
                 let wanted = vault::fm_get(&text, "branch");
                 let branch = git::branch_name(&repo, wanted.as_deref(), &session_id)?;
+                let base = git::Base::parse(vault::fm_get(&text, "base").as_deref());
+                if base != git::Base::Head {
+                    progress(&app, "Fetching the latest base branch…");
+                    if !git::fetch_origin(&repo) {
+                        progress(&app, "Could not fetch; starting from the local branch…");
+                    }
+                }
                 progress(&app, if carry { "Creating a worktree with your changes…" } else { "Creating a worktree…" });
-                Some(git::create(&repo, &session_id, &branch, carry)?)
+                Some(git::create(&repo, &session_id, &branch, carry, &base)?)
             }
             None => None,
         },
@@ -400,6 +407,9 @@ struct NewTask {
     agent: Option<String>,
     #[serde(default)]
     carry_changes: bool,
+    /// Where the worktree's branch starts: `head` (the default), `latest` (the default branch, fetched) or a branch name.
+    #[serde(default)]
+    base: Option<String>,
     /// False: run in the project itself instead of a new worktree.
     #[serde(default = "yes")]
     worktree: bool,
@@ -495,7 +505,7 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 /// Writes the task as a request note (`status: todo`) and returns its path relative to the vault.
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let NewTask {
-        title, prompt, project, permission_mode, model, agent, carry_changes, worktree, verify, verify_retry, verify_retries,
+        title, prompt, project, permission_mode, model, agent, carry_changes, base, worktree, verify, verify_retry, verify_retries,
         sandbox, phases, acceptance, extra, workspace: ws, directories, ..
     } = task;
     let v = Path::new(vault);
@@ -511,8 +521,14 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
     }
     if !worktree {
         mode.push_str("worktree: false\n");
-    } else if carry_changes {
-        mode.push_str("carry_changes: true\n");
+    } else {
+        // Uncommitted changes are a diff against HEAD, so they only make sense on a worktree that starts there.
+        let base = git::Base::parse(base.as_deref());
+        if base != git::Base::Head {
+            mode.push_str(&format!("base: {}\n", match base { git::Base::Latest => "latest".to_string(), git::Base::Branch(b) => b, git::Base::Head => unreachable!() }));
+        } else if carry_changes {
+            mode.push_str("carry_changes: true\n");
+        }
     }
     let q = |s: &str| serde_json::to_string(s).unwrap();
     let mut keys: Vec<(String, String)> = extra;

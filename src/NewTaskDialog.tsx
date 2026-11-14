@@ -41,6 +41,7 @@ const TEAM_KEY = "marq.lastTeam";
 const WORKTREE_KEY = "marq.lastWorktree";
 const SANDBOX_KEY = "marq.lastSandbox";
 const WORKSPACE_KEY = "marq.lastWorkspace";
+const BASE_KEY = "marq.lastBase";
 /** The verify command is per project: `marq.verify:<project>`. */
 const VERIFY_KEY = "marq.verify:";
 const RPI = ["research", "plan", "implement"];
@@ -74,6 +75,12 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agent, setAgent] = useState(() => stored(AGENT_KEY, "claude"));
   const [carry, setCarry] = useState(false);
+  // Where the worktree's branch starts. Uncommitted changes only fit a start at HEAD.
+  const [baseMode, setBaseMode] = useState<"head" | "latest" | "branch">(() => {
+    const b = stored(BASE_KEY, "latest");
+    return b === "head" || b === "branch" ? b : "latest";
+  });
+  const [baseBranch, setBaseBranch] = useState(() => stored(BASE_KEY + ".branch", ""));
   // More agents or models to run the same task on, to compare the results.
   const [extra, setExtra] = useState<{ agent: string; model: string }[]>([]);
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
@@ -179,6 +186,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     phases: phased ? RPI : undefined,
     workspace: asChosen ? wsRel : undefined,
     directories: asChosen ? undefined : dirs.filter((d) => d.path.trim()),
+    base: !worktree || baseMode === "head" ? undefined : baseMode === "latest" ? "latest" : baseBranch.trim() || undefined,
   };
 
   const start = async () => {
@@ -188,6 +196,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     try {
       try {
         localStorage.setItem(PROJECT_KEY, project);
+        localStorage.setItem(BASE_KEY, baseMode);
+        localStorage.setItem(BASE_KEY + ".branch", baseBranch);
         localStorage.setItem(MODE_KEY, mode);
         localStorage.setItem(MODEL_KEY, model);
         localStorage.setItem(AGENT_KEY, agent);
@@ -268,7 +278,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           ? [{ agent, model }, ...extra].map((t) => (t.agent === "claude" ? modelLabel(t.model) : agentLabel(t.agent))).join(" vs ")
           : other ? agentLabel(agent) : modelLabel(model),
         MODES.find((m) => m.value === mode)?.label,
-        worktree ? (carry ? "worktree + my changes" : "worktree") : "in the project",
+        worktree ? (carry ? "worktree + my changes" : baseMode === "latest" ? "worktree · latest" : baseMode === "branch" && baseBranch.trim() ? `worktree · ${baseBranch.trim()}` : "worktree") : "in the project",
       ].join(" · ");
   const checksSummary = [
     phased && "research → plan → implement",
@@ -418,13 +428,29 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                   </button>
                 ))}
               </div>
-              <label className="check" title="A git repository gets its own worktree and branch from HEAD, so tasks can run in parallel">
+              <label className="check" title="A git repository gets its own worktree and branch, so tasks can run in parallel">
                 <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} />
                 Work in a new worktree
               </label>
               {worktree && (
-                <label className="check">
-                  <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />
+                <div className="project-row" title="Where the new branch starts. Latest fetches origin first and leaves your checkout alone; a pull request then goes to that branch.">
+                  <select className="model-select" value={baseMode} onChange={(e) => {
+                    const m = e.target.value as typeof baseMode;
+                    setBaseMode(m);
+                    if (m !== "head") setCarry(false);
+                  }}>
+                    <option value="latest">Start from the latest default branch</option>
+                    <option value="head">Start from the current HEAD</option>
+                    <option value="branch">Start from a branch…</option>
+                  </select>
+                  {baseMode === "branch" && (
+                    <input value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} placeholder="main, release/1.0…" spellCheck={false} />
+                  )}
+                </div>
+              )}
+              {worktree && (
+                <label className="check" title={baseMode === "head" ? undefined : "Uncommitted changes are a diff against HEAD, so they need a start at HEAD"}>
+                  <input type="checkbox" checked={carry} disabled={baseMode !== "head"} onChange={(e) => setCarry(e.target.checked)} />
                   Include my uncommitted changes
                 </label>
               )}

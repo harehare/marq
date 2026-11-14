@@ -921,7 +921,7 @@ fn new_member(app: &AppHandle, crew: &Crew, member: &Member) -> Result<SessionMe
                 let wanted = format!("marq/{}-{short}", vault::slug(&member.role));
                 let branch = git::branch_name(&repo, Some(&wanted), &session_id)?;
                 let _ = app.emit("task://progress", format!("Creating a worktree for {}…", member.role));
-                Some(git::create(&repo, &session_id, &branch, false)?)
+                Some(git::create(&repo, &session_id, &branch, false, &git::Base::Head)?)
             }
             None => None,
         },

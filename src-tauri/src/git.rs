@@ -1,5 +1,6 @@
 //! Per-session git worktrees and their changes, through libgit2: no `git` process is run.
-//! (`gh pr create` is the one external command, since it is GitHub's CLI rather than git.)
+//! (`gh pr create` is an external command, since it is GitHub's CLI rather than git; so is the `git fetch`
+//! that brings a base branch up to date, which needs the user's own credential setup.)
 
 use std::path::{Path, PathBuf};
 
@@ -135,21 +136,89 @@ pub fn branch_name(repo: &Path, wanted: Option<&str>, session_id: &str) -> Resul
     Ok(name)
 }
 
-/// Creates `~/.marq/worktrees/<repo>/<short id>` on a new `branch` from HEAD.
+/// Where a new worktree's branch starts.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Base {
+    /// What the project has checked out now.
+    #[default]
+    Head,
+    /// The tip of the repository's default branch (`origin/HEAD`, else `main` or `master`), fetched first.
+    Latest,
+    /// The tip of this branch, fetched first.
+    Branch(String),
+}
+
+impl Base {
+    /// From the `base:` value of a request note: `head`, `latest`, or a branch name. Empty is `head`.
+    pub fn parse(s: Option<&str>) -> Base {
+        match s.map(str::trim).unwrap_or("") {
+            "" | "head" => Base::Head,
+            "latest" => Base::Latest,
+            name => Base::Branch(name.to_string()),
+        }
+    }
+}
+
+/// Brings `origin` up to date. False when there is no `origin` or the fetch failed (offline, no access):
+/// the local branches are used as they are then. Never prompts for credentials.
+pub fn fetch_origin(repo_dir: &Path) -> bool {
+    let Ok(repo) = open(repo_dir) else { return false };
+    if repo.find_remote("origin").is_err() {
+        return false;
+    }
+    shell::command("git")
+        .current_dir(repo_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["fetch", "--quiet", "--prune", "origin"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// The repository's default branch: where `origin/HEAD` points, else `main` or `master`.
+fn default_branch(repo: &Repository) -> Option<String> {
+    if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Some(t) = r.symbolic_target().ok().flatten().and_then(|t| t.strip_prefix("refs/remotes/origin/")) {
+            return Some(t.to_string());
+        }
+    }
+    ["main", "master"]
+        .into_iter()
+        .find(|n| branch_exists(repo, n) || repo.find_branch(&format!("origin/{n}"), BranchType::Remote).is_ok())
+        .map(str::to_string)
+}
+
+/// The commit a branch is at: `origin/<name>` when there is one (after a fetch it is the newest), else the local branch.
+fn branch_tip<'r>(repo: &'r Repository, name: &str) -> Result<git2::Commit<'r>> {
+    let found = repo
+        .find_branch(&format!("origin/{name}"), BranchType::Remote)
+        .or_else(|_| repo.find_branch(name, BranchType::Local))
+        .map_err(|_| Error::Other(format!("no branch {name} to start from")))?;
+    Ok(found.get().peel_to_commit()?)
+}
+
+/// Creates `~/.marq/worktrees/<repo>/<short id>` on a new `branch` starting at `base`.
 /// With `carry`, the repo's uncommitted changes and untracked files are copied into it as well.
-pub fn create(repo_dir: &Path, session_id: &str, branch: &str, carry: bool) -> Result<Worktree> {
+pub fn create(repo_dir: &Path, session_id: &str, branch: &str, carry: bool, base: &Base) -> Result<Worktree> {
     let short = &session_id[session_id.len().saturating_sub(8)..];
     let name = repo_dir.file_name().unwrap_or_default().to_string_lossy();
     let path = dirs::home_dir().unwrap_or_default().join(".marq/worktrees").join(&*name).join(short);
-    create_at(repo_dir, &path, short, branch, carry)
+    create_at(repo_dir, &path, short, branch, carry, base)
 }
 
 /// [`create`] at a given `path`, registered as worktree `name`.
-fn create_at(repo_dir: &Path, path: &Path, short: &str, branch: &str, carry: bool) -> Result<Worktree> {
+fn create_at(repo_dir: &Path, path: &Path, short: &str, branch: &str, carry: bool, base: &Base) -> Result<Worktree> {
     std::fs::create_dir_all(path.parent().unwrap())?;
     let repo = open(repo_dir)?;
-    let head = repo.head()?.peel_to_commit()?;
-    let base_branch = head_name(&repo).unwrap_or_else(|| "HEAD".into());
+    // The PR goes back to the branch the work started from.
+    let (head, base_branch) = match base {
+        Base::Head => (repo.head()?.peel_to_commit()?, head_name(&repo).unwrap_or_else(|| "HEAD".into())),
+        Base::Latest => {
+            let name = default_branch(&repo).ok_or_else(|| Error::Other("no default branch (main or master) to start from".into()))?;
+            (branch_tip(&repo, &name)?, name)
+        }
+        Base::Branch(name) => (branch_tip(&repo, name)?, name.clone()),
+    };
     let created = repo.branch(branch, &head, false)?;
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(created.get()));
@@ -786,14 +855,60 @@ mod tests {
         sh(r, &["add", "."]);
         sh(r, &["commit", "-qm", "init"]);
         let home = tempfile::tempdir().unwrap();
-        let wt = create_at(r, &home.path().join("wt"), "abcd1234", "marq/lib", false).unwrap();
+        let wt = create_at(r, &home.path().join("wt"), "abcd1234", "marq/lib", false, &Base::Head).unwrap();
         assert_eq!(wt.base_branch, "main");
         assert!(Path::new(&wt.path).join("a.txt").exists());
         assert_eq!(git(Path::new(&wt.path), &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap().trim(), "marq/lib");
         assert!(git(r, &["worktree", "list"]).unwrap().contains("marq/lib"));
         // The branch is taken, so the same name cannot be created again.
-        assert!(create_at(r, &home.path().join("wt2"), "efgh5678", "marq/lib", false).is_err());
+        assert!(create_at(r, &home.path().join("wt2"), "efgh5678", "marq/lib", false, &Base::Head).is_err());
         remove(&wt).unwrap();
         assert!(!git(r, &["worktree", "list"]).unwrap().contains("marq/lib"));
+    }
+
+    #[test]
+    fn starts_from_the_latest_default_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        let clone = tmp.path().join("clone");
+        std::fs::create_dir_all(&origin).unwrap();
+        sh(&origin, &["init", "-q", "-b", "main"]);
+        sh(&origin, &["config", "user.email", "t@example.com"]);
+        sh(&origin, &["config", "user.name", "t"]);
+        std::fs::write(origin.join("a.txt"), "one\n").unwrap();
+        sh(&origin, &["add", "."]);
+        sh(&origin, &["commit", "-qm", "one"]);
+        sh(tmp.path(), &["clone", "-q", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+        // The clone is working on a feature branch, and origin moves on.
+        sh(&clone, &["config", "user.email", "t@example.com"]);
+        sh(&clone, &["config", "user.name", "t"]);
+        sh(&clone, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(origin.join("b.txt"), "two\n").unwrap();
+        sh(&origin, &["add", "."]);
+        sh(&origin, &["commit", "-qm", "two"]);
+
+        assert!(fetch_origin(&clone));
+        let home = tempfile::tempdir().unwrap();
+        // HEAD is still the feature branch, without the new commit.
+        let head = create_at(&clone, &home.path().join("h"), "aaaa1111", "marq/h", false, &Base::Head).unwrap();
+        assert_eq!(head.base_branch, "feature");
+        assert!(!Path::new(&head.path).join("b.txt").exists());
+        // Latest starts from origin/main and aims the PR at main.
+        let latest = create_at(&clone, &home.path().join("l"), "bbbb2222", "marq/l", false, &Base::Latest).unwrap();
+        assert_eq!(latest.base_branch, "main");
+        assert!(Path::new(&latest.path).join("b.txt").exists());
+        // A named branch works too, and an unknown one is an error.
+        let named = create_at(&clone, &home.path().join("n"), "cccc3333", "marq/n", false, &Base::Branch("main".into())).unwrap();
+        assert!(Path::new(&named.path).join("b.txt").exists());
+        assert!(create_at(&clone, &home.path().join("x"), "dddd4444", "marq/x", false, &Base::Branch("nope".into())).is_err());
+        assert!(!clone.join("b.txt").exists(), "the project checkout is left alone");
+    }
+
+    #[test]
+    fn parses_base() {
+        assert_eq!(Base::parse(None), Base::Head);
+        assert_eq!(Base::parse(Some(" head ")), Base::Head);
+        assert_eq!(Base::parse(Some("latest")), Base::Latest);
+        assert_eq!(Base::parse(Some("release/1.0")), Base::Branch("release/1.0".into()));
     }
 }

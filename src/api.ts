@@ -48,6 +48,8 @@ export type TaskChecks = {
   workspace?: string;
   /** Directories beyond the project, when not from a workspace. */
   directories?: DirSpec[];
+  /** Where the worktree's branch starts: `head` (the project's checkout, the default), `latest` (the default branch, fetched) or a branch name. */
+  base?: string;
 };
 /** A directory beyond the project; `worktree` gives a git repository its own worktree on the session's branch. */
 export type DirSpec = { path: string; worktree: boolean };

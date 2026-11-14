@@ -191,7 +191,7 @@ pub fn prepare(dirs: &[DirSpec], session_id: &str, branch: Option<&str>, project
             // The project's own repository already has the session's worktree.
             (Some(repo), Some(branch)) if d.worktree && !same_repo => {
                 let name = git::branch_name(&repo, Some(branch), session_id)?;
-                Some(git::create(&repo, session_id, &name, false)?)
+                Some(git::create(&repo, session_id, &name, false, &git::Base::Head)?)
             }
             _ => None,
         };
