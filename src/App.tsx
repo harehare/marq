@@ -530,6 +530,8 @@ export default function App() {
   const setSidebarOpen = (v: boolean) => {
     setSidebarOpenState(v);
     const flag = v ? "1" : "0";
+  // Runs once the task started from a card has begun, to move the card.
+  const taskAfter = useRef<(() => void) | null>(null);
     try {
       localStorage.setItem("marq.sidebar", flag);
     } catch {}
@@ -1806,7 +1808,7 @@ export default function App() {
                 onTitle={(title) => setTabs((prev) => prev.map((x) => (x.key === t.key && x.kind === "terminal" && !x.named ? { ...x, title } : x)))} />}
               {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
                 onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
-                onStartTask={(prompt) => { setTaskPrompt(prompt); setShowNewTask(true); }} />}
+                onStartTask={(prompt, after) => { taskAfter.current = after ?? null; setTaskPrompt(prompt); setShowNewTask(true); }} />}
               {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active}
                 onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))}
                 onOpenSession={openSession} />}
@@ -1911,11 +1913,11 @@ export default function App() {
       )}
       {showNewTask && (
         <NewTaskDialog vault={vault} initialPrompt={taskPrompt} context={taskContext ?? undefined}
-          onClose={() => { setShowNewTask(false); setTaskPrompt(""); setTaskContext(null); }}
-          onStarted={(id, title) => { refresh(); openSession(id, title); }}
-          onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); }}
+          onClose={() => { setShowNewTask(false); setTaskPrompt(""); setTaskContext(null); taskAfter.current = null; }}
+          onStarted={(id, title) => { refresh(); openSession(id, title); taskAfter.current?.(); }}
+          onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); taskAfter.current?.(); }}
           onSaved={(rel) => { refresh(); openNote(`${vault}/${rel}`); }}
-          onStartedCompare={(ids, title) => openCompare(ids, title)} />
+          onStartedCompare={(ids, title) => { openCompare(ids, title); taskAfter.current?.(); }} />
       )}
       {showQuickOpen && (
         <QuickOpen files={files} recent={recentFiles} sessions={sessions} onClose={() => setShowQuickOpen(false)}

@@ -23,8 +23,8 @@ type Props = {
   onOpenFile: (path: string) => void;
   /** Creates a note at a vault-relative path and opens it; resolves to its path. */
   onCreateNote: (rel: string) => Promise<string>;
-  /** Starts a session from a card, with a prompt naming the card. */
-  onStartTask: (prompt: string) => void;
+  /** Starts a session from a card, with a prompt naming the card. `after` runs once the task has started. */
+  onStartTask: (prompt: string, after?: () => void) => void;
   /**
    * The board is this crew's task list: owners are picked from its members and assigning one tells
    * that member. The members work the cards, so there is no Start a session and no queue.
@@ -126,10 +126,15 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
       return file ? `- ${l.title}: ${vaultRel(file)}` : `- ${n}`;
     });
     const linked = linksOf(c).length > 0;
+    // Once the session has started the card goes to the doing list: the queue's, else one named Doing / In progress.
+    const doing = board?.queue?.doing
+      ?? board?.lists.find((l) => /^(doing|in progress|wip)$/i.test(l.name.trim()))?.name;
+    const target = doing && board?.lists.find((l) => l.name.toLowerCase() === doing.toLowerCase())?.name;
     onStartTask(
       [c.title, ...notes, "",
         ...(linked ? ["Read the linked notes first; they hold the details for this card.", ""] : []),
         `(Card ${c.id} on the board ${vaultRel(path)}, list ${list}. Keep it up to date with board_update_card as you work.)`].join("\n"),
+      target && target.toLowerCase() !== list.toLowerCase() ? () => update(c.id, { list: target }) : undefined,
     );
   };
   const link = (c: Card, title: string, file: string) => update(c.id, { note: linkTo(path, title, file) });
