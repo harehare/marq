@@ -109,4 +109,4 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 
 See [Agents and models](docs/agents.md) for what each one can do.
 
-mq queries use [mq-lang](https://github.com/harehare/mq) 0.9.3, embedded in the app.
+mq queries use [mq-lang](https://github.com/harehare/mq) 0.10.1, embedded in the app.
