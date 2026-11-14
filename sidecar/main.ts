@@ -151,8 +151,6 @@ function handle(c: Command) {
       return stop(c.id);
     case "approval":
       return answer(c);
-    case "summarize":
-      return void reply(c.reqId, () => backendFor(c.agent).summarize(c), "summary", "text");
     case "commands":
       return void reply(c.reqId, () => commands(c));
     case "title":

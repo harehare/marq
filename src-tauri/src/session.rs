@@ -503,17 +503,6 @@ fn notes_range(body: &str) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
-/// Replaces `## Summary` and `## Learnings` with `text`.
-pub fn set_summary(vault: &Path, id: &str, text: &str) -> Result<()> {
-    let path = md_path(vault, &meta(vault, id)?);
-    let file = std::fs::read_to_string(&path)?;
-    let (start, end) = notes_range(&file).ok_or_else(|| Error::Other("no ## Summary in the session file".into()))?;
-    let text = text.trim();
-    let text = if text.starts_with("## Summary") { text.to_string() } else { format!("## Summary\n\n{text}") };
-    std::fs::write(&path, format!("{}{text}\n{}", &file[..start], &file[end..]))?;
-    Ok(())
-}
-
 /// Adds a bullet to `## Learnings`. Rendering keeps it because that part of the file is hand-editable.
 pub fn append_learning(vault: &Path, id: &str, text: &str) -> Result<()> {
     let path = md_path(vault, &meta(vault, id)?);
@@ -771,10 +760,6 @@ mod tests {
         rerender(v, &meta().id).unwrap();
         let md = std::fs::read_to_string(md_path(v, &meta())).unwrap();
         assert!(md.contains("## Learnings\n\n- mq select yields None\n- second\n"), "{md}");
-        set_summary(v, &meta().id, "## Summary\n\nDid it.\n\n## Learnings\n\n- one").unwrap();
-        rerender(v, &meta().id).unwrap();
-        let md = std::fs::read_to_string(md_path(v, &meta())).unwrap();
-        assert!(md.contains("Did it.") && md.contains("- one") && !md.contains("second") && md.contains("## Transcript"));
     }
 
     #[test]

@@ -22,7 +22,7 @@ The `model` in a note's frontmatter, or the model picker in the New task dialog,
 | `opus`, `sonnet`, `haiku`, or a full Claude model name | Claude |
 | `ollama:<name>` | A local model served by Ollama |
 
-The model is stored with the session and used again when it is resumed or summarized.
+The model is stored with the session and used again when it is resumed.
 
 ## Ollama
 
@@ -63,7 +63,6 @@ Marq's [vault tools](tools.md) reach the agent over MCP (HTTP) when it supports 
 
 - Crews and model choice are Claude only. An ACP agent can be one of the runs of a [comparison](sessions.md#compare-agents-and-models), on its own model.
 - The sandbox is Claude only; an ACP agent with `sandbox:` set refuses to start.
-- A summary is written from the session note.
 
 ## Permission modes
 

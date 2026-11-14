@@ -19,12 +19,6 @@ export type Command =
   | { op: "interrupt"; id: string }
   | { op: "stop"; id: string }
   | { op: "approval"; requestId: string; allow: boolean; always?: boolean; message?: string; answers?: Record<string, string> }
-  | {
-      op: "summarize"; reqId: string; id: string; cwd: string; instruction: string; model?: string | null;
-      agent?: string; executable?: string; args?: string[]; agentSession?: string;
-      /** The session note, for agents that cannot fork the conversation. */
-      transcript?: string;
-    }
   | { op: "commands"; reqId: string; id?: string; cwd: string; agent?: string; executable?: string }
   | { op: "title"; reqId: string; text: string; model?: string | null; agent?: string; executable?: string }
   | { op: "ollama_models"; reqId: string }

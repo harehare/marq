@@ -395,7 +395,7 @@ class AcpSession implements AgentSession {
   }
 }
 
-/** One prompt in a new conversation with no tools, for a summary or a title. Resolves with the reply. */
+/** One prompt in a new conversation with no tools, for a title. Resolves with the reply. */
 async function oneTurn(o: { executable?: string; args?: string[]; cwd: string }, prompt: string): Promise<string> {
   let sessionId: string | undefined;
   let reply = "";
@@ -423,10 +423,6 @@ async function oneTurn(o: { executable?: string; args?: string[]; cwd: string },
 
 export const acp: AgentBackend = {
   start: (c, host) => new AcpSession(c, host),
-
-  /** ACP cannot fork a conversation, so a new one reads the session note and summarizes it. */
-  summarize: (c) =>
-    oneTurn(c, `${c.instruction}\n\nThe session to summarize, as Marq recorded it:\n\n<session>\n${c.transcript ?? ""}\n</session>`),
 
   title: (c) => oneTurn({ ...c, cwd: process.cwd() }, c.prompt),
 

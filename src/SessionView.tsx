@@ -4,7 +4,7 @@ import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowUp, CornerUpLeft, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
-  FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, NotebookPen, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
+  FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
@@ -381,7 +381,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const sideRef = useRef<HTMLElement>(null);
   const composerHeight = usePaneSize("composer", 52, 36, COMPOSER_MAX);
   const [approvals, setApprovals] = useState<Approval[]>([]);
-  const [summarizing, setSummarizing] = useState(false);
   // Review state lives in the session list, not in the streamed events.
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const loadInfo = () => api.listSessions(vault).then((l) => setInfo(l.find((x) => x.id === sessionId) ?? null));
@@ -493,16 +492,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const diffable = worktree ?? checkout ?? undefined;
   const panel = side ?? (diffable ? "changes" : "note");
   const repoName = (w: Worktree) => w.repo.replace(/\/+$/, "").split("/").pop();
-
-  const summarize = async () => {
-    setSummarizing(true);
-    await attempt(async () => {
-      await api.summarizeSession(vault, sessionId);
-      setNotice("Summary and learnings written to the session note");
-    }, (e) => {
-      setError(String(e));
-    }, () => setSummarizing(false));
-  };
 
   const [pushing, setPushing] = useState(false);
   const push = async () => {
@@ -675,10 +664,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           </button>
         )}
         <button onClick={openOrigin}><CornerUpLeft size={14} /> Origin note</button>
-        <button onClick={summarize} disabled={summarizing || running || !events.some((e) => e.type === "turn_end")}
-          title="Write Summary and Learnings into the session note (runs on a fork of the conversation)">
-          {summarizing ? <Loader2 size={14} className="spin" /> : <NotebookPen size={14} />} Summarize
-        </button>
         {running && <button className="danger" onClick={() => api.stopSession(sessionId)}><Square size={12} /> Stop</button>}
         <button className={`icon ${sideOpen ? "on" : ""}`} title="Toggle side panel" onClick={() => setSideOpen(!sideOpen)}>
           <PanelRight size={14} />

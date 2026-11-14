@@ -1193,17 +1193,10 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
     runner.commands(&app, &cwd, session_id.as_deref()).await
 }
 
-/// Fills in `## Summary` and `## Learnings` from a forked one-turn summary.
 /// The agents a task can run on, with whether each is installed.
 #[tauri::command]
 async fn list_agents() -> Result<Vec<agents::AgentInfo>> {
     blocking(|| Ok(agents::list())).await
-}
-
-#[tauri::command]
-async fn summarize_session(app: AppHandle, vault: String, session_id: String) -> Result<String> {
-    let runner = app.state::<Runner>();
-    runner.summarize(&app, Path::new(&vault), &session_id).await
 }
 
 #[tauri::command]
@@ -1685,7 +1678,6 @@ pub fn run() {
             resume_session,
             answer_approval,
             list_approvals,
-            summarize_session,
             list_agents,
             list_commands,
             session_events,

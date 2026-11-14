@@ -195,25 +195,6 @@ async function oneTurn(q: Query, what: string): Promise<string> {
 export const claude: AgentBackend = {
   start: (c, host) => new ClaudeSession(c, host),
 
-  /** Forks the conversation to write a summary, leaving the session itself untouched. */
-  summarize: (c) =>
-    oneTurn(
-      query({
-        prompt: c.instruction,
-        options: {
-          cwd: c.cwd,
-          resume: c.id,
-          forkSession: true,
-          tools: [],
-          maxTurns: 1,
-          settingSources: [],
-          pathToClaudeCodeExecutable: c.executable,
-          ...backend(c.model),
-        },
-      }),
-      "summary",
-    ),
-
   title: (c) =>
     oneTurn(
       query({

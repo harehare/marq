@@ -214,7 +214,7 @@ crates/mq-lsp/src/hover.rs
 </details>
 ````
 
-- `## Summary` and `## Learnings` are filled in by **Summarize**. You can edit them by hand; they are kept when the Transcript is regenerated.
+- `## Summary` and `## Learnings` can be edited by hand; agents add to Learnings with `append_learning`. They are kept when the Transcript is regenerated.
 - Each tool use is a fenced block with the info string `tool:<ToolName>` and its main argument (path, command, pattern) as the body. Results longer than 20 lines go inside `<details>`.
 - Thinking blocks are not rendered.
 

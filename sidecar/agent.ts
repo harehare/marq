@@ -58,11 +58,6 @@ export interface AgentSession {
 
 export interface AgentBackend {
   start(opts: StartOptions, host: SessionHost): AgentSession;
-  /** One turn on a fork of the conversation `id`, without changing the session. Resolves with the reply. */
-  summarize(o: {
-    id: string; cwd: string; instruction: string; model?: string | null; executable?: string; args?: string[];
-    agentSession?: string; transcript?: string;
-  }): Promise<string>;
   /** A one-turn answer from a small model, for naming a task. */
   title(o: { prompt: string; model?: string | null; executable?: string }): Promise<string>;
   /** Slash commands and skills available in `cwd`, without a running session. */

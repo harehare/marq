@@ -163,6 +163,6 @@ The ↪ button next to Send in a session's message box sends what you typed, wit
 
 Agents can also coordinate with each other through `list_sessions`, `read_session` and `send_to_session`; every send needs your approval. A message sent with `send_to_session` gets its answer back the same way unless the agent passes `reply: false`. See [Vault tools for agents](tools.md).
 
-## Summarize
+## Learnings
 
-**Summarize** writes `## Summary` and `## Learnings` into the session note from a fork of the conversation, without changing the session itself. Agents can also add learnings themselves with `append_learning`.
+Agents can add learnings to the session note themselves with `append_learning`.

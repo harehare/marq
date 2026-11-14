@@ -39,7 +39,7 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 - **Everything is Markdown.** Notes, requests, session logs, crews, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only rewrites the parts between its own markers.
 - **Query with mq.** `mq` code blocks run in the preview and show their output right below. The same queries power the todo list, the learnings across sessions, and the Query tab.
 - **Pick what the agent sees.** Extract a section with mq, select text in a note or a session, or attach `context:` queries to a request, then send exactly that to an agent.
-- **Sessions feed back into notes.** Summaries and learnings are written into the session note, and agents can search your notes and save documents to the vault.
+- **Sessions feed back into notes.** Learnings are written into the session note, and agents can search your notes and save documents to the vault.
 
 ## Markdown in, Markdown out
 

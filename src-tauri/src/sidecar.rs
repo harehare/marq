@@ -54,7 +54,6 @@ pub struct Runner {
     /// Vault of each session seen in this app run, for writing its log.
     vaults: Mutex<HashMap<String, PathBuf>>,
     approvals: Mutex<HashMap<String, Approval>>,
-    summaries: Mutex<HashMap<String, oneshot::Sender<std::result::Result<String, String>>>>,
     replies: Mutex<HashMap<String, oneshot::Sender<std::result::Result<Value, String>>>>,
 }
 
@@ -261,35 +260,6 @@ impl Runner {
             .collect()
     }
 
-    /// Writes `## Summary` and `## Learnings` from a forked one-turn summary of the session.
-    pub async fn summarize(&self, app: &AppHandle, vault: &Path, id: &str) -> Result<String> {
-        let meta = session::meta(vault, id)?;
-        let (executable, args) = agents::command(meta.agent.as_deref());
-        // Agents that cannot fork a conversation summarize the session note instead.
-        let transcript = std::fs::read_to_string(session::md_path(vault, &meta)).unwrap_or_default();
-        let req_id = vault::new_id();
-        let (tx, rx) = oneshot::channel();
-        self.summaries.lock().unwrap().insert(req_id.clone(), tx);
-        self.send(
-            app,
-            json!({
-                "op": "summarize",
-                "reqId": req_id,
-                "id": id,
-                "cwd": vault::expand_home(&meta.cwd),
-                "instruction": SUMMARY_INSTRUCTION,
-                "model": meta.model,
-                "agent": meta.agent,
-                "executable": executable,
-                "args": args,
-                "agentSession": agent_session(vault, id),
-                "transcript": transcript,
-            }),
-        )?;
-        let text = rx.await.map_err(|_| Error::Other("the sidecar exited".into()))?.map_err(Error::Other)?;
-        session::set_summary(vault, id, &text)?;
-        Ok(text)
-    }
 }
 
 impl Runner {
@@ -347,11 +317,6 @@ fn clean_title(s: &str) -> Option<String> {
     let t: String = t.chars().take(60).collect();
     (!t.is_empty()).then_some(t)
 }
-
-const SUMMARY_INSTRUCTION: &str = "Summarize this session for my notes. Reply with Markdown only, in exactly this shape:\n\n\
-## Summary\n\n<3-6 sentences: what was asked, what was done, the outcome and anything left open>\n\n\
-## Learnings\n\n- <reusable insights: gotchas, decisions and their reasons, facts about the codebase. Skip the obvious. \
-Write '- None' if there are none>";
 
 fn spawn(app: AppHandle) -> Result<mpsc::UnboundedSender<String>> {
     // Sync commands run on the main thread, outside the tokio runtime that tokio::process needs.
@@ -511,16 +476,6 @@ async fn handle(app: &AppHandle, ev: Value) {
                 let r = match ev["error"].as_str() {
                     Some(e) => Err(e.to_string()),
                     None => Ok(ev["result"].clone()),
-                };
-                let _ = tx.send(r);
-            }
-        }
-        "summary" => {
-            let req = ev["reqId"].as_str().unwrap_or("");
-            if let Some(tx) = runner.summaries.lock().unwrap().remove(req) {
-                let r = match ev["error"].as_str() {
-                    Some(e) => Err(e.to_string()),
-                    None => Ok(ev["text"].as_str().unwrap_or("").to_string()),
                 };
                 let _ = tx.send(r);
             }
