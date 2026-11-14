@@ -11,6 +11,7 @@ editor_font_size = 14
 palette = "tarn"                # tarn | amber | nord | solarized | rose-pine
 mode = "system"                 # system | light | dark
 content_width = "wide"          # normal | wide | full: how wide notes and conversations are
+sidebar = "full"                # full | rail: with rail only icons show, and one opens its list over the content
 
 [editor]
 default_mode = "preview"        # preview | edit | split; new notes always open in edit
@@ -46,6 +47,8 @@ kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
 ```
 
 `palette` is used until you pick one in the 🎨 menu.
+
+With `sidebar = "rail"` (or **Settings → Appearance → Sidebar**, or the **Icons only** button at the top of the sidebar) only a column of icons shows: search, New task, then Active, Sessions, Recent, Boards, Crews, Schedules and Notes, with note, terminal, theme and settings below. An icon opens that list over the content; picking an item, clicking outside it or pressing the icon again puts it away. ⌘B hides the icons too, and the button at the bottom of the rail brings the full sidebar back.
 
 ## Agents
 

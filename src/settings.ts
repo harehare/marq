@@ -5,6 +5,8 @@ export type Settings = {
   appearance?: {
     font?: string; mono_font?: string; font_size?: number; editor_font_size?: number; palette?: string; mode?: string;
     content_width?: ContentWidth;
+    /** `rail`: only icons show; one opens its list over the content. */
+    sidebar?: "full" | "rail";
   };
   editor?: { default_mode?: "preview" | "edit" | "split"; autosave?: boolean; vim?: boolean };
   notifications?: { enabled?: boolean };

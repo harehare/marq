@@ -1,14 +1,15 @@
-import { forwardRef, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, forwardRef, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
-  PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2,
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import type { LucideIcon } from "lucide-react";
 import { api, FileEntry, Schedule, SessionInfo } from "./api";
 import { ScheduleDialog } from "./AutomationDialogs";
 import { setVaultFiles } from "./wikilinks";
@@ -36,7 +37,7 @@ import { SettingsDialog } from "./SettingsDialog";
 import { ContextMenu, MenuItem, MenuState } from "./ContextMenu";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { PALETTES, useTheme } from "./theme";
-import { Settings, setSettings, useSettings } from "./settings";
+import { Settings, getSettings, setSettings, useSettings } from "./settings";
 import { notify, summary } from "./notify";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
@@ -391,7 +392,12 @@ function useSectionOpen(key: string, defaultOpen = true) {
 /** Past this a section is not capped: it is as tall as its rows. */
 const UNCAPPED = 4000;
 
-function Collapsible({ title, icon, count, children, defaultOpen = true, action, size, fill }: {
+/** The icon-only sidebar: `panel` is the list open over the content, null while all are closed. */
+const RailContext = createContext<{ rail: boolean; panel: string | null }>({ rail: false, panel: null });
+
+function Collapsible({ title, icon, count, children, defaultOpen = true, action, size, fill, panel }: {
+  /** Which icon of the icon-only sidebar opens this section. */
+  panel?: string;
   title: string; icon?: React.ReactNode; count?: number; children: React.ReactNode; defaultOpen?: boolean;
   /** Takes the sidebar's remaining height and scrolls on its own, instead of having a handle. */
   fill?: boolean;
@@ -400,7 +406,11 @@ function Collapsible({ title, icon, count, children, defaultOpen = true, action,
   /** Where its height is remembered and how tall it starts; by default it is keyed by title and as tall as its rows. */
   size?: { key: string; initial: number };
 }) {
-  const [open, setOpen] = useSectionOpen(title, defaultOpen);
+  const [openState, setOpen] = useSectionOpen(title, defaultOpen);
+  const rail = useContext(RailContext);
+  // Over the content only the chosen list shows, and it is open whatever it was in the full sidebar.
+  const open = rail.rail || openState;
+  const away = rail.rail && !!panel && rail.panel !== panel;
   // Dragging the handle under a section caps its height, and its rows scroll; double-click lifts the cap again.
   const height = usePaneSize(size?.key ?? `section.${title}`, size?.initial ?? UNCAPPED, 40, UNCAPPED);
   const body = useRef<HTMLDivElement>(null);
@@ -409,8 +419,8 @@ function Collapsible({ title, icon, count, children, defaultOpen = true, action,
   const sectionStyle = fill || height.size >= UNCAPPED ? undefined
     : height.touched ? { height: height.size } : { maxHeight: height.size };
   return (
-    <div className={`section ${fill ? "fill" : ""} ${open ? "" : "closed"}`}>
-      <a className="section-title" onClick={() => setOpen(!open)}>
+    <div className={`section ${fill ? "fill" : ""} ${open ? "" : "closed"} ${away ? "rail-away" : ""}`}>
+      <a className="section-title" onClick={() => !rail.rail && setOpen(!open)}>
         <ChevronRight size={11} className={`chev ${open ? "open" : ""}`} /> {icon} {title}
         {count !== undefined && count > 0 && <span className="count">{count}</span>}
         {action && <span className="section-actions" onClick={(e) => e.stopPropagation()}>{action}</span>}
@@ -520,6 +530,8 @@ export default function App() {
 
   const [showNewTask, setShowNewTask] = useState(false);
   const [taskPrompt, setTaskPrompt] = useState("");
+  // Runs once the task started from a card has begun, to move the card.
+  const taskAfter = useRef<(() => void) | null>(null);
   // mq results the New task dialog hands to the agent, from a Run agent button.
   const [taskContext, setTaskContext] = useState<QueryContext | null>(null);
   const [sending, setSending] = useState<{ excerpt: Excerpt; exclude?: string } | null>(null);
@@ -530,8 +542,6 @@ export default function App() {
   const setSidebarOpen = (v: boolean) => {
     setSidebarOpenState(v);
     const flag = v ? "1" : "0";
-  // Runs once the task started from a card has begun, to move the card.
-  const taskAfter = useRef<(() => void) | null>(null);
     try {
       localStorage.setItem("marq.sidebar", flag);
     } catch {}
@@ -545,7 +555,17 @@ export default function App() {
   const closeMenu = useCallback(() => setMenu(null), []);
   const [theme, setTheme, themeFromConfig] = useTheme();
   // Pinned tabs get a row of their own above the others, or lead the one row.
-  const tabSettings = useSettings().tabs;
+  const settingsNow = useSettings();
+  const tabSettings = settingsNow.tabs;
+  // Icons only: one icon opens its list over the content (`railPanel`), closed with Esc, a click outside or a pick.
+  const railOn = settingsNow.appearance?.sidebar === "rail";
+  const [railPanel, setRailPanel] = useState<string | null>(null);
+  const setSidebarMode = (mode: "full" | "rail") => {
+    setRailPanel(null);
+    api.writeConfig({ "appearance.sidebar": mode === "rail" ? "rail" : null })
+      .then(() => setSettings({ ...getSettings(), appearance: { ...getSettings().appearance, sidebar: mode === "rail" ? "rail" : undefined } }))
+      .catch((e) => void message(String(e), { kind: "error" }));
+  };
   const pinnedRow = tabSettings?.pinned_layout === "row";
   // Tabs that do not fit flow onto more rows, or scroll with a count of those out of sight.
   const wrapTabs = tabSettings?.overflow === "wrap";
@@ -1236,7 +1256,12 @@ export default function App() {
   const rows = useMemo(() => visibleRows(tree, closedDirs), [tree, closedDirs]);
 
   const focusTree = () => {
-    if (!sidebarOpen) {
+    if (railOn) {
+      // Icons only: the Notes list opens over the content.
+      setSidebarOpen(true);
+      setRailPanel("notes");
+      requestAnimationFrame(() => treeRef.current?.focus());
+    } else if (!sidebarOpen) {
       // The tree is not focusable while the sidebar is hidden.
       setSidebarOpen(true);
       requestAnimationFrame(() => treeRef.current?.focus());
@@ -1570,13 +1595,55 @@ export default function App() {
     <div className="app-shell">
     <div className="app">
       {/* Kept mounted while hidden, so the tree's scroll and open folders survive. */}
-      <aside ref={sidebarRef} className="sidebar" style={{ width: sidebar.size, display: sidebarOpen ? undefined : "none" }}>
+      {railOn && sidebarOpen && (
+        <nav className="rail">
+          <button className="rail-btn logo" title={`${vault}\nSwitch vaults`} onClick={vaultMenu}><LogoMark size={20} /></button>
+          <button className="rail-btn" title="Search (⌘P)" onClick={() => setShowQuickOpen(true)}><Search size={17} /></button>
+          <button className="rail-btn accent" title="New task (⌘N)" onClick={() => setShowNewTask(true)}><Plus size={18} /></button>
+          <span className="rail-sep" />
+          {([
+            ["active", "Active", Activity, activeSessions.length],
+            ...(groups.length ? [["sessions", "Needs review", GitPullRequest, groups.reduce((n, g) => n + g.items.length, 0)] as [string, string, LucideIcon, number]] : []),
+            ["recent", "Recent", History, 0],
+            ["boards", "Boards", Columns3, 0],
+            ["crews", "Crews", Users, 0],
+            ["schedules", "Schedules", Timer, 0],
+            ["notes", "Notes", FileText, 0],
+          ] as [string, string, LucideIcon, number][]).map(([id, label, Icon, n]) => (
+            <button key={id} className={`rail-btn ${railPanel === id ? "on" : ""}`} title={label}
+              onClick={() => setRailPanel(railPanel === id ? null : id)}>
+              <Icon size={17} />
+              {n > 0 && <span className={`rail-badge ${id === "active" ? activeSessions[0]?.status ?? "" : ""}`}>{n}</span>}
+            </button>
+          ))}
+          <span className="rail-spacer" />
+          <button className="rail-btn" title="New note" onClick={() => setNaming({ kind: "note", initial: "notes/" })}><FilePlus2 size={16} /></button>
+          <button className="rail-btn" title="mq query" onClick={() => openTab({ key: "query", kind: "query", title: "mq query" })}><Braces size={16} /></button>
+          <button className="rail-btn" title="Terminal" onClick={() => openTerminal(terminalCwd())}><SquareTerminal size={16} /></button>
+          <button className="rail-btn" title="Theme" onClick={themeMenu}><Palette size={16} /></button>
+          <button className="rail-btn" title="Settings (⌘,)" onClick={() => setShowSettings(true)}><SettingsIcon size={16} /></button>
+          <button className="rail-btn" title="Show the full sidebar" onClick={() => setSidebarMode("full")}><PanelLeftOpen size={16} /></button>
+        </nav>
+      )}
+      {railOn && sidebarOpen && railPanel && <div className="rail-backdrop" onMouseDown={() => setRailPanel(null)} />}
+      <RailContext.Provider value={{ rail: railOn, panel: railPanel }}>
+      <aside ref={sidebarRef} className={`sidebar ${railOn ? "flyout" : ""}`} data-panel={railOn ? railPanel ?? "" : undefined}
+        style={{ width: sidebar.size, display: sidebarOpen && (!railOn || railPanel) ? undefined : "none" }}
+        onKeyDown={(e) => { if (railOn && e.key === "Escape") setRailPanel(null); }}
+        // Picking a session, note or board puts the list away; folders, toggles and buttons keep it.
+        onClick={(e) => {
+          if (!railOn) return;
+          const t = e.target as Element;
+          if (t.closest("button, .section-actions, .tree-row.dir")) return;
+          if (t.closest(".active-row, .session-row, .recent-row, .inbox-row, .crew-member-row, .tree-row")) setRailPanel(null);
+        }}>
         <div className="vault" title={`${vault}\nClick to switch vaults`} onClick={vaultMenu}>
           <div className="logo small"><LogoMark size={18} /></div>
           <span className="ellipsis">{vault.split("/").pop()}</span>
           <ChevronsUpDown size={12} className="vault-switch" />
           <button className="theme-btn" title="Theme" onClick={themeMenu}><Palette size={14} /></button>
           <button className="theme-btn" title="Settings (⌘,)" onClick={(e) => (e.stopPropagation(), setShowSettings(true))}><SettingsIcon size={14} /></button>
+          <button className="theme-btn" title="Icons only" onClick={(e) => (e.stopPropagation(), setSidebarMode("rail"))}><PanelLeft size={14} /></button>
           <button className="theme-btn" title="Hide the sidebar (⌘B)" onClick={(e) => (e.stopPropagation(), setSidebarOpen(false))}><PanelLeftClose size={14} /></button>
         </div>
         <button className="side-search" onClick={() => setShowQuickOpen(true)} title="Open a note, crew or session (⌘P) or search notes (⇧⌘F)">
@@ -1593,7 +1660,7 @@ export default function App() {
           <button onClick={() => openTerminal(terminalCwd())} title="Terminal in the project New task last used (the vault if none)"><SquareTerminal size={14} /> Terminal</button>
         </div>
         <div className="side-scroll">
-          <Collapsible title="Active" count={activeSessions.length}
+          <Collapsible title="Active" panel="active" count={activeSessions.length}
             icon={activeSessions.length ? <span className={`dot ${activeSessions[0].status}`} /> : undefined}>
             {activeByProject.map(([project, list]) => (
               <div key={project} className="active-group">
@@ -1621,7 +1688,7 @@ export default function App() {
             {activeSessions.length === 0 && <div className="muted small" style={{ padding: "2px 12px 6px" }}>Nothing is running.</div>}
           </Collapsible>
           {groups.map((g) => (
-            <Collapsible key={g.key} title={g.label} count={g.items.length}
+            <Collapsible key={g.key} title={g.label} panel="sessions" count={g.items.length}
 >
               {g.items.map((s) => (
                 <a key={s.id} className={`session-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
@@ -1647,7 +1714,7 @@ export default function App() {
               ))}
             </Collapsible>
           ))}
-          <Collapsible title="Boards" icon={<Columns3 size={11} />} count={boards.length}
+          <Collapsible title="Boards" panel="boards" icon={<Columns3 size={11} />} count={boards.length}
             action={<button className="section-action" title="New board" onClick={() => setNewBoard(true)}><Plus size={13} /></button>}>
             {boards.map((f) => (
               <a key={f.path} className={`inbox-row ${current?.kind === "board" && current.path === f.path ? "on" : ""}`}
@@ -1658,7 +1725,7 @@ export default function App() {
             {boards.length === 0 && <a className="muted small pad" onClick={() => setNewBoard(true)}>Create a board for your tasks</a>}
           </Collapsible>
           {/* Capped from the start, so many crews do not push Notes away. */}
-          <Collapsible title="Crews" icon={<Users size={11} />} count={crews.length} size={{ key: "crews", initial: 240 }}
+          <Collapsible title="Crews" panel="crews" icon={<Users size={11} />} count={crews.length} size={{ key: "crews", initial: 240 }}
             action={<button className="section-action" title="New crew" onClick={() => setNaming({ kind: "crew", initial: "" })}>
               <Plus size={13} />
             </button>}>
@@ -1700,7 +1767,7 @@ export default function App() {
               </div>
             )}
           </Collapsible>
-          <Collapsible title="Schedules" icon={<Timer size={11} />} count={schedules.length} defaultOpen={false}
+          <Collapsible title="Schedules" panel="schedules" icon={<Timer size={11} />} count={schedules.length} defaultOpen={false}
             action={<button className="section-action" title="New schedule" onClick={() => setNewSchedule(true)}><Plus size={13} /></button>}>
             {schedules.map((s) => (
               <a key={s.path} className={`inbox-row schedule-row ${s.enabled ? "" : "off"} ${current?.kind === "note" && current.path === s.path ? "on" : ""}`}
@@ -1723,7 +1790,7 @@ export default function App() {
               </div>
             )}
           </Collapsible>
-          <Collapsible title="Notes" icon={<FileText size={11} />} fill
+          <Collapsible title="Notes" panel="notes" icon={<FileText size={11} />} fill
             action={<>
               <button className="section-action" title="Expand all folders" onClick={() => setClosedDirs(new Set())}>
                 <ChevronsUpDown size={13} />
@@ -1767,7 +1834,8 @@ export default function App() {
           </div>
         )}
       </aside>
-      {sidebarOpen && <Resizer axis="x" sign={1} pane={sidebar}
+      </RailContext.Provider>
+      {sidebarOpen && !railOn && <Resizer axis="x" sign={1} pane={sidebar}
         preview={(v) => sidebarRef.current && (sidebarRef.current.style.width = `${v}px`)} />}
       <main>
         {pinnedRow ? (

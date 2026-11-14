@@ -533,7 +533,7 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .welcome-points svg { color: var(--accent); }
 
 /* Layout */
-.app { display: flex; height: 100%; }
+.app { display: flex; height: 100%; position: relative; }
 .sidebar {
   flex: none; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg-sunken);
@@ -1805,3 +1805,45 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .query-agent { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .query-agent input { flex: 1; }
 
+
+/* Icons-only sidebar: a rail of icons, and the chosen list over the content. */
+.rail {
+  flex: none; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0;
+  background: var(--bg-sunken); border-right: 1px solid var(--border); z-index: 31;
+}
+.rail-btn {
+  position: relative; width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 0;
+  background: transparent; border-color: transparent; color: var(--muted);
+}
+.rail-btn:hover { color: var(--fg); background: var(--bg-hover); }
+.rail-btn.on { color: var(--accent); background: var(--accent-soft); }
+.rail-btn.on::before { content: ""; position: absolute; left: -5px; top: 4px; bottom: 4px; width: 2px; background: var(--accent); }
+.rail-btn.accent { color: var(--accent); }
+.rail-btn.logo { margin-bottom: 2px; }
+.rail-sep { width: 22px; height: 1px; margin: 6px 0; background: var(--border); }
+.rail-spacer { flex: 1; }
+.rail-badge {
+  position: absolute; right: 1px; top: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
+  font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center;
+  background: var(--accent-fill); color: var(--accent-fg);
+}
+.rail-badge.running { background: var(--run); color: var(--bg); }
+.rail-backdrop { position: absolute; inset: 0 0 0 44px; z-index: 29; }
+.sidebar.flyout {
+  position: absolute; left: 44px; top: 0; bottom: 0; z-index: 30; max-width: calc(100% - 44px);
+  border-right: 1px solid var(--border-strong); box-shadow: var(--shadow);
+}
+/* The list's own header and the launch buttons live on the rail. */
+.sidebar.flyout > .vault, .sidebar.flyout > .side-search, .sidebar.flyout > .new-task, .sidebar.flyout > .quick { display: none; }
+.sidebar.flyout .section.rail-away { display: none; }
+.sidebar.flyout .section-title { cursor: default; }
+.sidebar.flyout .section-title .chev { display: none; }
+.sidebar.flyout .side-scroll { padding-top: 0; }
+.sidebar.flyout .section > .resizer.y { display: none; }
+.sidebar.flyout .section-body { max-height: none !important; }
+.sidebar.flyout .recent-dock { display: none; }
+.sidebar.flyout[data-panel="recent"] .side-scroll { display: none; }
+.sidebar.flyout[data-panel="recent"] .recent-dock { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.sidebar.flyout[data-panel="recent"] .recent-dock > .resizer { display: none; }
+.sidebar.flyout[data-panel="recent"] .recent-dock > .section-title .chev { display: none; }
+.sidebar.flyout[data-panel="recent"] .recent-list { height: auto !important; flex: 1; }

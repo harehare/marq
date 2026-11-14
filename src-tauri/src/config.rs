@@ -17,6 +17,7 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # palette = "tarn"                # tarn | amber | nord | solarized | rose-pine; used until picked in the 🎨 menu
 # mode = "system"                 # system | light | dark
 # content_width = "wide"          # normal | wide | full: how wide notes and conversations are
+# sidebar = "full"                # full | rail: with rail only icons show, and one opens its list over the content
 
 [editor]
 # default_mode = "preview"        # preview | edit | split; new notes always open in edit

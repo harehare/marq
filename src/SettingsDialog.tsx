@@ -39,6 +39,10 @@ const SECTIONS: Section[] = [
         key: "appearance.content_width", label: "Content width", kind: "select", desc: "How wide notes and conversations are",
         options: [{ value: "", label: "Wide (default)" }, { value: "normal", label: "Normal" }, { value: "full", label: "Full width" }],
       },
+      {
+        key: "appearance.sidebar", label: "Sidebar", kind: "select", desc: "Icons only: pick one to open its list over the content",
+        options: [{ value: "", label: "Full (default)" }, { value: "rail", label: "Icons only" }],
+      },
     ],
   },
   {
