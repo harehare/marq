@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Bot, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
+import { Bell, Bot, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { api, type AgentInfo } from "./api";
 import { composing } from "./keys";
@@ -54,6 +54,15 @@ const SECTIONS: Section[] = [
       },
       { key: "editor.autosave", label: "Auto-save", kind: "bool", desc: "Save notes automatically while you type" },
       { key: "editor.vim", label: "Vim keys", kind: "bool", desc: "Modal editing in notes, with :w to save" },
+    ],
+  },
+  {
+    id: "chat", title: "Chat", icon: MessageSquare,
+    fields: [
+      {
+        key: "chat.send", label: "Send a message with", kind: "select", desc: "Conversations with sessions and crews. ⌘↵ always sends; the other keys add a new line",
+        options: [{ value: "", label: "⌘↵ (default)" }, { value: "enter", label: "↵ (⇧↵ for a new line)" }, { value: "shift-enter", label: "⇧↵" }],
+      },
     ],
   },
   {

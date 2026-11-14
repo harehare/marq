@@ -10,9 +10,27 @@ export type Settings = {
   };
   editor?: { default_mode?: "preview" | "edit" | "split"; autosave?: boolean; vim?: boolean };
   notifications?: { enabled?: boolean };
+  chat?: { send?: SendKey };
   tabs?: { pinned_layout?: "inline" | "row"; overflow?: "scroll" | "wrap" };
   terminal?: { font?: string; font_size?: number; ligatures?: boolean; cursor?: "block" | "bar" | "underline" };
 };
+
+/** Which key sends a message in a conversation; the others add a line. ⌘↵ sends in every mode. */
+export type SendKey = "mod-enter" | "enter" | "shift-enter";
+
+/** True when this key press sends the message. Callers `preventDefault()` when it does. */
+export function isSendKey(e: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; nativeEvent: KeyboardEvent }, mode: SendKey | undefined): boolean {
+  // Enter that confirms an IME conversion (Japanese input) is not a send.
+  if (e.key !== "Enter" || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return false;
+  if (e.metaKey || e.ctrlKey) return true;
+  if (e.altKey) return false;
+  if (mode === "enter") return !e.shiftKey;
+  if (mode === "shift-enter") return e.shiftKey;
+  return false;
+}
+
+/** The send key as shown in hints. */
+export const sendHint = (mode: SendKey | undefined) => (mode === "enter" ? "↵" : mode === "shift-enter" ? "⇧↵" : "⌘↵");
 
 /** How wide notes and conversations are. */
 export type ContentWidth = "normal" | "wide" | "full";

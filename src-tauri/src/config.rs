@@ -24,6 +24,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # autosave = true                 # save notes shortly after typing stops, and when they close
 # vim = false                     # Vim keys in the note editor; :w saves
 
+[chat]
+# send = "mod-enter"             # mod-enter | enter | shift-enter: the key that sends a message (⌘↵ always does); the others add a line
+
 [tabs]
 # pinned_layout = "inline"        # inline | row: pinned tabs first in the tab bar, or in a row above the others
 # overflow = "scroll"             # scroll | wrap: tabs that do not fit scroll sideways, with a count of those out of sight, or wrap onto more rows

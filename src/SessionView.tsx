@@ -1,4 +1,5 @@
 import { KeyboardEvent, ReactNode, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isSendKey, sendHint, useSettings } from "./settings";
 import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -357,6 +358,7 @@ const MessageList = memo(function MessageList({ vault, events, onOpenOrigin, onO
 });
 
 export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onSendExcerpt, onOpenCrew, compact }: Props) {
+  const sendKey = useSettings().chat?.send;
   const messagesRef = useRef<HTMLDivElement>(null);
   // null until the user picks a tab: Changes for worktree sessions, otherwise the note.
   const [side, setSide] = useState<"changes" | "note" | "docs" | null>(null);
@@ -725,9 +727,9 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             vault={vault}
             sessionId={sessionId}
             pastes={pastes}
-            placeholder={running ? "Queue a follow-up for after this turn…  (⌘↵, Esc to interrupt)" : "Follow up… / for skills and commands  (⌘↵ to send)"}
+            placeholder={running ? `Queue a follow-up for after this turn…  (${sendHint(sendKey)}, Esc to interrupt)` : `Follow up… / for skills and commands  (${sendHint(sendKey)} to send)`}
             onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send();
+              if (isSendKey(e, sendKey)) { e.preventDefault(); send(); }
               else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey) recallKey(e);
             }}
           />

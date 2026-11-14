@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isSendKey, sendHint, useSettings } from "./settings";
 import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -11,7 +12,6 @@ import { Resizer, usePaneSize } from "./Resizer";
 import { SessionView } from "./SessionView";
 import { BoardView } from "./BoardView";
 import type { Excerpt } from "./SendToSessionDialog";
-import { composing } from "./keys";
 import { useAutoGrow } from "./useAutoGrow";
 import { useStickToBottom } from "./useStickToBottom";
 import { NoteEditor } from "./NoteEditor";
@@ -42,6 +42,7 @@ const toList = (to: string | string[]) => (Array.isArray(to) ? to : [to]);
 
 /** One project worked on by several sessions that message each other by role. */
 export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExcerpt, onOpenCrew, files, recent, onOpenFile, onCreateNote }: Props) {
+  const sendKey = useSettings().chat?.send;
   const [st, setSt] = useState<CrewState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [to, setTo] = useState<string>("");
@@ -312,10 +313,10 @@ export function CrewView({ vault, crewKey, onOpenNote, onOpenSession, onSendExce
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={`Message ${to || "a member"}…  (⌘↵ to send)`}
+                placeholder={`Message ${to || "a member"}…  (${sendHint(sendKey)} to send)`}
                 rows={1}
                 onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !composing(e)) send(to, input);
+                  if (isSendKey(e, sendKey)) { e.preventDefault(); send(to, input); }
                 }}
               />
               <button className="send" onClick={() => send(to, input)} disabled={sending || !input.trim() || !to} title="Send">

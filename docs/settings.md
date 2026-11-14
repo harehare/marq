@@ -17,6 +17,9 @@ sidebar = "full"                # full | rail: with rail only icons show, and on
 default_mode = "preview"        # preview | edit | split; new notes always open in edit
 vim = false                     # Vim keys in the note editor; :w saves
 
+[chat]
+send = "mod-enter"               # mod-enter | enter | shift-enter: the key that sends a message (⌘↵ always does); the others add a line
+
 [terminal]
 shell = "/bin/zsh"              # default: $SHELL (Windows: pwsh, else powershell)
 args = ["-l"]
