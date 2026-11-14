@@ -35,6 +35,21 @@ const PIN_OPEN = "<!-- mq:output -->";
 const PIN_CLOSE = "<!-- /mq:output -->";
 
 /**
+ * Fence state after line `l`. A fence opens with 3+ backticks or tildes and closes only on a line of the
+ * same character, at least as long and with nothing after it, so a ```` block can contain ``` lines.
+ * The line that closes a fence still counts as inside it (state is returned as null after it).
+ */
+function nextFence(open: { ch: string; len: number } | null, l: string): { ch: string; len: number } | null {
+  if (open) {
+    const close = l.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+    return close && close[1][0] === open.ch && close[1].length >= open.len ? null : open;
+  }
+  const start = l.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+  if (!start || (start[1][0] === "`" && start[2].includes("`"))) return null;
+  return { ch: start[1][0], len: start[1].length };
+}
+
+/**
  * Anchor markers become `[](marq-anchor:<id>)` links on the same line, and pinned mq output becomes
  * blank lines (the mq block shows live output instead), so the line count never changes.
  */
@@ -45,7 +60,7 @@ export function segments(text: string): Segment[] {
   let buf: string[] = [];
   let bufStart = fm.lines;
   let result: { session: string; start: number; lines: string[] } | null = null;
-  let fence = false;
+  let open: { ch: string; len: number } | null = null; // the fenced block we are inside
   let pinned = false;
 
   const flush = (next: number) => {
@@ -56,17 +71,18 @@ export function segments(text: string): Segment[] {
 
   for (let i = fm.lines; i < lines.length; i++) {
     const l = lines[i];
-    if (!fence && !result && (pinned || l.trim() === PIN_OPEN)) {
+    if (!open && !result && (pinned || l.trim() === PIN_OPEN)) {
       pinned = l.trim() !== PIN_CLOSE;
       buf.push("");
       continue;
     }
-    if (l.trimStart().startsWith("```")) fence = !fence;
+    open = nextFence(open, l);
+    const fence = open !== null;
     if (!fence && !result) {
-      const open = l.trim().match(RESULT_OPEN);
-      if (open) {
+      const marker = l.trim().match(RESULT_OPEN);
+      if (marker) {
         flush(i);
-        result = { session: open[1], start: i + 1, lines: [] };
+        result = { session: marker[1], start: i + 1, lines: [] };
         continue;
       }
     }
