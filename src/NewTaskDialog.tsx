@@ -51,6 +51,9 @@ export const SANDBOXES = [
   { value: "strict", label: "Strict", hint: "The sandbox, with no way out: commands that need more fail instead of asking." },
 ];
 
+/** The project the last task was started in, where a new terminal opens when nothing else says. */
+export const lastProject = () => stored(PROJECT_KEY, "");
+
 function stored(key: string, fallback: string) {
   try {
     return localStorage.getItem(key) ?? fallback;

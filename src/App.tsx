@@ -25,7 +25,7 @@ import { StatusBar } from "./StatusBar";
 import { TabStrip } from "./TabStrip";
 import { TabErrorBoundary } from "./TabErrorBoundary";
 import { FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
-import { NewTaskDialog } from "./NewTaskDialog";
+import { NewTaskDialog, lastProject } from "./NewTaskDialog";
 import { QueryContext, RUN_AGENT_EVENT } from "./queryContext";
 import { CompareView } from "./review/CompareView";
 import { LogoMark } from "./Logo";
@@ -1263,11 +1263,17 @@ export default function App() {
     if (tabs.length) setActive(tabs[(i + d + tabs.length) % tabs.length].key);
   };
 
-  /** A terminal opens where the current tab works: its terminal, its session's worktree, or the vault. */
+  /**
+   * A terminal opens where the current tab works: its terminal, its session's worktree or project. Elsewhere it
+   * is the project New task last used, else the vault.
+   */
   const terminalCwd = () => {
     if (activeTab?.kind === "terminal") return activeTab.cwd;
-    if (activeTab?.kind === "session") return sessions.find((s) => s.id === activeTab.id)?.worktree?.path ?? vault!;
-    return vault!;
+    if (activeTab?.kind === "session") {
+      const s = sessions.find((x) => x.id === activeTab.id);
+      return s?.worktree?.path || s?.cwd || lastProject() || vault!;
+    }
+    return lastProject() || vault!;
   };
 
   /** Asks the active terminal tab's panes to act; false if it is not a terminal or no pane took it. */
@@ -1582,7 +1588,7 @@ export default function App() {
           <button onClick={() => openTab({ key: "query", kind: "query", title: "mq query" })} title="mq query">
             <Braces size={14} /> Query
           </button>
-          <button onClick={() => openTerminal(vault)} title="Terminal in the vault"><SquareTerminal size={14} /> Terminal</button>
+          <button onClick={() => openTerminal(terminalCwd())} title="Terminal in the project New task last used (the vault if none)"><SquareTerminal size={14} /> Terminal</button>
         </div>
         <div className="side-scroll">
           <Collapsible title="Active" count={activeSessions.length}
@@ -1602,7 +1608,6 @@ export default function App() {
                         {s.status === "waiting" && <span className="row-badge waiting">needs you</span>}
                       </span>
                       <span className="active-meta">
-                        {s.worktree && <span className="ellipsis"><GitBranch size={10} /> {s.worktree.branch}</span>}
                         {(s.additions || s.deletions) ? <span className="active-diff"><b>+{s.additions ?? 0}</b> <i>−{s.deletions ?? 0}</i></span> : null}
                         <span className="active-ago">{ago(s.started)}</span>
                       </span>
