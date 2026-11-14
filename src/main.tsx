@@ -26,8 +26,19 @@ document.addEventListener("click", (e) => {
   openUrl(href).catch((err) => console.error("marq: could not open", href, err));
 });
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+// An optional local backend stand-in (src/demo/index.ts, not part of the repository) lets the app run in a
+// plain browser at /?demo, for recording screens. Without that file the glob is empty and nothing changes.
+const demoHook = import.meta.glob<{ installDemo: () => void }>("./demo/index.ts");
+
+async function boot() {
+  const load = demoHook["./demo/index.ts"];
+  if (load && (import.meta.env.DEV || import.meta.env.VITE_DEMO)) {
+    if (import.meta.env.VITE_DEMO || new URLSearchParams(location.search).has("demo")) (await load()).installDemo();
+  }
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}
+void boot();

@@ -37,3 +37,10 @@ dist-ssr
 # sidecar executable and its build output
 /src-tauri/binaries/
 /sidecar/dist/
+
+# demo mode and the recorder stay local; only the finished gif and mp4 (site/assets/demo.*) are committed
+/src/demo/
+/scripts/demo/
+/scripts/record-demo.mjs
+/demo.just
+/demo-out/

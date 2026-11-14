@@ -1,3 +1,6 @@
+# Local, uncommitted recipes (demo recording), if the file exists
+import? 'demo.just'
+
 set shell := ["bash", "-cu"]
 set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
 

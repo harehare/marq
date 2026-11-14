@@ -9,6 +9,10 @@
 
 Run coding agents in parallel, and keep every prompt, session, task and doc they produce as Markdown in your vault, ready to search, query, and hand to the next agent.
 
+<img src="site/assets/demo.gif" width="860" alt="Marq running a request that queries the vault and works in its own worktree, then a crew of three agents splitting and reviewing a task"/>
+
+<sub>A scripted run of the <a href="examples">demo vault</a>: a request that reads the vault and works in its own worktree, then a crew of three agents.</sub>
+
 </div>
 
 Marq runs coding agents in parallel, each in its own git worktree, and keeps everything they do (prompts, sessions, results, tasks) as plain Markdown files next to your notes. Because it is all Markdown, you can query it with [mq](https://github.com/harehare/mq) and hand exactly the parts you pick to an agent.
