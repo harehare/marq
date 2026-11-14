@@ -11,18 +11,12 @@ Run coding agents in parallel, and keep every prompt, session, task and doc they
 
 <img src="site/assets/demo.gif" width="860" alt="Marq running a request that queries the vault and works in its own worktree, then a crew of three agents splitting and reviewing a task"/>
 
-<sub>A scripted run of the <a href="examples">demo vault</a>: a request that reads the vault and works in its own worktree, then a crew of three agents.</sub>
-
 </div>
 
 Marq runs coding agents in parallel, each in its own git worktree, and keeps everything they do (prompts, sessions, results, tasks) as plain Markdown files next to your notes. Because it is all Markdown, you can query it with [mq](https://github.com/harehare/mq) and hand exactly the parts you pick to an agent.
 
 > [!WARNING]
-> Marq is under active development. Features, file formats and keybindings may change without notice.
->
-> - **Claude** and **Ollama** are fully supported. Other agents that speak [ACP](https://agentclientprotocol.com) (Gemini CLI, Codex, OpenCode, Qwen Code, Goose) run with fewer features; see [Agents and models](docs/agents.md).
-> - Release builds (`just build`) bundle the agent sidecar, so Node is not needed to run the app. The `claude` CLI still is.
-> - Developed and used on macOS. Linux and Windows build, but are not tested yet.
+> Marq is under active development: features, file formats and keybindings may change without notice. It is developed on macOS; Linux and Windows build but are not tested yet.
 
 ## Features
 
@@ -79,7 +73,7 @@ mq 'select(.code.lang == "tool:Bash") | .code.value' sessions/*.md
 
 Requirements:
 
-- Rust (stable), Node.js and pnpm
+- Rust (stable), Node.js and pnpm (release builds from `just build` bundle the agent sidecar, so Node is only needed to build and develop, not to run the app)
 - The `claude` CLI, logged in. Sessions run through the Claude Agent SDK in a Node sidecar (`sidecar/`), using your own `claude` and its login. For Ollama, see [Agents and models](docs/agents.md).
 
 ```sh
@@ -112,5 +106,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | Ollama (`ollama:<model>`) | Supported, except for crews |
 | Gemini CLI, Codex, OpenCode, Qwen Code, Goose (through [ACP](https://agentclientprotocol.com)) | Supported with limits: no crews, model choice or sandbox |
 | Other ACP agents | Add one under `[agents.<id>]` in `config.toml` |
+
+See [Agents and models](docs/agents.md) for what each one can do.
 
 mq queries use [mq-lang](https://github.com/harehare/mq) 0.9.3, embedded in the app.
