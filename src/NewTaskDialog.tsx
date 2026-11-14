@@ -465,7 +465,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           )}
           <span>
             {!team && !comparing && (
-              <button onClick={save} disabled={!prompt.trim() || busy} title="Save as a request note in the Inbox and start it later">
+              <button onClick={save} disabled={!prompt.trim() || busy} title="Save as a request note in the vault and start it later">
                 Save for later
               </button>
             )}

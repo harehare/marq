@@ -130,7 +130,7 @@ Worktrees live in .marq/worktrees/<id> …
 
 **Knowledge: merge session learnings into knowledge notes** in the command palette sets up a daily [schedule](sessions.md#schedules) that does the merging: it lists the learnings no knowledge note has taken in yet (`list_learnings`), merges them topic by topic into knowledge notes (`write_knowledge`), drops duplicates and what no longer holds, and keeps contradictions with reviewed notes under `## Open questions` instead of overwriting them. Edit the schedule note to change when it runs or what it does; **Run now** on it in the sidebar runs it at once.
 
-Whatever an agent writes is a **draft**: it shows in the Inbox, and **Mark reviewed** in the note's properties marks it checked. A new session is given the knowledge notes for its project (and those for no project), marked draft or reviewed, and reads the ones that bear on its task before starting.
+Whatever an agent writes is a **draft**: it is marked with a dot in the Notes tree, and **Mark reviewed** in the note's properties marks it checked. A new session is given the knowledge notes for its project (and those for no project), marked draft or reviewed, and reads the ones that bear on its task before starting.
 
 ## Markers in the body
 

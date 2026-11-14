@@ -255,7 +255,7 @@ function TreeView(props: TreeProps) {
           <span className="chev-slot" />
           <span className="icon-slot">{fileIcon(f)}</span>
           <span className="ellipsis">{fileLabel(f)}</span>
-          {f.status && f.kind === "request" && <span className={`dot status-${f.status}`} />}
+          {f.status && (f.kind === "request" || (f.kind === "knowledge" && f.status === "draft")) && <span className={`dot status-${f.status}`} title={f.status} />}
         </a>
       ))}
     </>
@@ -668,10 +668,6 @@ export default function App() {
     getCurrentWindow().setBadgeCount(n || undefined).catch(() => {});
   }, [unread, sessions]);
 
-  // Only requests nobody has started. Started ones show up as sessions instead.
-  // Requests waiting to run, and knowledge notes an agent wrote that nobody has checked yet.
-  const inbox = useMemo(() => files.filter((f) =>
-    (f.kind === "request" && f.status === "todo") || (f.kind === "knowledge" && f.status === "draft")), [files]);
   const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   // Newest first: their names are the time they were made.
@@ -1644,17 +1640,6 @@ export default function App() {
               ))}
             </Collapsible>
           ))}
-          {inbox.length > 0 && (
-            <Collapsible title="Inbox" icon={<Inbox size={11} />} count={inbox.length}>
-              {inbox.map((f) => (
-                <a key={f.path} className={`inbox-row ${current?.kind === "note" && current.path === f.path ? "on" : ""}`}
-                  onClick={() => openNote(f.path)} onContextMenu={(e) => fileMenu(e, f)}>
-                  <span className={`pill status-${f.status}`}>{f.status}</span>
-                  <span className="ellipsis">{fileLabel(f)}</span>
-                </a>
-              ))}
-            </Collapsible>
-          )}
           <Collapsible title="Boards" icon={<Columns3 size={11} />} count={boards.length}
             action={<button className="section-action" title="New board" onClick={() => setNewBoard(true)}><Plus size={13} /></button>}>
             {boards.map((f) => (
