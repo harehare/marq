@@ -157,7 +157,7 @@ The conversation shows your message as you typed it, with each `[[...]]` as a li
 
 ## Sending text between notes and sessions
 
-Select text in a note or a session and choose **Send to session** (⌘⇧↵ in the editor). Pick a session, add an optional instruction, and Marq sends the instruction followed by the excerpt with its source and line numbers. A stopped session is resumed. **New task with this** opens the New task dialog with the same text.
+Select text in a note or a session and choose **Send to session** (⌘⇧↵ in the editor). Pick a session, add an optional instruction, and Marq sends the instruction followed by the excerpt with its source and line numbers. A stopped session is resumed. **New task with this** opens the New task dialog with the same text. In a session, **Fix here** quotes the selection in that session's own message box, so you can ask for a change to exactly that part.
 
 The ↪ button next to Send in a session's message box sends what you typed, with that session's latest answer, to another session. When the text comes from a session (this button or a selection in it), **Send its answer back** returns the other session's answer to the first one when it finishes that turn, so two sessions can work on something together. Both sessions show where a message came from and went; click it to open the other session.
 

@@ -683,6 +683,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       <div className="session-main">
       <div className="messages" ref={messagesEl}>
         <SelectionPopover container={messagesRef}
+          onQuote={(text) => compose(`<excerpt source="session: ${title.replace(/"/g, "'")}">\n${text.trim()}\n</excerpt>\n\n`)}
           onSend={(text) => onSendExcerpt({ text, source: `session: ${title}`, from: { id: sessionId, title } })} />
         <div className="messages-inner">
           <MessageList vault={vault} events={events} onOpenOrigin={onOpenOrigin} onOpenSession={onOpenSession}
