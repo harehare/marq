@@ -1378,7 +1378,7 @@ button.icon.danger { color: var(--err); }
 .diff-comment, .diff-draft { margin: 4px 10px 6px 40px; font-family: var(--font); font-size: 12.5px; white-space: normal; }
 .diff-comment {
   display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: 6px;
-  background: var(--bg-raised); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  background: var(--bg-raised); border: 1px solid var(--border);
 }
 .diff-comment-where { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding-top: 1px; }
 .diff-comment-text { flex: 1; white-space: pre-wrap; line-height: 1.5; }
@@ -1636,7 +1636,7 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .ask-input { min-height: 72px; font: inherit; resize: none; }
 .ask-excerpt {
   margin: 0; max-height: 120px; overflow: auto; padding: 6px 10px; white-space: pre-wrap; font-size: 12.5px;
-  border-left: 3px solid var(--accent); background: var(--code-bg); border-radius: 0 6px 6px 0;
+  background: var(--code-bg); border-radius: 6px;
 }
 .ask-more { align-self: flex-start; gap: 4px; padding: 2px 4px; border: none; background: transparent; color: var(--muted); font-size: 12px; }
 .ask-more .chev.open { transform: rotate(90deg); }
@@ -1644,7 +1644,7 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .send-dialog { width: min(640px, calc(100vw - 32px)); }
 .excerpt {
   margin: 0; max-height: 160px; overflow: auto; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap;
-  background: var(--code-bg); border-left: 3px solid var(--accent); font-family: var(--font-mono); font-size: 12px;
+  background: var(--code-bg); font-family: var(--font-mono); font-size: 12px;
 }
 .send-instruction { min-height: 60px; resize: vertical; }
 .send-targets { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
