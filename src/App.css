@@ -451,7 +451,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-user-select: none; user-select: none;
 }
-.preview, .msg, pre, textarea, input, .cm-editor { -webkit-user-select: text; user-select: text; }
+.preview, .msg, pre, textarea, input, .cm-editor, .diff-line .code, .diff-comment-text {-webkit-user-select: text; user-select: text; }
 a { cursor: pointer; color: inherit; text-decoration: none; }
 h1, h2, h3, h4 { color: var(--fg-strong); }
 .muted { color: var(--muted); }
@@ -1359,7 +1359,7 @@ button.icon.danger { color: var(--err); }
 .diff-line { display: flex; white-space: pre; min-width: max-content; }
 .diff-line .ln { width: 38px; flex: none; padding-right: 6px; text-align: right; color: var(--muted); opacity: 0.6; -webkit-user-select: none; user-select: none; }
 .diff-line .sign { width: 16px; flex: none; text-align: center; -webkit-user-select: none; user-select: none; }
-.diff-line .code { padding-right: 12px; }
+.diff-line .code { padding-right: 12px; cursor: text; }
 .diff-line.add { background: var(--ok-soft); }
 .diff-line.add .sign { color: var(--ok); }
 .diff-line.del { background: var(--err-soft); }
