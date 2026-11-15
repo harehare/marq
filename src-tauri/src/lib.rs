@@ -1027,6 +1027,13 @@ fn board_update(app: AppHandle, vault: String, path: String, id: String, change:
     on_board(&app, &vault, &path, |p| boards::update(p, &id, change))
 }
 
+/// Queues the cards waiting in the board's queue list now, rather than at the next 30-second tick.
+#[tauri::command]
+fn board_queue_now(app: AppHandle, vault: String, path: String) -> Result<()> {
+    let p = vault::resolve(Path::new(&vault), &path)?;
+    automation::queue_board(&app, &p)
+}
+
 #[tauri::command]
 fn board_remove(app: AppHandle, vault: String, path: String, id: String) -> Result<()> {
     on_board(&app, &vault, &path, |p| boards::remove(p, &id))
@@ -1660,6 +1667,7 @@ pub fn run() {
             board_read,
             board_add,
             board_update,
+            board_queue_now,
             board_remove,
             board_list,
             board_set_queue,

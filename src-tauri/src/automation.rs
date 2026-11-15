@@ -225,6 +225,14 @@ fn work_queue(app: &AppHandle, board: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Queues the board's waiting cards in the inbox and handles it at once, for a card the user just
+/// put in the queue list, instead of at the next tick.
+pub fn queue_board(app: &AppHandle, board: &Path) -> Result<()> {
+    work_queue(app, board)?;
+    drain_now(app);
+    Ok(())
+}
+
 /// The board and card an inbox `card` event stands for.
 fn card_ref(source: &str) -> Option<(PathBuf, &str)> {
     let (board, card) = source.rsplit_once('#')?;

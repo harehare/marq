@@ -303,6 +303,8 @@ export const api = {
   boardCreate: (vault: string, name: string) => invoke<string>("board_create", { vault, name }),
   boardRead: (vault: string, path: string) => invoke<Board>("board_read", { vault, path }),
   boardAdd: (vault: string, path: string, title: string, list?: string) => invoke<Card>("board_add", { vault, path, title, list }),
+  /** Queues the cards waiting in the board's queue list in the inbox now. */
+  boardQueueNow: (vault: string, path: string) => invoke<void>("board_queue_now", { vault, path }),
   boardUpdate: (vault: string, path: string, id: string,
     change: { list?: string; index?: number; owner?: string; title?: string; done?: boolean; labels?: string[]; note?: string; remove_note?: number }) =>
     invoke<Card>("board_update", { vault, path, id, change }),

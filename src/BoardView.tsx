@@ -62,7 +62,7 @@ function LabelChip({ name, on, onClick, onRemove }: { name: string; on?: boolean
 function Select({ value, onChange, children, className = "" }: { value: string; onChange: (v: string) => void; children: React.ReactNode; className?: string }) {
   return (
     <span className={`board-select ${className}`}>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>{children}</select>
+      <select value={value} onChange={(e) => { onChange(e.target.value); e.target.blur(); }}>{children}</select>
       <ChevronDown size={12} />
     </span>
   );
@@ -136,6 +136,15 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
         `(Card ${c.id} on the board ${vaultRel(path)}, list ${list}. Keep it up to date with board_update_card as you work.)`].join("\n"),
       target && target.toLowerCase() !== list.toLowerCase() ? () => update(c.id, { list: target }) : undefined,
     );
+  };
+  // Puts the card in the queue list, so it waits in the inbox for its turn instead of starting now.
+  const queueCard = async (c: Card) => {
+    if (!board?.queue) {
+      setQueueOpen(true);
+      return;
+    }
+    await update(c.id, { list: board.queue.list });
+    api.boardQueueNow(vault, path).catch(() => {});
   };
   const link = (c: Card, title: string, file: string) => update(c.id, { note: linkTo(path, title, file) });
   const openLink = (href: string) => {
@@ -333,6 +342,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
       {openCard && (
         <CardDialog card={openCard.c} list={openCard.list} lists={board.lists.map((l) => l.name)} labels={allLabels} members={crew?.members}
           onUpdate={(ch) => update(openCard.c.id, ch)} onStart={crew ? undefined : () => { start(openCard.c, openCard.list); setOpen(null); }}
+          onQueue={crew ? undefined : () => { void queueCard(openCard.c); setOpen(null); }} queueSet={!!board.queue}
           onOpenLink={openLink} onLinkNote={() => setLinking(openCard.c)} onNewNote={() => setCreating(openCard.c)}
           onRemove={() => { setOpen(null); run(api.boardRemove(vault, path, openCard.c.id)); }}
           onClose={() => setOpen(null)} />
@@ -411,11 +421,13 @@ function ListHeader({ name, queue, count, shown, first, last, onRename, onMove, 
   );
 }
 
-function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
+function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQueue, queueSet, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
   card: Card; list: string; lists: string[];
   /** Every label on the board, offered when adding one. */
   labels: string[];
   onUpdate: (c: Parameters<typeof api.boardUpdate>[3]) => void; onStart?: () => void;
+  /** Puts the card in the board's queue list (or opens the queue settings when there is none). */
+  onQueue?: () => void; queueSet?: boolean;
   /** Crew roles to pick the owner from, instead of typing one. */
   members?: string[];
   onOpenLink: (href: string) => void; onLinkNote: () => void; onNewNote: () => void; onRemove: () => void; onClose: () => void;
@@ -540,6 +552,11 @@ function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onO
           <div className="board-dialog-side">
             <label className="field-label">Actions</label>
             {onStart && <button className="primary" onClick={onStart}><Sparkles size={13} /> Start a session</button>}
+            {onQueue && (
+              <button onClick={onQueue} title={queueSet ? "Put the card in the queue list: it waits in the Inbox and starts when there is room" : "Set up the board's queue first"}>
+                <ListTodo size={13} /> {queueSet ? "Queue" : "Set up queue…"}
+              </button>
+            )}
             <button onClick={onLinkNote}><Link2 size={13} /> Link a note</button>
             <button onClick={onNewNote}><FilePlus2 size={13} /> New note</button>
             <button className="danger" onClick={onRemove}><Trash2 size={13} /> Delete</button>

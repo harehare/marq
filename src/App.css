@@ -698,11 +698,14 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
   background: var(--bg-raised); border: 1px solid var(--border); border-radius: 0; padding: 7px 28px 7px 9px; outline: none;
 }
 .board-select select:hover { border-color: var(--border-strong); }
-.board-select select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.board-select select:focus { border-color: var(--accent); }
 .board-select svg { position: absolute; right: 9px; pointer-events: none; color: var(--muted); }
 /* The list a card is in, as a chip next to its id. */
 .board-select.pill select { padding: 2px 24px 2px 9px; border-radius: 0; font-size: 12px; font-weight: 600; background: var(--bg-hover); border-color: transparent; color: var(--fg-strong); }
 .board-select.pill select:hover { border-color: var(--border-strong); }
+/* No frame around the chip once it is picked; the keyboard still gets one. */
+.board-select.pill select:focus { border-color: transparent; }
+.board-select.pill select:focus-visible { border-color: var(--accent); }
 .board-select.pill svg { right: 7px; color: var(--fg); }
 .board-dialog-body { display: flex; gap: 18px; padding-left: 32px; }
 .board-dialog-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
