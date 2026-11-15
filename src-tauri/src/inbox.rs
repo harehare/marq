@@ -1,13 +1,12 @@
 //! The inbox: a durable list of things that want the user's attention.
 //!
-//! Everything that needs you (an approval request, a finished turn, a session that stopped with an
+//! Everything that needs you (an approval request, a session that stopped with an
 //! error) is first written here as one event, then shown in the sidebar. The file
 //! `<vault>/.marq/inbox.json` is the source of truth, so nothing is lost when the window closes
 //! or the app restarts.
 //!
-//! - An event has a `source` key (`approval:<request>`, `turn:<session>`, `error:<session>`).
-//!   Pushing an event whose key is still pending updates it instead of adding another one, so a
-//!   session that finishes five turns in a row leaves one entry with the latest result.
+//! - An event has a `source` key (`approval:<request>`, `error:<session>`).
+//!   Pushing an event whose key is still pending updates it instead of adding another one.
 //! - `status` is `pending`, then `done` (handled) or `dismissed` (dropped by the user). Resolved
 //!   events are kept for a while as history and trimmed to the newest `KEEP`.
 //! - `schedule`, `request` and `followup` events are work to do rather than news: queued `pending`
@@ -257,13 +256,6 @@ pub fn start(app: &AppHandle) {
             .unwrap_or("");
         let title = if tool.is_empty() { "Needs your approval".to_string() } else { format!("Needs your approval · {tool}") };
         push(&handle, "approval", source, title, what.chars().take(300).collect(), session);
-    });
-    let handle = app.clone();
-    app.listen("session://turn", move |e| {
-        let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
-        let Some(session) = v["session_id"].as_str() else { return };
-        let body: String = v["result"].as_str().unwrap_or("").chars().take(500).collect();
-        push(&handle, "result", format!("turn:{session}"), "Finished a turn".into(), body, session);
     });
     let handle = app.clone();
     app.listen("session://exit", move |e| {

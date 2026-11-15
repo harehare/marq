@@ -8,7 +8,6 @@ Marq can keep working while you are away, and tell you what needs you when you c
 | --- | --- |
 | **Needs your approval** | A session asks to run a tool. It stays until you answer it or the session ends |
 | **Stopped with an error** | A session ended with an error |
-| **Finished a turn** | A session finished; the entry shows its latest result. Opening the session handles it |
 | **Queued** / **Starting…** | Work waiting for room to run: a schedule, a request you queued (from New task or a board card), or a follow-up that fell due |
 | **Failed** | Queued work that could not start, with the reason. It stays until you dismiss it |
 | **todo** | A request saved for later, and a knowledge draft nobody has checked yet |
@@ -54,3 +53,5 @@ Notes about the project itself are [knowledge notes](vault.md#knowledge-notes), 
 ## Notifications
 
 A system notification and a Dock badge tell you when a session finishes, stops with an error or needs an approval. The first notification is sent at once; ones that follow within five seconds are combined into a single "N updates" notification, so a schedule that starts several sessions does not bury the screen. Turn them off under **Settings → Notifications**.
+
+A finished turn is not listed here. Sessions with changes to check wait under **Needs review** until you mark them done.

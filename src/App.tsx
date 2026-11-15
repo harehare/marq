@@ -773,7 +773,9 @@ export default function App() {
   // A result or error of a session that was marked done or deleted needs nothing more.
   const openEvents = useMemo(() => inboxEvents.filter((e) => {
     if (e.status !== "pending" && e.status !== "running" && e.status !== "failed") return false;
-    if (e.kind !== "result" && e.kind !== "error") return true;
+    // A finished turn is not an inbox item: Needs review lists what there is to check.
+    if (e.kind === "result") return false;
+    if (e.kind !== "error") return true;
     const s = sessions.find((x) => x.id === e.session_id);
     return sessions.length === 0 || (!!s && !s.review);
   }), [inboxEvents, sessions]);
