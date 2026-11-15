@@ -145,7 +145,7 @@ With the **Ask** or **Accept edits** permission modes, a tool call that needs pe
 
 ## Slash commands and skills
 
-Type `/` at the start of a line in the session composer or the New task prompt to complete skills and slash commands (↑↓, Enter or Tab, Esc). The list comes from Claude Code for the session's directory, with your skills, commands and plugins before the built-ins.
+Type `/` at the start of a line in the session composer or the New task prompt to complete skills and slash commands (↑↓, Enter or Tab, Esc). The list comes from Claude Code for the session's directory, with your skills, commands and plugins before the built-ins. Skills and commands that other agents keep on disk are listed too, from the project (up to the repository root) and your home directory: `.claude/skills` and `.claude/commands`, `.codex/skills` and `.codex/prompts`, `.gemini/` and `.qwen/` (`skills`, and `commands` as TOML), `.opencode/` and `~/.config/opencode/`, and `.agents/skills`. A badge shows which agent a skill came from. This also keeps the list working when `claude` is not installed, though without Claude Code's built-ins and plugins.
 
 ## Referring to notes
 

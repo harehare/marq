@@ -260,7 +260,7 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
             >
               <span className="slash-name">/{c.name}</span>
               {c.argumentHint && <span className="slash-hint">{c.argumentHint}</span>}
-              {!c.builtin && <span className="slash-badge">custom</span>}
+              {!c.builtin && <span className="slash-badge">{c.source && c.source !== "claude" ? c.source : "custom"}</span>}
               <span className="slash-desc">{c.description}</span>
             </button>
           ))}

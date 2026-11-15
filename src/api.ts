@@ -89,7 +89,7 @@ export type SessionInfo = {
 export type Worktree = { repo: string; path: string; branch: string; base: string; base_branch: string };
 type FileChange = { path: string; status: string; additions: number; deletions: number };
 export type Changes = { files: FileChange[]; additions: number; deletions: number; commits: string[]; dirty: boolean; upstream: string | null; ahead: number; branch: string | null };
-export type SlashCommand = { name: string; description: string; argumentHint: string; aliases?: string[]; builtin?: boolean };
+export type SlashCommand = { name: string; description: string; argumentHint: string; aliases?: string[]; builtin?: boolean; /** Which agent's folder it was found in, when read from disk. */ source?: string };
 export type Approval = {
   request_id: string;
   session_id: string;

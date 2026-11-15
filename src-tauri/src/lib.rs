@@ -1,6 +1,7 @@
 mod agents;
 mod automation;
 mod boards;
+mod commands;
 mod config;
 mod crew;
 mod error;
@@ -26,8 +27,8 @@ mod vault;
 mod workflow;
 mod workspace;
 
-use std::path::{Path, PathBuf};
 use crate::vault::PathSlash;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID};
@@ -1240,7 +1241,20 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
         (None, None) => vault.clone(),
     };
     let runner = app.state::<Runner>();
-    runner.commands(&app, &cwd, session_id.as_deref()).await
+    // Skills and commands on disk (Claude's, Codex's, Gemini's...) are listed too, so completion still
+    // works when `claude` is missing and the agent's own list cannot be had.
+    let dir = vault::expand_home(&cwd);
+    let found = blocking(move || Ok(commands::scan(&dir))).await.unwrap_or_default();
+    let mut list = match runner.commands(&app, &cwd, session_id.as_deref()).await {
+        Ok(serde_json::Value::Array(list)) => list,
+        Ok(_) => vec![],
+        Err(e) if found.is_empty() => return Err(e),
+        Err(_) => vec![],
+    };
+    let known: std::collections::HashSet<String> =
+        list.iter().filter_map(|c| c["name"].as_str().map(str::to_string)).collect();
+    list.extend(found.into_iter().filter(|c| !known.contains(c["name"].as_str().unwrap_or_default())));
+    Ok(serde_json::Value::Array(list))
 }
 
 /// The agents a task can run on, with whether each is installed.
