@@ -129,6 +129,16 @@ fn tick(app: &AppHandle) {
 /// Most scheduled runs and queued requests started at once; the rest wait in the inbox.
 const MAX_QUEUED: usize = 2;
 
+/// Handles the inbox now instead of at the next tick, for work the user just queued.
+pub fn drain_now(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(vault) = app.state::<Automation>().vault() {
+            drain(&app, &vault);
+        }
+    });
+}
+
 /// Moves due follow-ups into the inbox, then handles what is queued there: schedules and requests
 /// start while there is room, follow-ups resume their session once it is idle.
 fn drain(app: &AppHandle, vault: &Path) {

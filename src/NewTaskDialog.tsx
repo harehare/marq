@@ -15,7 +15,8 @@ type Props = {
   /** A task started as a crew (Team). */
   onStartedCrew: (rel: string, title: string) => void;
   /** A task saved as a request note without running it. */
-  onSaved: (rel: string) => void;
+  /** `queued`: it was put in the inbox to start when there is room, so there is no need to open it. */
+  onSaved: (rel: string, queued: boolean) => void;
   /** A task run on several models; the session ids to compare. */
   onStartedCompare: (ids: string[], title: string) => void;
   initialPrompt?: string;
@@ -252,15 +253,17 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     }
   };
 
-  const save = async () => {
+  /** Saves the request, and with `queue` puts it in the inbox so it starts when there is room. */
+  const save = async (queue = false) => {
     if (!prompt.trim()) return;
     setBusy(true);
-    setStage("Saving the request…");
+    setStage(queue ? "Queueing the request…" : "Saving the request…");
     try {
       const rel = await api.saveTask(vault, {
         title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, ...runOn, carryChanges: carry, worktree, autoTitle: !title.trim(), ...checks,
       });
-      onSaved(rel);
+      if (queue) await api.inboxQueueRequest(`${vault}/${rel}`, derivedTitle || rel);
+      onSaved(rel, queue);
       onClose();
     } catch (e) {
       setError(String(e));
@@ -512,8 +515,13 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           )}
           <span>
             {!team && !comparing && (
-              <button onClick={save} disabled={!prompt.trim() || busy} title="Save as a request note in the vault and start it later">
+              <button onClick={() => save()} disabled={!prompt.trim() || busy} title="Save as a request note in the vault and start it later">
                 Save for later
+              </button>
+            )}
+            {!team && !comparing && (
+              <button onClick={() => save(true)} disabled={!prompt.trim() || busy} title="Save the request and put it in the Inbox: it starts when there is room, two at a time with schedules">
+                Queue
               </button>
             )}
             <button className="primary" onClick={start} disabled={!prompt.trim() || busy}>

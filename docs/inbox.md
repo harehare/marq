@@ -24,11 +24,11 @@ Four things start sessions on their own. All of them wait in the Inbox first and
 | Work | How it gets queued |
 | --- | --- |
 | [Schedule](sessions.md#schedules) | When it falls due. Each schedule waits at most once: a schedule that is still queued or running is not queued again |
-| Request | You press ▶ **Queue** on a request saved for later. Nothing starts without it |
+| Request | You choose **Queue** in New task, or press ▶ **Queue** on a request saved for later. Nothing is queued without it |
 | [Board card](crews-and-boards.md#queue) | A card sits in the board's queue list |
 | Follow-up | A timer an agent set for itself falls due (see below) |
 
-Schedules and queued requests run two at a time together. A board's cards run up to that board's own limit (`queue_max`). Follow-ups are not counted: they resume a session that already exists, once it is idle, and never in the middle of a turn.
+**Start** in New task and **Ask** still start at once; only **Queue** waits for room. Schedules and queued requests run two at a time together. A board's cards run up to that board's own limit (`queue_max`). Follow-ups are not counted: they resume a session that already exists, once it is idle, and never in the middle of a turn.
 
 A queued schedule, card or follow-up cannot be dismissed, because the thing that queued it would queue it again at once. To take a card back, move it out of the queue list; to stop a schedule, switch it off. A queued request can be dismissed.
 

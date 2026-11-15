@@ -2115,7 +2115,7 @@ export default function App() {
           onClose={() => { setShowNewTask(false); setTaskPrompt(""); setTaskContext(null); taskAfter.current = null; }}
           onStarted={(id, title) => { refresh(); openSession(id, title); taskAfter.current?.(); }}
           onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); taskAfter.current?.(); }}
-          onSaved={(rel) => { refresh(); openNote(`${vault}/${rel}`); }}
+          onSaved={(rel, queued) => { refresh(); if (!queued) openNote(`${vault}/${rel}`); }}
           onStartedCompare={(ids, title) => { openCompare(ids, title); taskAfter.current?.(); }} />
       )}
       {showQuickOpen && (

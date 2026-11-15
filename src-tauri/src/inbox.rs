@@ -294,7 +294,12 @@ pub fn inbox_resolve(app: AppHandle, id: Option<String>, session_id: Option<Stri
 /// Puts a request note in the work queue; it starts when there is room. False when it already waits.
 #[tauri::command]
 pub fn inbox_queue_request(app: AppHandle, path: String, title: String) -> bool {
-    enqueue(&app, "request", &path, &title, "", None)
+    let added = enqueue(&app, "request", &path, &title, "", None);
+    if added {
+        // Started now if there is room, rather than at the next 30-second tick.
+        crate::automation::drain_now(&app);
+    }
+    added
 }
 
 /// Dismisses everything pending.
