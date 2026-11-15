@@ -31,7 +31,7 @@ ci:
     pnpm exec tsc -p sidecar
     cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
     cargo test --manifest-path src-tauri/Cargo.toml
-    mdbook build
+    mdbook build docs
 
 # Check that the build tools are installed
 doctor:
@@ -126,11 +126,11 @@ bump new:
 
 # Build the book into site/book/
 docs:
-    mdbook build
+    mdbook build docs
 
 # Serve the book with live reload
 docs-serve:
-    mdbook serve --open
+    mdbook serve docs --open
 
 # Build everything and serve the whole site (landing page + /book/) locally
 site-serve: docs

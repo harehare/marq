@@ -7,7 +7,6 @@ on:
     paths:
       - site/**
       - docs/**
-      - book.toml
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -31,7 +30,7 @@ jobs:
         with:
           tool: mdbook
       - name: Build the book
-        run: mdbook build
+        run: mdbook build docs
         env:
           # Project pages are served under /marq/
           MDBOOK_OUTPUT__HTML__SITE_URL: /marq/book/

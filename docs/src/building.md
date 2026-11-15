@@ -51,7 +51,7 @@ Three GitHub Actions workflows live in `.github/workflows/`:
 | Workflow | Runs | Does |
 | --- | --- | --- |
 | `ci.yml` | Pushes and pull requests to `main` | On Linux, macOS and Windows: `pnpm build` (type check and Vite build), the sidecar type check, `cargo clippy` and `cargo test`. Also builds the book. |
-| `pages.yml` | Pushes to `main` that touch `site/`, `docs/` or `book.toml`, and manually | Builds the book and publishes `site/` to GitHub Pages. |
+| `pages.yml` | Pushes to `main` that touch `site/` or `docs/`, and manually | Builds the book and publishes `site/` to GitHub Pages. |
 | `release.yml` | Manually | Builds the installers for macOS (Apple Silicon and Intel), Linux and Windows with `tauri-action` and attaches them to a draft release for the tag you enter. |
 
 `just ci` runs the same checks as `ci.yml` on your machine. `just check` is the shorter version without the book.
@@ -61,7 +61,7 @@ Three GitHub Actions workflows live in `.github/workflows/`:
 The site has two parts that deploy together to GitHub Pages:
 
 - `site/` is the landing page (`site/index.html`). Its links are relative, so it works under the `/marq/` path of project pages.
-- `docs/` is this book. `book.toml` builds it into `site/book/`, which is served at `/book/`.
+- `docs/` is this book (`docs/book.toml`, sources in `docs/src/`). It builds into `site/book/`, which is served at `/book/`.
 
 | Command | Does |
 | --- | --- |

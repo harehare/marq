@@ -2,14 +2,14 @@
 authors = ["Takahiro Sato"]
 description = "Marq documentation: a Markdown knowledge base and an IDE for coding agents."
 language = "en"
-src = "docs"
+src = "src"
 title = "Marq Documentation"
 
 [build]
-build-dir = "site/book"
+build-dir = "../site/book"
 
 [output.html]
-additional-css = ["assets/book.css"]
+additional-css = ["book.css"]
 default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/harehare/marq"

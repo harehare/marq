@@ -78,7 +78,7 @@ mq 'select(.code.lang == "tool:Bash") | .code.value' sessions/*.md
 Requirements:
 
 - Rust (stable), Node.js and pnpm (release builds from `just build` bundle the agent sidecar, so Node is only needed to build and develop, not to run the app)
-- The `claude` CLI, logged in. Sessions run through the Claude Agent SDK in a Node sidecar (`sidecar/`), using your own `claude` and its login. For Ollama, see [Agents and models](docs/agents.md).
+- The `claude` CLI, logged in. Sessions run through the Claude Agent SDK in a Node sidecar (`sidecar/`), using your own `claude` and its login. For Ollama, see [Agents and models](docs/src/agents.md).
 
 ```sh
 pnpm install     # also installs sidecar/ dependencies
@@ -98,7 +98,7 @@ Tasks are collected in the [`justfile`](justfile); run `just` to list them.
 | `just bump 0.2.0` | Set the version in `package.json`, `Cargo.toml` and `tauri.conf.json` |
 | `just docs-serve` / `just site-serve` | Preview the docs, or the landing page with the docs |
 
-See [Building and distribution](docs/building.md) for per-OS requirements, CI and releases.
+See [Building and distribution](docs/src/building.md) for per-OS requirements, CI and releases.
 
 Open a folder as the vault (any folder of Markdown files works), then open a note, hover a heading and choose **Ask**, or press ⌘N for a new task.
 
@@ -106,17 +106,17 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 
 | Page | Contents |
 | --- | --- |
-| [Getting started](docs/getting-started.md) | Install, open a vault, your first session, the sidebar |
-| [Vault and file formats](docs/vault.md) | Folder layout, frontmatter, anchors, result blocks, session files |
-| [Sessions](docs/sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume, sending text |
-| [Inbox and follow-ups](docs/inbox.md) | What waits for you, queued work, agents' follow-ups, standing instructions, notifications |
-| [mq queries](docs/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
-| [Crews and boards](docs/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
-| [Workflows](docs/workflows.md) | Checks after each turn, acceptance criteria, phases, the sandbox, specs, skills |
-| [Agents and models](docs/agents.md) | Claude, Ollama, ACP agents, permission modes, how sessions run |
-| [Vault tools for agents](docs/tools.md) | The MCP tools agents use to read and organize the vault |
-| [Settings and keys](docs/settings.md) | `~/.marq/config.toml`, keybindings, shell environment |
-| [Building and distribution](docs/building.md) | Requirements per OS, `just` recipes, CI, releases, the site |
+| [Getting started](docs/src/getting-started.md) | Install, open a vault, your first session, the sidebar |
+| [Vault and file formats](docs/src/vault.md) | Folder layout, frontmatter, anchors, result blocks, session files |
+| [Sessions](docs/src/sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume, sending text |
+| [Inbox and follow-ups](docs/src/inbox.md) | What waits for you, queued work, agents' follow-ups, standing instructions, notifications |
+| [mq queries](docs/src/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
+| [Crews and boards](docs/src/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
+| [Workflows](docs/src/workflows.md) | Checks after each turn, acceptance criteria, phases, the sandbox, specs, skills |
+| [Agents and models](docs/src/agents.md) | Claude, Ollama, ACP agents, permission modes, how sessions run |
+| [Vault tools for agents](docs/src/tools.md) | The MCP tools agents use to read and organize the vault |
+| [Settings and keys](docs/src/settings.md) | `~/.marq/config.toml`, keybindings, shell environment |
+| [Building and distribution](docs/src/building.md) | Requirements per OS, `just` recipes, CI, releases, the site |
 
 ## Compatibility
 
@@ -127,6 +127,6 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | Gemini CLI, Codex, OpenCode, Qwen Code, Goose (through [ACP](https://agentclientprotocol.com)) | Supported with limits: no crews, model choice or sandbox |
 | Other ACP agents | Add one under `[agents.<id>]` in `config.toml` |
 
-See [Agents and models](docs/agents.md) for what each one can do.
+See [Agents and models](docs/src/agents.md) for what each one can do.
 
 mq queries use [mq-lang](https://github.com/harehare/mq) 0.10.1, embedded in the app.
