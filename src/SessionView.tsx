@@ -451,6 +451,12 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   // A turn is running from a prompt until its result.
   const last = [...events].reverse().find((e) => ["marq_user", "turn_end", "marq_exit"].includes(e.type));
   const running = last?.type === "marq_user";
+  // A process that stops after a turn finished cleanly leaves nothing to resume.
+  const endedCleanly = (() => {
+    const marks = events.filter((e) => ["marq_user", "turn_end"].includes(e.type));
+    const m = marks[marks.length - 1];
+    return m?.type === "turn_end" && !m.is_error;
+  })();
   const status = approvals.length
     ? "waiting"
     : running
@@ -459,7 +465,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
         ? "error"
         : last?.type === "marq_exit" && last.status === "error"
           ? "error"
-          : last?.type === "marq_exit" && ["interrupted", "stopped"].includes(last.status)
+          : last?.type === "marq_exit" && ["interrupted", "stopped"].includes(last.status) && !endedCleanly
             ? "interrupted"
             : "done";
   const stopped = status === "interrupted" || status === "error";

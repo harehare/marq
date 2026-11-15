@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, BookA, ClipboardList, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
-  ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
+  ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CheckCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
   ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft,
 } from "lucide-react";
@@ -1820,7 +1820,9 @@ export default function App() {
           </Collapsible>
           {groups.map((g) => (
             <Collapsible key={g.key} title={g.label} panel="sessions" count={g.items.length}
->
+              action={<button className="section-action" title={`Mark all ${g.items.length} as done`}
+                onClick={() => Promise.all(g.items.map((s) => api.setSessionReview(vault!, s.id, "done"))).then(refresh, refresh)}>
+                <CheckCheck size={13} /></button>}>
               {g.items.map((s) => (
                 <a key={s.id} className={`session-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
                   onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}

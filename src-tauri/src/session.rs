@@ -216,17 +216,22 @@ fn meta_of(events: &[Value]) -> Option<SessionMeta> {
 }
 
 /// `running` while a prompt has no result yet, otherwise how the last turn or process ended.
+/// A process that stops after a turn finished cleanly is `done`: only a turn cut off midway is
+/// `interrupted`.
 pub fn status_of(events: &[Value]) -> String {
-    let last = events
+    let mut marks = events
         .iter()
         .rev()
-        .find(|e| matches!(e["type"].as_str(), Some("marq_user" | "marq_exit" | "turn_end")));
-    match last {
+        .filter(|e| matches!(e["type"].as_str(), Some("marq_user" | "marq_exit" | "turn_end")));
+    match marks.next() {
         Some(e) if e["type"] == "marq_user" => "running".to_string(),
         Some(e) if e["type"] == "turn_end" && e["is_error"] == true => "error".to_string(),
         Some(e) if e["type"] == "marq_exit" => match e["status"].as_str() {
             Some("error") => "error".to_string(),
-            Some("stopped" | "interrupted") => "interrupted".to_string(),
+            Some("stopped" | "interrupted") => {
+                let finished = marks.find(|m| m["type"] != "marq_exit").is_some_and(|m| m["type"] == "turn_end" && m["is_error"] != true);
+                if finished { "done" } else { "interrupted" }.to_string()
+            }
             _ => "done".to_string(),
         },
         _ => "done".to_string(),
@@ -832,6 +837,20 @@ mod tests {
         m["worktree"] = wt("marq/a");
         let events = vec![m, json!({"type": "marq_worktree", "worktree": wt("marq/b")}), json!({"type": "marq_worktree", "worktree": wt("feature/c")})];
         assert_eq!(meta_of(&events).unwrap().worktree.unwrap().branch, "feature/c");
+    }
+
+    #[test]
+    fn a_stop_after_a_finished_turn_is_done() {
+        let ev = |t: &str, extra: Value| {
+            let mut v = serde_json::json!({"type": t});
+            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            v
+        };
+        let user = ev("marq_user", serde_json::json!({}));
+        let end = ev("turn_end", serde_json::json!({"is_error": false}));
+        let stop = ev("marq_exit", serde_json::json!({"status": "stopped"}));
+        assert_eq!(status_of(&[user.clone(), end, stop.clone()]), "done");
+        assert_eq!(status_of(&[user, stop]), "interrupted");
     }
 
     #[test]

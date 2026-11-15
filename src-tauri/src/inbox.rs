@@ -169,6 +169,11 @@ fn resolve_where(app: &AppHandle, status: &'static str, pred: impl Fn(&Event) ->
     app.state::<Inbox>().edit(app, |events| resolve(events, status, pred));
 }
 
+/// Closes what the inbox still holds for a session the user has marked done.
+pub fn resolve_session(app: &AppHandle, session: &str) {
+    resolve_where(app, "done", |e| e.session_id.as_deref() == Some(session));
+}
+
 /// Queues `kind` work (see the module docs) unless the same `source` is already queued or running.
 /// True when it was added.
 pub fn enqueue(app: &AppHandle, kind: &str, source: &str, title: &str, body: &str, session_id: Option<&str>) -> bool {

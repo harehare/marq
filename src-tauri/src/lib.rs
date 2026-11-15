@@ -728,6 +728,9 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
         if let Some(path) = session::set_review(Path::new(&vault), &session_id, &state, None)? {
             let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
         }
+        if state == "done" {
+            inbox::resolve_session(&app, &session_id);
+        }
         let _ = app.emit("sessions://changed", &session_id);
         Ok(())
     })
