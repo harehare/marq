@@ -17,10 +17,22 @@
       property="og:description"
       content="A Markdown knowledge base and an IDE for coding agents, in one app."
     />
+    <meta property="og:url" content="https://harehare.github.io/marq/" />
     <meta property="og:image" content="https://harehare.github.io/marq/assets/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta
+      property="og:image:alt"
+      content="Marq running a task: the agent's session with its tool calls on the left and the diff it produced on the right."
+    />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Marq – Run agents. Keep everything." />
+    <meta
+      name="twitter:description"
+      content="A Markdown knowledge base and an IDE for coding agents, in one app."
+    />
+    <meta name="twitter:image" content="https://harehare.github.io/marq/assets/og.png" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -58,7 +70,7 @@
       a { color: var(--cyan); text-decoration: none; }
       a:hover { text-decoration: underline; }
       code { font-family: var(--mono); }
-      .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+      .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
       /* Nav */
       nav {
@@ -67,10 +79,10 @@
         backdrop-filter: blur(14px);
         border-bottom: 1px solid rgba(61, 74, 92, 0.6);
       }
-      nav .wrap { display: flex; align-items: center; height: 64px; gap: 28px; }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 22px; color: var(--cyan); letter-spacing: -0.02em; }
+      nav .wrap { display: flex; align-items: center; height: 56px; gap: 28px; }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--cyan); letter-spacing: -0.02em; }
       .brand:hover { text-decoration: none; }
-      .brand img { width: 30px; height: 30px; }
+      .brand img { width: 26px; height: 26px; }
       nav .links { display: flex; gap: 22px; margin-left: 8px; }
       nav .links a { color: var(--muted); font-size: 14px; }
       nav .links a:hover { color: var(--text); text-decoration: none; }
@@ -88,29 +100,28 @@
       .btn.small { padding: 7px 14px; font-size: 14px; }
 
       /* Hero */
-      .hero { padding: 88px 0 72px; text-align: center; position: relative; overflow: hidden; }
+      .hero { padding: 64px 0 56px; text-align: center; position: relative; overflow: hidden; }
       .hero .wrap { position: relative; z-index: 1; }
-      .hero img.mark { width: 84px; height: 84px; }
       h1 {
-        font-size: clamp(40px, 7vw, 72px); line-height: 1.05; letter-spacing: -0.035em;
-        margin: 22px 0 18px; font-weight: 800;
+        font-size: clamp(34px, 5.4vw, 56px); line-height: 1.08; letter-spacing: -0.03em;
+        margin: 0 0 16px; font-weight: 800;
       }
       h1 span { color: var(--cyan); }
-      .lead { max-width: 680px; margin: 0 auto; color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); }
+      .lead { max-width: 620px; margin: 0 auto; color: var(--muted); font-size: clamp(16px, 2vw, 18px); }
       .lead strong { color: var(--text); font-weight: 600; }
-      .cta { display: flex; justify-content: center; gap: 12px; margin-top: 34px; flex-wrap: wrap; }
-      .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
-      .demo { margin: 52px auto 0; max-width: 1040px; }
+      .cta { display: flex; justify-content: center; gap: 12px; margin-top: 28px; flex-wrap: wrap; }
+      .note { margin: 16px auto 0; max-width: 640px; font-size: 13px; color: var(--muted); }
+      .demo { margin: 44px auto 0; max-width: 1080px; }
       .demo video, .demo img {
-        display: block; width: 100%; height: auto; border: 1px solid var(--line);
+        display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 12px;
+        box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(133, 212, 255, 0.06);
       }
 
       /* Sections */
-      section { padding: 72px 0; }
+      section { padding: 64px 0; }
       section.alt { background: var(--bg-deep); border-block: 1px solid rgba(61, 74, 92, 0.5); }
-      .eyebrow { color: var(--teal); font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-      h2 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; letter-spacing: -0.025em; margin: 8px 0 14px; }
-      .sub { color: var(--muted); max-width: 640px; margin: 0 0 40px; }
+      h2 { font-size: clamp(26px, 3.4vw, 34px); line-height: 1.18; letter-spacing: -0.025em; margin: 6px 0 12px; }
+      .sub { color: var(--muted); max-width: 600px; margin: 0 0 32px; }
       .center { text-align: center; }
       .center .sub { margin-inline: auto; }
 
@@ -128,28 +139,23 @@
       .c-h { color: #f0c987; font-weight: 600; }
       .c-cmd { color: var(--teal); }
 
-      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
       .split p { color: var(--muted); }
       .split ul { color: var(--muted); padding-left: 20px; }
       .split li { margin: 6px 0; }
       .split li strong { color: var(--text); }
 
       /* Feature grid */
-      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
       .card {
-        background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 24px;
+        background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px;
         transition: border-color 0.15s, transform 0.15s;
       }
       .card:hover { border-color: rgba(133, 212, 255, 0.5); transform: translateY(-2px); }
-      .card h3 { margin: 0 0 6px; font-size: 17px; letter-spacing: -0.01em; }
-      .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+      .card h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: -0.01em; }
+      .card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
 
       /* Downloads */
-      .dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 8px; }
-      .dl .card { text-align: left; }
-      .dl .card h3 { display: flex; align-items: center; gap: 10px; }
-      .dl .card .files { margin-top: 12px; font: 13px var(--mono); color: var(--muted); }
-      .dl .card .files div + div { margin-top: 2px; }
 
       .warn {
         max-width: 760px; margin: 36px auto 0; padding: 14px 18px; border-radius: 10px;
@@ -158,18 +164,18 @@
       }
       .warn strong { color: #f0c987; }
 
-      footer { padding: 40px 0 56px; color: var(--muted); font-size: 14px; border-top: 1px solid rgba(61, 74, 92, 0.5); }
+      footer { padding: 32px 0 44px; color: var(--muted); font-size: 14px; border-top: 1px solid rgba(61, 74, 92, 0.5); }
       footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; }
       footer .spacer { flex: 1; }
       footer a { color: var(--muted); }
       footer a:hover { color: var(--text); }
 
       @media (max-width: 860px) {
-        .grid, .dl { grid-template-columns: 1fr; }
+        .grid { grid-template-columns: 1fr; }
         .split { grid-template-columns: 1fr; }
         nav .links { display: none; }
-        .hero { padding: 56px 0 48px; }
-        section { padding: 52px 0; }
+        .hero { padding: 44px 0 40px; }
+        section { padding: 48px 0; }
       }
       @media (min-width: 861px) and (max-width: 1040px) {
         .grid { grid-template-columns: repeat(2, 1fr); }
@@ -198,7 +204,6 @@
 
     <header class="hero" id="top">
       <div class="wrap">
-        <img class="mark" src="assets/logo.svg" alt="Marq logo" />
         <h1>Run agents.<br /><span>Keep everything.</span></h1>
         <p class="lead">
           A <strong>Markdown knowledge base</strong> and an <strong>IDE for coding agents</strong>, in one app.
@@ -206,12 +211,12 @@
           vault, ready to search, query, and hand to the next agent.
         </p>
         <div class="cta">
-          <a class="btn primary" href="#download">Download</a>
+          <a class="btn primary" href="#download">Get Marq</a>
           <a class="btn" href="book/">Read the docs</a>
         </div>
         <p class="note">Open source · macOS, Windows, Linux · Works with your own <code>claude</code> login, local Ollama models, or ACP agents like Gemini CLI and Codex</p>
         <figure class="demo">
-          <video autoplay loop muted playsinline preload="metadata" width="1440" height="900" aria-label="Marq running a request that queries the vault and works in its own worktree, then a crew of three agents splitting and reviewing a task">
+          <video autoplay loop muted playsinline preload="metadata" poster="assets/poster.jpg" width="1440" height="900" aria-label="Marq running a request that queries the vault and works in its own worktree, then a crew of three agents splitting and reviewing a task">
             <source src="assets/demo.mp4" type="video/mp4" />
             <img src="assets/demo.gif" alt="Marq's inbox with a request queued and started, then the agent working in its own worktree, then a crew of three agents splitting and reviewing a task" width="960" />
           </video>
@@ -222,7 +227,6 @@
     <section id="features" class="alt">
       <div class="wrap">
         <div class="center">
-          <div class="eyebrow">Agent IDE</div>
           <h2>Everything you need to run agents side by side</h2>
           <p class="sub">Each task gets its own git worktree and branch, so several agents can work on one repository at once without stepping on each other.</p>
         </div>
@@ -278,7 +282,6 @@
     <section id="markdown">
       <div class="wrap split">
         <div>
-          <div class="eyebrow">Knowledge base</div>
           <h2>Markdown in, Markdown out</h2>
           <p>A request is a note. Its body is the prompt, and <code>context:</code> attaches pieces of other notes. When the session finishes, Marq writes the result back under <code>## Result</code> and the full transcript to <code>sessions/</code>, also Markdown.</p>
           <ul>
@@ -319,7 +322,6 @@ Implement what the design note says.</pre>
   | .code.value'</span> sessions/*.md</pre>
         </div>
         <div>
-          <div class="eyebrow">Query with mq</div>
           <h2>Hand the agent exactly what you pick</h2>
           <p><a href="https://github.com/harehare/mq">mq</a> is a jq-like query language for Markdown, embedded in Marq. <code>mq</code> code blocks run in the preview and show their output right below.</p>
           <ul>
@@ -333,29 +335,11 @@ Implement what the design note says.</pre>
 
     <section id="download">
       <div class="wrap center">
-        <div class="eyebrow">Download</div>
         <h2>Get Marq</h2>
-        <p class="sub">Installers for every platform are attached to each GitHub release.</p>
-        <div class="dl">
-          <div class="card">
-            <h3>macOS</h3>
-            <p>Apple Silicon and Intel.</p>
-            <div class="files"><div>Marq_x.y.z_universal.dmg</div></div>
-          </div>
-          <div class="card">
-            <h3>Windows</h3>
-            <p>Windows 10 and later.</p>
-            <div class="files"><div>Marq_x.y.z_x64-setup.exe</div><div>Marq_x.y.z_x64.msi</div></div>
-          </div>
-          <div class="card">
-            <h3>Linux</h3>
-            <p>Debian, Fedora and AppImage.</p>
-            <div class="files"><div>marq_x.y.z_amd64.deb</div><div>marq-x.y.z.x86_64.rpm</div><div>marq_x.y.z_amd64.AppImage</div></div>
-          </div>
-        </div>
+        <p class="sub">Installers are coming soon. For now, build it from source.</p>
         <div class="cta">
-          <a class="btn primary" href="https://github.com/harehare/marq/releases">All releases on GitHub</a>
-          <a class="btn" href="book/building.html">Build from source</a>
+          <a class="btn primary" href="book/building.html">Build from source</a>
+          <a class="btn" href="https://github.com/harehare/marq">GitHub</a>
         </div>
         <div class="warn">
           <strong>Under active development.</strong> Features, file formats and keybindings may change without
