@@ -27,7 +27,7 @@ Three things start sessions on their own. All of them wait in the Inbox first an
 | Request | You choose **Queue** in New task or in a [board card](crews-and-boards.md#boards)'s dialog, or press ▶ **Queue** on a request saved for later. Nothing is queued without it |
 | Follow-up | A timer an agent set for itself falls due (see below) |
 
-**Start** in New task, **Ask** and a card's **Start a session** still start at once; only **Queue** waits for room. Schedules and queued requests run two at a time together. Follow-ups are not counted: they resume a session that already exists, once it is idle, and never in the middle of a turn.
+**Start** in New task, **Ask** and a card's **Start a session** still start at once; only **Queue** waits for room. Schedules and queued requests are worked through one after the other, oldest first; a slot frees when the running session's first turn ends. To run more at once, set **Run at once** under **Settings → Inbox** (`parallel` under `[inbox]` in `config.toml`, 1 to 8). Follow-ups are not counted: they resume a session that already exists, once it is idle, and never in the middle of a turn.
 
 A queued schedule or follow-up cannot be dismissed, because the thing that queued it would queue it again at once. To stop a schedule, switch it off. A queued request can be dismissed.
 

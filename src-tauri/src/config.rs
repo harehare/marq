@@ -50,6 +50,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [scratch]
 # keep_days = 7                   # scratch memos not changed for this many days go to the Trash; 0 keeps them
 
+[inbox]
+# parallel = 1                    # how many scheduled runs and queued requests go at once (1 to 8); the rest wait their turn in the Inbox
+
 [sandbox]
 # unattended = "on"               # on | strict: Claude Code's sandbox for schedules that do not set one
 

@@ -41,6 +41,9 @@ url = "http://127.0.0.1:11434"  # default: $OLLAMA_HOST, then this
 [scratch]
 keep_days = 7                   # scratch memos not changed for this many days go to the Trash; 0 keeps them
 
+[inbox]
+parallel = 1                    # scheduled runs and queued requests that go at once (1 to 8); the rest wait in the Inbox
+
 [sandbox]
 unattended = "on"               # on | strict: sandbox schedules that do not set one
 

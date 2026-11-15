@@ -1475,8 +1475,9 @@ button.icon.danger { color: var(--err); }
 .tree-add:hover { color: var(--accent) !important; background: var(--bg-raised) !important; }
 
 /* Context menu */
+/* Above the icon-only sidebar's panel (30), which a menu opened from it must not hide behind. */
 .context-menu {
-  position: fixed; z-index: 20; min-width: 200px; padding: 4px; border-radius: 9px;
+  position: fixed; z-index: 40; min-width: 200px; padding: 4px; border-radius: 9px;
   background: var(--bg-raised); border: 1px solid var(--border-strong); box-shadow: var(--shadow);
 }
 .menu-item {

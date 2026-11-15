@@ -109,8 +109,11 @@ fn tick(app: &AppHandle) {
     drain(app, &vault);
 }
 
-/// Most scheduled runs and queued requests started at once; the rest wait in the inbox.
-const MAX_QUEUED: usize = 2;
+/// How many scheduled runs and queued requests may be going at once, `[inbox] parallel` in the
+/// config (default 1: one after the other); the rest wait in the inbox.
+fn parallel() -> usize {
+    crate::config::read().ok().and_then(|c| c["inbox"]["parallel"].as_u64()).map_or(1, |n| n.clamp(1, 8) as usize)
+}
 
 /// Handles the inbox now instead of at the next tick, for work the user just queued.
 pub fn drain_now(app: &AppHandle) {
@@ -125,12 +128,16 @@ pub fn drain_now(app: &AppHandle) {
 /// Moves due follow-ups into the inbox, then handles what is queued there: schedules and requests
 /// start while there is room, follow-ups resume their session once it is idle.
 fn drain(app: &AppHandle, vault: &Path) {
+    // One at a time: a drain counts the sessions running before it starts some, so two at once
+    // (queuing several cards quickly) would each see room and together start more than the limit.
+    static DRAIN: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = DRAIN.lock().unwrap_or_else(|e| e.into_inner());
     for t in crate::timers::take_due(vault, Local::now()) {
         let title = crate::session::meta(vault, &t.session_id).map_or_else(|_| "Follow-up".to_string(), |m| m.title);
         crate::inbox::enqueue(app, "followup", &format!("followup:{}", t.id), &title, &t.note, Some(&t.session_id));
     }
 
-    let mut room = MAX_QUEUED.saturating_sub(app.state::<Automation>().running_schedules());
+    let mut room = parallel().saturating_sub(app.state::<Automation>().running_schedules());
     for e in crate::inbox::claim(app, "schedule", room, |_| true) {
         room = room.saturating_sub(1);
         let path = PathBuf::from(&e.source);

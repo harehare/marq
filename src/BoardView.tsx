@@ -556,7 +556,7 @@ function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQ
             <label className="field-label">Actions</label>
             {onStart && <button className="primary" onClick={onStart}><Sparkles size={13} /> Start a session</button>}
             {onQueue && (
-              <button onClick={onQueue} title="Put the card in the Inbox: it starts when there is room, two at a time with schedules">
+              <button onClick={onQueue} title="Put the card in the Inbox: it starts in its turn, one at a time by default">
                 <ListTodo size={13} /> Queue
               </button>
             )}

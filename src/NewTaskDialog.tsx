@@ -526,7 +526,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               </button>
             )}
             {!team && !comparing && (
-              <button onClick={() => save(true)} disabled={!prompt.trim() || busy} title="Save the request and put it in the Inbox: it starts when there is room, two at a time with schedules">
+              <button onClick={() => save(true)} disabled={!prompt.trim() || busy} title="Save the request and put it in the Inbox: it starts in its turn, one at a time by default">
                 Queue
               </button>
             )}

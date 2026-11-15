@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Bot, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
+import { Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { api, type AgentInfo } from "./api";
 import { composing } from "./keys";
@@ -97,6 +97,13 @@ const SECTIONS: Section[] = [
     id: "notifications", title: "Notifications", icon: Bell,
     fields: [
       { key: "notifications.enabled", label: "Session notifications", kind: "bool", desc: "Notify when a session finishes, fails or needs an approval" },
+    ],
+  },
+  {
+    id: "inbox", title: "Inbox", icon: Inbox,
+    note: "Applies from the next time the Inbox is worked through (within 30 seconds).",
+    fields: [
+      { key: "inbox.parallel", label: "Run at once", kind: "number", placeholder: "1", desc: "Scheduled runs and queued requests that go at the same time (1 to 8). The rest wait their turn in the Inbox, oldest first" },
     ],
   },
   {
