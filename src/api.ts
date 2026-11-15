@@ -272,6 +272,8 @@ export const api = {
   searchSessions: (vault: string, query: string, project?: string, since?: string) =>
     invoke<{ hits: SessionHit[]; expanded: string[][] }>("search_sessions", { vault, query, project, since }),
   /** glossary.md, created with an example entry when missing. */
+  /** instructions.md, created with an explanation when missing. */
+  instructionsPath: (vault: string) => invoke<string>("instructions_path", { vault }),
   glossaryPath: (vault: string) => invoke<string>("glossary_path", { vault }),
   /** Marks a knowledge note as checked by the user. */
   knowledgeReview: (vault: string, path: string) => invoke<void>("knowledge_review", { vault, path }),

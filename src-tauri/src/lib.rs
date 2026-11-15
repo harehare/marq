@@ -917,6 +917,14 @@ fn glossary_path(app: AppHandle, vault: String) -> Result<String> {
     Ok(p.to_string_lossy().into_owned())
 }
 
+/// Opens `instructions.md`, creating it with an explanation first.
+#[tauri::command]
+fn instructions_path(app: AppHandle, vault: String) -> Result<String> {
+    let p = memory::ensure_instructions(Path::new(&vault))?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
 /// Saves a query as `queries/<name>.md`: a note whose mq block runs in the preview too. Overwrites.
 #[tauri::command]
 fn save_query(
@@ -1593,6 +1601,7 @@ fn add_command_menus(app: &AppHandle, menu: &Menu<Wry>) -> tauri::Result<()> {
             &command_item(app, "session.nextActive", "Go to Next Running or Waiting Session")?,
             &command_item(app, "query.open", "mq Query")?,
             &command_item(app, "glossary.open", "Glossary")?,
+            &command_item(app, "instructions.open", "Standing Instructions")?,
         ],
     )?;
     let at = menu.items()?.iter().position(|i| i.as_submenu().and_then(|s| s.text().ok()).as_deref() == Some("Window"));
@@ -1636,6 +1645,7 @@ pub fn run() {
             search_text,
             search_sessions,
             glossary_path,
+            instructions_path,
             note_links,
             knowledge_review,
             knowledge_gardening,

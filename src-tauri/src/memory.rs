@@ -52,11 +52,45 @@ pub fn progress(vault: &Path, session: &str) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
-/// The user's standing instructions without frontmatter, if the note exists and has any.
+/// `text` without its `<!-- … -->` comments, which are notes to the user and not for the agent.
+fn without_comments(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find("-->") {
+            Some(end) => rest = &rest[start + end + 3..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The user's standing instructions without frontmatter or comments, if the note exists and has any.
 pub fn instructions(vault: &Path) -> Option<String> {
     let text = std::fs::read_to_string(vault.join(INSTRUCTIONS)).ok()?;
-    let body = vault::split_frontmatter(&text).1.trim();
+    let body = without_comments(vault::split_frontmatter(&text).1);
+    let body = body.trim();
     (!body.is_empty()).then(|| clip(body))
+}
+
+/// `instructions.md`, created with a comment that explains it when missing.
+pub fn ensure_instructions(vault: &Path) -> Result<PathBuf> {
+    let path = vault.join(INSTRUCTIONS);
+    if !path.exists() {
+        std::fs::write(
+            &path,
+            "---\ntype: note\ntitle: Standing instructions\n---\n\
+<!-- Rules every session follows, in your words. Each session reads this when it starts, so keep it short:\n\
+     the first 4,000 characters are used. This comment is not sent. For example:\n\
+\n\
+     - When a task is done, branch from main and commit with a Conventional Commits message. Do not push.\n\
+     - Reply in Japanese.\n\
+-->\n",
+        )?;
+    }
+    Ok(path)
 }
 
 /// The system prompt addition for a session: instructions first, then its progress notes.
@@ -87,6 +121,20 @@ mod tests {
         assert_eq!(instructions(dir.path()).unwrap(), "Reply in Japanese.");
         std::fs::write(dir.path().join(INSTRUCTIONS), "あ".repeat(MAX + 10)).unwrap();
         assert_eq!(instructions(dir.path()).unwrap().chars().count(), MAX + 1);
+    }
+
+    #[test]
+    fn comments_are_not_sent_and_the_template_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = ensure_instructions(dir.path()).unwrap();
+        assert_eq!(path, dir.path().join(INSTRUCTIONS));
+        assert!(instructions(dir.path()).is_none(), "only a comment: nothing to send");
+        std::fs::write(&path, "<!-- note -->\nBranch from main.\n<!-- unclosed").unwrap();
+        assert_eq!(instructions(dir.path()).unwrap(), "Branch from main.");
+        // An existing file is left alone.
+        std::fs::write(&path, "mine").unwrap();
+        ensure_instructions(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
     }
 
     #[test]

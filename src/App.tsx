@@ -2,7 +2,7 @@ import { createContext, forwardRef, memo, useCallback, useContext, useEffect, us
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
-  Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
+  Inbox, BookA, ClipboardList, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
   ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft,
@@ -274,6 +274,14 @@ function fileIcon(f: FileEntry) {
   if (f.kind === "request") return <Inbox size={13} />;
   if (f.kind === "crew") return <Users size={13} />;
   if (f.kind === "scratch") return <StickyNote size={13} />;
+  if (f.rel === "instructions.md") return <ScrollText size={13} />;
+  if (f.kind === "glossary") return <BookA size={13} />;
+  if (f.kind === "knowledge") return <Lightbulb size={13} />;
+  if (f.kind === "spec") return <ClipboardList size={13} />;
+  if (f.kind === "workspace") return <FolderGit2 size={13} />;
+  if (f.kind === "schedule") return <Timer size={13} />;
+  if (f.kind === "board") return <Columns3 size={13} />;
+  if (f.kind === "query") return <Braces size={13} />;
   return null;
 }
 
@@ -1410,6 +1418,7 @@ export default function App() {
     },
     "workspace.new": { label: "New workspace (a project and other directories to pick for tasks)", run: () => setNaming({ kind: "workspace", initial: "" }) },
     "spec.new": { label: "New spec (requirements, design, tasks and acceptance, broken down into a board)", run: () => setNaming({ kind: "spec", initial: "" }) },
+    "instructions.open": { label: "Standing instructions: rules every session follows", run: () => void api.instructionsPath(vault!).then((p) => openNote(p)) },
     "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },

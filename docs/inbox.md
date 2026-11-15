@@ -46,7 +46,7 @@ An agent can ask to be resumed later, for example to check a CI run or see wheth
 
 Two things carry over from one run of a session to the next, besides its transcript:
 
-- **`instructions.md`** at the vault's root holds rules every session should follow ("reply in Japanese", "never push"). Each session reads it when it starts, so keep it short; the first 4,000 characters are used.
+- **`instructions.md`** at the vault's root holds rules every session should follow ("when a task is done, branch from main and commit", "reply in Japanese"). Open it with **Standing instructions** in the command palette, which creates it with an explanation the first time. Each session reads it when it starts, so keep it short; the first 4,000 characters are used. `<!-- comments -->` in it are not sent. It applies to every session, whatever the project. A project's own `CLAUDE.md` or `AGENTS.md` is a separate file that an agent reads from the repository, as it would outside Marq; use that for rules about one project.
 - **Progress notes**: on a long task an agent keeps its own notes with `set_progress` (done, left, where it stopped). They are saved in `.marq/progress/<session>.md` and given back at every later run of that session, including after a follow-up or when the conversation was compacted. They should hold only what cannot be looked up again.
 
 Notes about the project itself are [knowledge notes](vault.md#knowledge-notes), listed by title and read when a session needs them.
