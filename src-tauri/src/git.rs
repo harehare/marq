@@ -441,7 +441,8 @@ fn patch_text(diff: &Diff) -> Result<String> {
 }
 
 /// Unified diff of one file against `base`. Untracked files are shown as all-added.
-pub fn file_diff(wt: &Worktree, file: &str) -> Result<String> {
+/// With `ignore_whitespace`, lines that differ only in whitespace are not shown as changed.
+pub fn file_diff(wt: &Worktree, file: &str, ignore_whitespace: bool) -> Result<String> {
     let dir = Path::new(&wt.path);
     let repo = open(dir)?;
     let is_untracked = repo.status_file(Path::new(file)).is_ok_and(|s| s == Status::WT_NEW);
@@ -457,7 +458,7 @@ pub fn file_diff(wt: &Worktree, file: &str) -> Result<String> {
     }
     let mut opts = DiffOptions::new();
     // The path is literal: no globbing of `[`, `*` or `?` in file names.
-    opts.pathspec(file).disable_pathspec_match(true);
+    opts.pathspec(file).disable_pathspec_match(true).ignore_whitespace(ignore_whitespace);
     patch_text(&diff_against(&repo, &wt.base, &mut opts)?)
 }
 
@@ -619,8 +620,16 @@ mod tests {
         assert_eq!(c.files.len(), 2);
         assert_eq!((c.additions, c.deletions), (4, 1));
         assert!(c.dirty);
-        assert!(file_diff(&wt, "a.txt").unwrap().contains("+three"));
-        assert!(file_diff(&wt, "new.txt").unwrap().contains("+y"));
+        assert!(file_diff(&wt, "a.txt", false).unwrap().contains("+three"));
+        assert!(file_diff(&wt, "new.txt", false).unwrap().contains("+y"));
+
+        // Re-indenting `one` is a change, unless whitespace is ignored; the real edits stay.
+        std::fs::write(wt_path.join("a.txt"), "  one\n2\nthree\n").unwrap();
+        assert!(file_diff(&wt, "a.txt", false).unwrap().contains("+  one"));
+        let quiet = file_diff(&wt, "a.txt", true).unwrap();
+        assert!(!quiet.contains("one") || quiet.contains(" one"), "{quiet}");
+        assert!(!quiet.contains("+  one") && quiet.contains("+three"), "{quiet}");
+        std::fs::write(wt_path.join("a.txt"), "one\n2\nthree\n").unwrap();
 
         commit_all(&wt, "change").unwrap();
         let c = changes(&wt).unwrap();
@@ -670,8 +679,8 @@ mod tests {
         assert_eq!(find("新しい.txt").status, "R");
         assert_eq!(find("keep.txt").additions, 1);
         assert_eq!(find("未追跡.md").additions, 1);
-        assert!(file_diff(&wt, "日本語.md").unwrap().contains("+two"));
-        assert!(file_diff(&wt, "未追跡.md").unwrap().contains("+x"));
+        assert!(file_diff(&wt, "日本語.md", false).unwrap().contains("+two"));
+        assert!(file_diff(&wt, "未追跡.md", false).unwrap().contains("+x"));
     }
 
     #[test]
@@ -811,9 +820,9 @@ mod tests {
         std::fs::remove_file(r.join("gone.txt")).unwrap();
         std::fs::write(r.join("[a].md"), "one\ntwo\n").unwrap();
         std::fs::write(r.join("b.md"), "other\n").unwrap();
-        let d = file_diff(&wt, "[a].md").unwrap();
+        let d = file_diff(&wt, "[a].md", false).unwrap();
         assert!(d.contains("+two") && !d.contains("other"), "{d}");
-        let new = file_diff(&wt, "b.md").unwrap();
+        let new = file_diff(&wt, "b.md", false).unwrap();
         assert!(new.contains("new file") && new.contains("+other"), "{new}");
         let line = commit_all(&wt, "update").unwrap();
         assert!(line.ends_with(" update"), "{line}");

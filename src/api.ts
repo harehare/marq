@@ -224,8 +224,8 @@ export const api = {
     invoke<SlashCommand[]>("list_commands", { vault, ...opts }),
   sessionCheckout: (vault: string, sessionId: string) => invoke<Worktree | null>("session_checkout", { vault, sessionId }),
   sessionChanges: (vault: string, sessionId: string, repo?: string) => invoke<Changes>("session_changes", { vault, sessionId, repo }),
-  sessionFileDiff: (vault: string, sessionId: string, file: string, repo?: string) =>
-    invoke<string>("session_file_diff", { vault, sessionId, file, repo }),
+  sessionFileDiff: (vault: string, sessionId: string, file: string, repo?: string, ignoreWhitespace?: boolean) =>
+    invoke<string>("session_file_diff", { vault, sessionId, file, repo, ignoreWhitespace }),
   sessionCommit: (vault: string, sessionId: string, message: string, repo?: string) =>
     invoke<string>("session_commit", { vault, sessionId, message, repo }),
   setSessionReview: (vault: string, sessionId: string, state: "done" | "open") =>

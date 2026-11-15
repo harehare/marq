@@ -673,8 +673,8 @@ async fn session_changes(vault: String, session_id: String, repo: Option<String>
 }
 
 #[tauri::command]
-async fn session_file_diff(vault: String, session_id: String, file: String, repo: Option<String>) -> Result<String> {
-    blocking(move || git::file_diff(&diff_target(&vault, &session_id, repo.as_deref())?, &file)).await
+async fn session_file_diff(vault: String, session_id: String, file: String, repo: Option<String>, ignore_whitespace: Option<bool>) -> Result<String> {
+    blocking(move || git::file_diff(&diff_target(&vault, &session_id, repo.as_deref())?, &file, ignore_whitespace.unwrap_or(false))).await
 }
 
 #[tauri::command]

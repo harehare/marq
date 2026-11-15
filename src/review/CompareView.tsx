@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronRight, ExternalLink, Loader2, Trophy } from "lucide-react";
 import { AgentInfo, api, Changes, SessionInfo } from "../api";
 import { DiffView } from "./DiffView";
+import { useIgnoreWhitespace } from "./diffPrefs";
 
 type Props = {
   vault: string;
@@ -30,6 +31,7 @@ export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: 
   const [changes, setChanges] = useState<Record<string, Changes>>({});
   // Expanded diffs, keyed by session and file.
   const [open, setOpen] = useState<Record<string, string | null>>({});
+  const [ignoreWs] = useIgnoreWhitespace();
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, setPending] = useState(false);
   const busy = runs.some((r) => r.status === "running" || r.status === "waiting");
@@ -54,11 +56,32 @@ export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: 
     return () => uns.forEach((u) => u.then((f) => f()));
   }, [ids, load]);
 
+  // Expanded diffs follow the whitespace choice.
+  const openRef = useRef(open);
+  useLayoutEffect(() => {
+    openRef.current = open;
+  });
+  useEffect(() => {
+    let stale = false;
+    const keys = Object.keys(openRef.current).filter((k) => openRef.current[k] != null);
+    Promise.all(keys.map(async (k) => {
+      const [id, file] = k.split("\n");
+      return [k, await api.sessionFileDiff(vault, id, file, undefined, ignoreWs).catch(() => null)] as const;
+    })).then((entries) => {
+      if (stale) return;
+      const fresh = entries.filter((e): e is readonly [string, string] => e[1] !== null);
+      setOpen((o) => ({ ...o, ...Object.fromEntries(fresh.filter(([k]) => o[k] != null)) }));
+    });
+    return () => {
+      stale = true;
+    };
+  }, [ignoreWs, vault]);
+
   const toggle = async (id: string, file: string) => {
     const key = `${id}\n${file}`;
     if (open[key] != null) return setOpen((o) => ({ ...o, [key]: null }));
     try {
-      const diff = await api.sessionFileDiff(vault, id, file);
+      const diff = await api.sessionFileDiff(vault, id, file, undefined, ignoreWs);
       setOpen((o) => ({ ...o, [key]: diff }));
     } catch (e) {
       setNotice({ ok: false, text: String(e) });

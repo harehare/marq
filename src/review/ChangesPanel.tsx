@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api, Changes, Worktree } from "../api";
 import { countMatches, DiffComment, DiffView } from "./DiffView";
+import { useIgnoreWhitespace } from "./diffPrefs";
 import { Resizer, usePaneSize } from "../Resizer";
 import { composing, FIND_EVENT } from "../keys";
 
@@ -87,13 +88,17 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
   const [search, setSearch] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [hit, setHit] = useState(0);
+  // Set from the bar above each diff; lines that differ only in whitespace then show as unchanged.
+  const [ignoreWs] = useIgnoreWhitespace();
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Read through a ref so `refresh` stays stable; otherwise expanding a diff re-subscribes
   // the event listeners below, and an event arriving in that gap is lost.
   const openRef = useRef(open);
+  const ignoreWsRef = useRef(ignoreWs);
   useLayoutEffect(() => {
     openRef.current = open;
+    ignoreWsRef.current = ignoreWs;
   });
   // Refreshes can overlap (one per tool result); only the latest may apply its result.
   const generation = useRef(0);
@@ -105,7 +110,7 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
       // Reload diffs that are expanded, since the files may have changed.
       const expanded = Object.keys(openRef.current).filter((f) => openRef.current[f] !== null);
       const entries = (
-        await Promise.all(expanded.map(async (f) => [f, await api.sessionFileDiff(vault, sessionId, f, repo).catch(() => null)] as const))
+        await Promise.all(expanded.map(async (f) => [f, await api.sessionFileDiff(vault, sessionId, f, repo, ignoreWsRef.current).catch(() => null)] as const))
       ).filter((e): e is readonly [string, string] => e[1] !== null);
       if (mine !== generation.current) return;
       setChanges(c);
@@ -120,7 +125,7 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
 
   useEffect(() => {
     refresh();
-  }, [vault, sessionId, repo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [vault, sessionId, repo, ignoreWs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh after each file-editing tool result and when the turn ends.
   useEffect(() => {
@@ -139,7 +144,7 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
       setOpen((o) => ({ ...o, [file]: null }));
       return;
     }
-    const diff = await api.sessionFileDiff(vault, sessionId, file, repo);
+    const diff = await api.sessionFileDiff(vault, sessionId, file, repo, ignoreWs);
     setOpen((o) => ({ ...o, [file]: diff }));
   };
 
@@ -181,12 +186,12 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
   useEffect(() => {
     if (search === null || !changes) return;
     let stale = false;
-    Promise.all(changes.files.map(async (f) => [f.path, await api.sessionFileDiff(vault, sessionId, f.path, repo).catch(() => "")] as const))
+    Promise.all(changes.files.map(async (f) => [f.path, await api.sessionFileDiff(vault, sessionId, f.path, repo, ignoreWs).catch(() => "")] as const))
       .then((entries) => !stale && setDiffs(Object.fromEntries(entries)));
     return () => {
       stale = true;
     };
-  }, [search === null, changes, vault, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search === null, changes, vault, sessionId, ignoreWs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const query = search?.trim() ?? "";
   // Files with matches, in list order, and where each one's matches start in the overall count.
@@ -214,7 +219,7 @@ function ChangesPanelView({ vault, sessionId, worktree: initial, title, running,
   const isOpen = (file: string) => open[file] !== undefined && open[file] !== null;
 
   const composeDiff = async (files: string[]) => {
-    const blocks = await Promise.all(files.map(async (f) => diffBlock(f, open[f] ?? (await api.sessionFileDiff(vault, sessionId, f, repo)))));
+    const blocks = await Promise.all(files.map(async (f) => diffBlock(f, open[f] ?? (await api.sessionFileDiff(vault, sessionId, f, repo, ignoreWs)))));
     onCompose(`${files.length > 1 ? "These changes" : "This change"} (${checkout ? "uncommitted" : `against ${worktree.base_branch}`}):\n\n${blocks.join("\n\n")}\n\n`);
   };
 

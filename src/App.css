@@ -1355,6 +1355,10 @@ button.icon.danger { color: var(--err); }
 ::highlight(marq-find-current) { background-color: var(--accent); color: var(--bg); }
 .diff-line mark { background: rgba(255, 196, 0, 0.4); color: inherit; border-radius: 2px; }
 .diff-line mark.current { background: var(--accent); color: var(--bg); }
+.diff-bar { display: flex; justify-content: flex-end; padding: 3px 8px; position: sticky; left: 0; }
+.diff-ws { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: none; background: transparent; color: var(--muted); font: inherit; font-family: var(--font); font-size: 11px; }
+.diff-ws:hover { color: var(--fg); }
+.diff-ws.on { color: var(--accent); background: var(--accent-soft); }
 .diff-hunk { padding: 3px 10px; background: var(--info-soft); color: var(--info); font-size: 11px; }
 .diff-line { display: flex; white-space: pre; min-width: max-content; }
 .diff-line .ln { width: 38px; flex: none; padding-right: 6px; text-align: right; color: var(--muted); opacity: 0.6; -webkit-user-select: none; user-select: none; }

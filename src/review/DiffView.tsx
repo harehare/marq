@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { MessageSquarePlus, Pilcrow, Trash2 } from "lucide-react";
 import { composing } from "../keys";
+import { useIgnoreWhitespace } from "./diffPrefs";
 
 type Line = { kind: "add" | "del" | "ctx" | "hunk"; text: string; old?: number; new?: number };
 
@@ -74,10 +75,29 @@ export function DiffView({ file, diff, comments = [], onComment, onRemoveComment
   const lines = parse(diff);
   const [draft, setDraft] = useState<{ from: number; to: number; text: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const [ignoreWs, setIgnoreWs] = useIgnoreWhitespace();
   useEffect(() => {
     if (current >= 0) ref.current?.querySelector("mark.current")?.scrollIntoView({ block: "center" });
   }, [current, highlight, diff]);
-  if (!lines.length) return <div className="muted diff-empty">No textual changes (empty file, binary or mode change)</div>;
+  // Above the lines, and shown for an empty diff too, so whitespace hiding can be turned off again.
+  const bar = (
+    <div className="diff-bar">
+      <button className={`diff-ws ${ignoreWs ? "on" : ""}`} aria-pressed={ignoreWs} onClick={() => setIgnoreWs(!ignoreWs)}
+        title="Hide lines that differ only in whitespace, in every diff">
+        <Pilcrow size={12} /> Ignore whitespace
+      </button>
+    </div>
+  );
+  if (!lines.length) {
+    return (
+      <>
+        {bar}
+        <div className="muted diff-empty">
+          {ignoreWs ? "No changes besides whitespace" : "No textual changes (empty file, binary or mode change)"}
+        </div>
+      </>
+    );
+  }
 
   const pick = (i: number, extend: boolean) =>
     setDraft((d) => (d && extend ? { ...d, from: Math.min(d.from, i), to: Math.max(d.to, i) } : { from: i, to: i, text: d?.text ?? "" }));
@@ -119,6 +139,7 @@ export function DiffView({ file, diff, comments = [], onComment, onRemoveComment
 
   return (
     <div className="diff" ref={ref}>
+      {bar}
       {lines.map((l, i) => {
         if (l.kind === "hunk") return <div key={i} className="diff-hunk">{l.text}</div>;
         const selected = draft && i >= draft.from && i <= draft.to;
