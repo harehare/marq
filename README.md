@@ -5,6 +5,8 @@
 
 <h3>Run agents. Keep everything.</h3>
 
+[![CI](https://github.com/harehare/marq/actions/workflows/ci.yml/badge.svg)](https://github.com/harehare/marq/actions/workflows/ci.yml)
+
 **A Markdown knowledge base and an IDE for coding agents, in one app.**
 
 Run coding agents in parallel, and keep every prompt, session, task and doc they produce as Markdown in your vault, ready to search, query, and hand to the next agent.
@@ -84,6 +86,20 @@ pnpm tauri dev
 pnpm check       # type checks, clippy and Rust tests
 ```
 
+Tasks are collected in the [`justfile`](justfile); run `just` to list them.
+
+| Command | Does |
+| --- | --- |
+| `just dev` | Run the app from source |
+| `just check` | Type checks, clippy and Rust tests |
+| `just ci` | Everything CI runs, including the docs build |
+| `just build` | Bundle the app (and the sidecar) for this OS |
+| `just dist` | Build and gather the installers and `SHA256SUMS` into `dist-app/` |
+| `just bump 0.2.0` | Set the version in `package.json`, `Cargo.toml` and `tauri.conf.json` |
+| `just docs-serve` / `just site-serve` | Preview the docs, or the landing page with the docs |
+
+See [Building and distribution](docs/building.md) for per-OS requirements, CI and releases.
+
 Open a folder as the vault (any folder of Markdown files works), then open a note, hover a heading and choose **Ask**, or press ⌘N for a new task.
 
 ## Documentation
@@ -100,6 +116,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | [Agents and models](docs/agents.md) | Claude, Ollama, ACP agents, permission modes, how sessions run |
 | [Vault tools for agents](docs/tools.md) | The MCP tools agents use to read and organize the vault |
 | [Settings and keys](docs/settings.md) | `~/.marq/config.toml`, keybindings, shell environment |
+| [Building and distribution](docs/building.md) | Requirements per OS, `just` recipes, CI, releases, the site |
 
 ## Compatibility
 

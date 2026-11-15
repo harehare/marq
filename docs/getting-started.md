@@ -17,7 +17,7 @@ pnpm tauri dev
 pnpm check       # type checks, clippy and Rust tests
 ```
 
-Release builds do not bundle the sidecar yet, so use `pnpm tauri dev` to run sessions.
+Release builds from `just build` bundle the sidecar as an executable, so the app runs sessions without Node installed.
 
 Apps started from Finder get a minimal `PATH`. Marq reads the `PATH` of your login shell once, so `git`, `gh`, `node` and `claude` are found, and Claude's Bash tool sees the same commands as your terminal.
 

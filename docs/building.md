@@ -2,9 +2,6 @@
 
 Marq is a [Tauri 2](https://tauri.app) app. Tasks are collected in the `justfile`; run `just` to list them.
 
-> [!WARNING]
-> Release builds do not bundle the Node sidecar yet, so a bundled app cannot run agent sessions. Until it is bundled, use `just dev` to run sessions.
-
 ## Requirements
 
 Everywhere: Rust (stable), Node.js, [pnpm](https://pnpm.io), [just](https://just.systems) and, for the docs, [mdBook](https://rust-lang.github.io/mdBook/).
@@ -47,11 +44,23 @@ Unsigned builds work, but the OS warns about them:
 
 Possible later steps: Homebrew cask (macOS), winget (Windows), and the Tauri updater plugin for in-app updates.
 
+## Continuous integration
+
+Three GitHub Actions workflows live in `.github/workflows/`:
+
+| Workflow | Runs | Does |
+| --- | --- | --- |
+| `ci.yml` | Pushes and pull requests to `main` | On Linux, macOS and Windows: `pnpm build` (type check and Vite build), the sidecar type check, `cargo clippy` and `cargo test`. Also builds the book. |
+| `pages.yml` | Pushes to `main` that touch `site/`, `docs/` or `book.toml`, and manually | Builds the book and publishes `site/` to GitHub Pages. |
+| `release.yml` | Manually | Builds the installers for macOS (Apple Silicon and Intel), Linux and Windows with `tauri-action` and attaches them to a draft release for the tag you enter. |
+
+`just ci` runs the same checks as `ci.yml` on your machine. `just check` is the shorter version without the book.
+
 ## Documentation and site
 
-The site has two parts that deploy together to Cloudflare Pages:
+The site has two parts that deploy together to GitHub Pages:
 
-- `site/` is the landing page (`site/index.html`).
+- `site/` is the landing page (`site/index.html`). Its links are relative, so it works under the `/marq/` path of project pages.
 - `docs/` is this book. `book.toml` builds it into `site/book/`, which is served at `/book/`.
 
 | Command | Does |
@@ -59,6 +68,6 @@ The site has two parts that deploy together to Cloudflare Pages:
 | `just docs` | Build the book into `site/book/` |
 | `just docs-serve` | Serve the book with live reload |
 | `just site-serve` | Build the book and serve the whole site locally |
-| `just deploy` | Build the book and upload `site/` to Cloudflare Pages with `wrangler pages deploy` |
+| `just deploy` | Upload `site/` to Cloudflare Pages by hand with `wrangler pages deploy` (optional; needs `pnpm dlx wrangler login` once) |
 
-Run `pnpm dlx wrangler login` once before the first `just deploy`. The Pages project is named `marq` (see `wrangler.jsonc`).
+To publish with GitHub Pages, set **Settings → Pages → Source** to **GitHub Actions** once. After that every push to `main` that changes the site deploys it to `https://harehare.github.io/marq/`.

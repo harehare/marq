@@ -25,6 +25,14 @@ dev:
 check:
     pnpm check
 
+# Everything CI runs: frontend build, sidecar type check, clippy, Rust tests, book build
+ci:
+    pnpm build
+    pnpm exec tsc -p sidecar
+    cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+    cargo test --manifest-path src-tauri/Cargo.toml
+    mdbook build
+
 # Check that the build tools are installed
 doctor:
     #!/usr/bin/env bash
@@ -128,7 +136,7 @@ docs-serve:
 site-serve: docs
     pnpm dlx serve site
 
-# Build the site and upload it to Cloudflare Pages
+# Build the site and upload it to Cloudflare Pages by hand (GitHub Pages is deployed by CI)
 deploy: docs
     pnpm dlx wrangler pages deploy site --project-name marq
 
