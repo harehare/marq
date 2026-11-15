@@ -730,11 +730,28 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
         }
         if state == "done" {
             inbox::resolve_session(&app, &session_id);
+            if !app.state::<Runner>().is_alive(&session_id) {
+                remove_clean_worktrees(Path::new(&vault), &session_id);
+            }
         }
         let _ = app.emit("sessions://changed", &session_id);
         Ok(())
     })
     .await
+}
+
+/// A finished session's worktrees are no use any more, so they go, branches kept. One with uncommitted or
+/// untracked files stays, since removing it would lose them. Failures leave the worktree where it is.
+fn remove_clean_worktrees(v: &Path, session_id: &str) {
+    let Ok(meta) = session::meta(v, session_id) else { return };
+    let repos = meta.worktree.iter().map(|w| w.repo.clone()).chain(meta.dirs.iter().filter_map(|d| d.worktree.as_ref().map(|w| w.repo.clone())));
+    for repo in repos {
+        let Some(wt) = session::worktree_for(v, session_id, Some(&repo)).ok().flatten() else { continue };
+        if !Path::new(&wt.path).exists() || git::changes(&wt).is_ok_and(|c| c.dirty) {
+            continue;
+        }
+        let _ = git::remove(&wt);
+    }
 }
 
 /// Renames the session's branch and records it in the session log.
