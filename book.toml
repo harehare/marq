@@ -9,7 +9,7 @@ title = "Marq Documentation"
 build-dir = "site/book"
 
 [output.html]
-additional-css = ["mdbook/theme/custom.css"]
+additional-css = ["assets/book.css"]
 default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/harehare/marq"
