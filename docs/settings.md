@@ -58,7 +58,7 @@ With `sidebar = "rail"` (or **Settings → Appearance → Sidebar**, or the **Ic
 
 ## Agents
 
-Tasks run on Claude Code by default. The New task dialog can run one on another agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead: Gemini CLI (`gemini --experimental-acp`), Codex (`codex-acp`), OpenCode (`opencode acp`), Qwen Code (`qwen --experimental-acp`) or Goose (`goose acp`). **Settings → Agents** changes an agent's `command` or `args`, or adds another ACP agent; they are saved as `[agents.<id>]`, which you can also edit in the file.
+Tasks run on Claude Code by default. The New task dialog can run one on Codex (`codex app-server`, Codex's own embedding interface) or on another agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead: Gemini CLI (`gemini --experimental-acp`), OpenCode (`opencode acp`), Qwen Code (`qwen --experimental-acp`) or Goose (`goose acp`). **Settings → Agents** changes an agent's `command` or `args`, or adds another ACP agent; they are saved as `[agents.<id>]`, which you can also edit in the file.
 
 Such a session uses the agent's own model and tools. Marq's tools reach it over MCP (HTTP) when the agent supports that, and its permission requests show up as approval cards. Teams and model choice are Claude only (such an agent can still be one run of a comparison).
 

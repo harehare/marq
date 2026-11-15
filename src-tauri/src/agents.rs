@@ -22,7 +22,7 @@ pub struct Agent {
 const BUILTIN: &[(&str, &str, &str, &[&str])] = &[
     ("claude", "Claude Code", "claude", &[]),
     ("gemini", "Gemini CLI", "gemini", &["--experimental-acp"]),
-    ("codex", "Codex", "codex-acp", &[]),
+    ("codex", "Codex", "codex", &["app-server"]),
     ("opencode", "OpenCode", "opencode", &["acp"]),
     ("qwen", "Qwen Code", "qwen", &["--experimental-acp"]),
     ("goose", "Goose", "goose", &["acp"]),

@@ -47,12 +47,12 @@ Tasks can run on any agent that speaks [ACP](https://agentclientprotocol.com) (A
 | Agent | Command |
 | --- | --- |
 | Gemini CLI | `gemini --experimental-acp` |
-| Codex | `codex-acp` |
+| Codex | `codex app-server` |
 | OpenCode | `opencode acp` |
 | Qwen Code | `qwen --experimental-acp` |
 | Goose | `goose acp` |
 
-Install the agent yourself and log in to it; Marq runs its command as found through your login shell, and the session uses the agent's own model and tools. Open **Settings → Agents** to change an agent's command and arguments, or to add another ACP agent with **Add agent** (an id, a name, the command and its arguments). The same settings live under `[agents.<id>]` in [`~/.marq/config.toml`](settings.md):
+Codex runs through its own app-server, so no adapter is needed; each of the others has ACP built in. Install the agent yourself and log in to it; Marq runs its command as found through your login shell, and the session uses the agent's own model and tools. Open **Settings → Agents** to change an agent's command and arguments, or to add another ACP agent with **Add agent** (an id, a name, the command and its arguments). The same settings live under `[agents.<id>]` in [`~/.marq/config.toml`](settings.md):
 
 ```toml
 [agents]

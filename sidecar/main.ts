@@ -5,10 +5,11 @@ import { createInterface } from "node:readline";
 import type { AgentBackend, AgentSession, ApprovalDecision, ApprovalRequest, SessionHost } from "./agent.ts";
 import { acp } from "./acp.ts";
 import { claude } from "./claude.ts";
+import { codex } from "./codex.ts";
 import { ollamaModels } from "./ollama.ts";
 import { emit, log, message, rpcResult, type Command } from "./protocol.ts";
 
-const BACKENDS: Record<string, AgentBackend> = { claude };
+const BACKENDS: Record<string, AgentBackend> = { claude, codex };
 
 /** Agents without a backend of their own talk ACP. */
 function backendFor(agent?: string): AgentBackend {
