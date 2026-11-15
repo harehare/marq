@@ -27,6 +27,7 @@ mod workflow;
 mod workspace;
 
 use std::path::{Path, PathBuf};
+use crate::vault::PathSlash;
 
 use serde::Serialize;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID};
@@ -339,7 +340,7 @@ fn render_context(vault: &Path, text: &str) -> String {
         let (label, body) = match &item {
             vault::ContextItem::Note(n) => match vault::find_note(vault, n) {
                 Some(p) => {
-                    let rel = p.strip_prefix(vault).unwrap_or(&p).to_string_lossy().into_owned();
+                    let rel = p.strip_prefix(vault).unwrap_or(&p).to_slash();
                     (rel, std::fs::read_to_string(&p).unwrap_or_default())
                 }
                 None => (n.clone(), format!("(note not found: {n})")),
@@ -858,7 +859,7 @@ async fn note_links(vault: String, path: String) -> Result<links::Backlinks> {
     blocking(move || {
         let v = Path::new(&vault);
         let p = vault::resolve(v, &path)?;
-        let rel = p.strip_prefix(v).unwrap_or(&p).to_string_lossy().into_owned();
+        let rel = p.strip_prefix(v).unwrap_or(&p).to_slash();
         Ok(links::backlinks(&vault::list_files(v), &rel))
     })
     .await
@@ -1352,7 +1353,7 @@ async fn create_folder(app: AppHandle, vault: String, path: String) -> Result<St
 async fn move_path(app: AppHandle, vault: String, from: String, to: String) -> Result<organize::MoveResult> {
     blocking(move || {
         let v = Path::new(&vault);
-        let from = v.join(&from).strip_prefix(v).map(|p| p.to_string_lossy().into_owned()).unwrap_or(from);
+        let from = v.join(&from).strip_prefix(v).map(|p| p.to_slash()).unwrap_or(from);
         let r = organize::move_path(v, &from, &to)?;
         emit_moved(&app, v, &r);
         Ok(r)

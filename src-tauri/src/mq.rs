@@ -1,5 +1,6 @@
 //! mq evaluation for the query view and mq code blocks.
 
+use crate::vault::PathSlash;
 use std::path::Path;
 
 use serde::Serialize;
@@ -56,7 +57,7 @@ pub fn prompt_context(vault: &Path, query: &str, glob: &str, results: &[FileResu
     let head = format!("The results of this mq query over {glob} (vault: {}):\n\n```mq\n{query}\n```", vault.display());
     let section = |r: &FileResult| {
         let file = r.file.as_deref().map_or("this note".to_string(), |f| {
-            Path::new(f).strip_prefix(vault).unwrap_or(Path::new(f)).to_string_lossy().into_owned()
+            Path::new(f).strip_prefix(vault).unwrap_or(Path::new(f)).to_slash()
         });
         format!("### {file}\n\n{}", r.items.join("\n\n"))
     };

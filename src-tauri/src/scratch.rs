@@ -5,6 +5,7 @@
 //! (the first heading, else the first line). Empty ones are removed when their tab closes and on
 //! startup; scratch memos left alone for `[scratch] keep_days` days go to the Trash.
 
+use crate::vault::PathSlash;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -201,7 +202,7 @@ pub fn sweep(vault: &Path, keep_days: u64, trash: impl Fn(&Path) -> Result<()>) 
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&p) else { continue };
-            let rel = p.strip_prefix(vault).unwrap_or(&p).to_string_lossy().into_owned();
+            let rel = p.strip_prefix(vault).unwrap_or(&p).to_slash();
             let old = age(&p).unwrap_or_default();
             if is_untitled(&text) && is_empty(&text) && old > EMPTY_GRACE {
                 std::fs::remove_file(&p)?;
@@ -226,7 +227,7 @@ pub fn keep(vault: &Path, from: &str, to: &str) -> Result<organize::MoveResult> 
     if vault::fm_get(&text, "type").as_deref() != Some("scratch") {
         return Err(Error::Other(format!("{from} is not a scratch memo")));
     }
-    let from_rel = src.strip_prefix(vault.canonicalize()?).unwrap_or(&src).to_string_lossy().into_owned();
+    let from_rel = src.strip_prefix(vault.canonicalize()?).unwrap_or(&src).to_slash();
     let r = organize::move_path(vault, &from_rel, to)?;
     let dest = vault.join(&r.to);
     let text = std::fs::read_to_string(&dest)?;

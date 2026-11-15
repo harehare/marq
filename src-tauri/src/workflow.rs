@@ -27,6 +27,7 @@
 //!
 //! Log lines: `marq_verify` (a check started, passed or failed) and `marq_phase` (a phase finished).
 
+use crate::vault::PathSlash;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -329,7 +330,7 @@ fn retry(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verify, attempt:
     // A new iteration with a fresh context: the same request, the same worktree, and only the
     // last failure carried over.
     let origin = session::find_origin(vault, meta).ok_or_else(|| Error::Other("the request note is gone".into()))?;
-    let rel = origin.strip_prefix(vault).unwrap_or(&origin).to_string_lossy().into_owned();
+    let rel = origin.strip_prefix(vault).unwrap_or(&origin).to_slash();
     let opts = RunOptions {
         worktree: Some(meta.worktree.is_some()),
         reuse: meta.worktree.clone(),
@@ -541,7 +542,7 @@ fn next_phase_of(app: &AppHandle, vault: &Path, meta: &SessionMeta, path: &Path)
     if !auto {
         return Ok(false);
     }
-    let rel = path.strip_prefix(vault).unwrap_or(path).to_string_lossy().into_owned();
+    let rel = path.strip_prefix(vault).unwrap_or(path).to_slash();
     let opts = RunOptions {
         worktree: Some(meta.worktree.is_some()),
         reuse: meta.worktree.clone(),
@@ -615,7 +616,7 @@ pub fn write_spec(vault: &Path, title: &str, content: &str, path: Option<&str>, 
         }
         let fm = vault::split_frontmatter(&old).0.unwrap_or_default();
         std::fs::write(&full, format!("---\n{fm}\n---\n{body}\n"))?;
-        return Ok(full.strip_prefix(vault).unwrap_or(&full).to_string_lossy().into_owned());
+        return Ok(full.strip_prefix(vault).unwrap_or(&full).to_slash());
     }
     let title = title.trim();
     if title.is_empty() {
@@ -679,15 +680,15 @@ pub fn spec_to_board(vault: &Path, spec: &Path) -> Result<(PathBuf, usize)> {
                 n += 1;
             }
             let p = boards::create(vault, &name, &[])?;
-            let rel = p.strip_prefix(vault).unwrap_or(&p).to_string_lossy().into_owned();
+            let rel = p.strip_prefix(vault).unwrap_or(&p).to_slash();
             std::fs::write(spec, vault::fm_set(&std::fs::read_to_string(spec)?, "board", &rel))?;
             p
         }
     };
     let b = boards::read(&board)?;
     let have: Vec<String> = b.lists.iter().flat_map(|l| l.cards.iter().map(|c| c.title.to_lowercase())).collect();
-    let board_rel = board.strip_prefix(vault).unwrap_or(&board).to_string_lossy().into_owned();
-    let spec_rel = spec.strip_prefix(vault).unwrap_or(spec).to_string_lossy().into_owned();
+    let board_rel = board.strip_prefix(vault).unwrap_or(&board).to_slash();
+    let spec_rel = spec.strip_prefix(vault).unwrap_or(spec).to_slash();
     let link = crate::automation::link(&board_rel, &format!("Spec: {title}"), &spec_rel);
     let first = b.lists.first().map(|l| l.name.clone());
     let mut added = 0;
@@ -786,9 +787,11 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         std::fs::create_dir_all(&dir).unwrap();
         let t = Duration::from_secs(20);
         assert_eq!(run_check("echo fine", &dir, &[], t, false), (true, "fine".to_string()));
-        let (ok, out) = run_check("echo broken >&2; exit 3", &dir, &[], t, false);
+        // cmd.exe has no `;` separator and no `sleep`.
+        let (fail, slow) = if cfg!(windows) { ("echo broken 1>&2 & exit 3", "ping -n 6 127.0.0.1 >nul") } else { ("echo broken >&2; exit 3", "sleep 5") };
+        let (ok, out) = run_check(fail, &dir, &[], t, false);
         assert!(!ok && out.contains("broken"));
-        let (ok, out) = run_check("sleep 5", &dir, &[], Duration::from_secs(1), false);
+        let (ok, out) = run_check(slow, &dir, &[], Duration::from_secs(1), false);
         assert!(!ok && out.contains("did not finish"));
         if cfg!(target_os = "macos") {
             assert!(run_check("echo x > inside.txt", &dir, &[], t, true).0, "writes in the directory are allowed");

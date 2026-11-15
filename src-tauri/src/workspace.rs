@@ -19,6 +19,7 @@
 //! repositories get a worktree like the project's when the session gets one, and show in the
 //! Changes panel next to it.
 
+use crate::vault::PathSlash;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -96,7 +97,7 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Workspace> {
     }
     Some(Workspace {
         path: path.to_string_lossy().into_owned(),
-        rel: path.strip_prefix(vault).unwrap_or(path).to_string_lossy().into_owned(),
+        rel: path.strip_prefix(vault).unwrap_or(path).to_slash(),
         title: vault::fm_get(text, "title").unwrap_or_else(|| path.file_stem().unwrap_or_default().to_string_lossy().into_owned()),
         project: vault::fm_get(text, "project").filter(|p| !p.trim().is_empty()),
         directories: dirs_of(text),

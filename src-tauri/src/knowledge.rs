@@ -20,6 +20,7 @@
 //! An agent's write always leaves the note `draft`; a person marks it `reviewed`. Sessions are told
 //! which knowledge notes belong to their project, so they read them before starting.
 
+use crate::vault::PathSlash;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -195,7 +196,7 @@ pub fn write(vault: &Path, k: KnowledgeWrite) -> Result<String> {
     );
     std::fs::create_dir_all(path.parent().unwrap())?;
     std::fs::write(&path, text)?;
-    Ok(path.strip_prefix(vault).unwrap_or(&path).to_string_lossy().into_owned())
+    Ok(path.strip_prefix(vault).unwrap_or(&path).to_slash())
 }
 
 /// Marks a knowledge note as checked by a person.

@@ -7,6 +7,7 @@
 //! any other task. With `query:` naming a saved query note, it runs the query first and starts a
 //! session only when there are results, giving them to the agent.
 
+use crate::vault::PathSlash;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -189,7 +190,7 @@ fn start_request(app: &AppHandle, vault: &Path, path: &Path) -> Result<Option<St
 }
 
 fn rel(vault: &Path, p: &Path) -> String {
-    p.strip_prefix(vault).unwrap_or(p).to_string_lossy().into_owned()
+    p.strip_prefix(vault).unwrap_or(p).to_slash()
 }
 
 /// A link from the note at `from` to the note at `to`, both vault-relative.

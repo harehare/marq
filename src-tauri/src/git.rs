@@ -779,6 +779,8 @@ mod tests {
         sh(r, &["init", "-q", "-b", "main"]);
         sh(r, &["config", "user.email", "t@example.com"]);
         sh(r, &["config", "user.name", "t"]);
+        // Windows runners check out with autocrlf, which would turn the patch's lines into CRLF.
+        sh(r, &["config", "core.autocrlf", "false"]);
         std::fs::write(r.join("a.txt"), "one\n").unwrap();
         sh(r, &["add", "."]);
         sh(r, &["commit", "-qm", "init"]);

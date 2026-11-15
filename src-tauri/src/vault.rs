@@ -45,7 +45,7 @@ fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scann
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let entry = FileEntry {
         path: path.to_string_lossy().into_owned(),
-        rel: path.strip_prefix(vault).unwrap_or(path).to_string_lossy().into_owned(),
+        rel: path.strip_prefix(vault).unwrap_or(path).to_slash(),
         id: fm_get(&text, "id").filter(|s| !s.is_empty()),
         // Untitled notes and scratch memos are named by what they say.
         title: fm_get(&text, "title").filter(|s| !s.is_empty()).or_else(|| {
@@ -120,6 +120,18 @@ pub fn resolve(vault: &Path, path: &str) -> Result<PathBuf> {
         return Err(Error::OutsideVault(path.to_string()));
     }
     Ok(parent.join(p.file_name().unwrap_or_default()))
+}
+
+/// A path as the text marq stores in notes and compares with note paths: `/` separators on every OS.
+pub trait PathSlash {
+    fn to_slash(&self) -> String;
+}
+
+impl PathSlash for Path {
+    fn to_slash(&self) -> String {
+        let s = self.to_string_lossy().into_owned();
+        if cfg!(windows) { s.replace('\\', "/") } else { s }
+    }
 }
 
 /// Expands a leading `~/`.
@@ -286,7 +298,7 @@ pub fn write_doc(vault: &Path, doc: DocWrite, session: &str, origin: &str) -> Re
                 t = fm_set(&t, "tags", &tag_list);
             }
             std::fs::write(&full, fm_push(&t, "sessions", session))?;
-            let rel = full.strip_prefix(vault.canonicalize()?).unwrap_or(&full).to_string_lossy().into_owned();
+            let rel = full.strip_prefix(vault.canonicalize()?).unwrap_or(&full).to_slash();
             return Ok(SavedDoc { rel, title: title.into(), created: false });
         }
     }

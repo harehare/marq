@@ -9,6 +9,7 @@
 //! Log lines: `crew_msg` (a message), `crew_member` (a role got a session), `crew_deliver`
 //! (messages handed to a session as a turn) and `crew_release` (the user let a held message through).
 
+use crate::vault::PathSlash;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -134,7 +135,7 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
             path.file_stem().unwrap_or_default().to_string_lossy().into_owned()
         }),
         path: path.to_string_lossy().into_owned(),
-        rel: path.strip_prefix(vault).unwrap_or(path).to_string_lossy().into_owned(),
+        rel: path.strip_prefix(vault).unwrap_or(path).to_slash(),
         // Read like a request's `project:`, as the raw text; else the workspace's.
         project: ws.project.filter(|s| !s.is_empty()),
         dirs: ws.dirs,
@@ -355,7 +356,7 @@ pub fn docs_folder(vault: &Path, crew_id: &str) -> Result<String> {
     let crew = find(vault, crew_id)?;
     let path = tasks_path(vault, &crew)?;
     let dir = path.parent().unwrap();
-    Ok(dir.strip_prefix(vault).unwrap_or(dir).to_string_lossy().into_owned())
+    Ok(dir.strip_prefix(vault).unwrap_or(dir).to_slash())
 }
 
 fn read_tasks(vault: &Path, crew: &Crew) -> Result<(PathBuf, TaskList)> {
@@ -481,7 +482,7 @@ pub fn task_update(app: &AppHandle, vault: &Path, crew_id: &str, by: &str, id: &
 pub fn task_list(vault: &Path, crew_id: &str) -> Result<Value> {
     let crew = find(vault, crew_id)?;
     let (path, list) = read_tasks(vault, &crew)?;
-    Ok(json!({"path": path.strip_prefix(vault).unwrap_or(&path), "tasks": list.tasks}))
+    Ok(json!({"path": path.strip_prefix(vault).unwrap_or(&path).to_slash(), "tasks": list.tasks}))
 }
 
 /// Links a new document from the crew note's `## Documents` and notes it in the timeline.

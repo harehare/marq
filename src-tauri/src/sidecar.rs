@@ -4,6 +4,7 @@
 //! come back on stdout. The sidecar keeps a session's process alive between turns, so follow-ups,
 //! interrupts and approvals work while the agent is running.
 
+use crate::vault::PathSlash;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -564,13 +565,13 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             let (board, added) = workflow::spec_to_board(vault, &spec)?;
             changed(app, &board);
             changed(app, &spec);
-            Ok(json!({"board": board.strip_prefix(vault).unwrap_or(&board).to_string_lossy(), "cards_added": added}))
+            Ok(json!({"board": board.strip_prefix(vault).unwrap_or(&board).to_slash(), "cards_added": added}))
         }
         "create_board" => {
             let lists: Vec<String> = p["lists"].as_array().map(|l| l.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
             let path = boards::create(vault, &s("name"), &lists)?;
             changed(app, &path);
-            Ok(json!({"created": path.strip_prefix(vault).unwrap_or(&path).to_string_lossy(), "lists": boards::read(&path)?.lists.iter().map(|l| l.name.clone()).collect::<Vec<_>>()}))
+            Ok(json!({"created": path.strip_prefix(vault).unwrap_or(&path).to_slash(), "lists": boards::read(&path)?.lists.iter().map(|l| l.name.clone()).collect::<Vec<_>>()}))
         }
         "board_add_list" => {
             let path = boards::find(vault, &s("board"))?;
@@ -605,7 +606,7 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
         "note_links" => {
             let note = s("note");
             let path = find_any(vault, &note)?;
-            let rel = path.strip_prefix(vault).unwrap_or(&path).to_string_lossy().into_owned();
+            let rel = path.strip_prefix(vault).unwrap_or(&path).to_slash();
             let b = links::backlinks(&vault::list_files(vault), &rel);
             Ok(json!({"note": rel, "links_here": b.linked, "mentions": b.mentions, "links_to": b.outgoing, "missing": b.missing}))
         }
@@ -815,7 +816,7 @@ pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since
                 .take(3)
                 .map(|(_, n, l)| json!({"line": n, "text": l.trim().chars().take(240).collect::<String>()}))
                 .collect();
-            let rel = Path::new(&x.path).strip_prefix(vault).unwrap_or(Path::new(&x.path)).to_string_lossy().into_owned();
+            let rel = Path::new(&x.path).strip_prefix(vault).unwrap_or(Path::new(&x.path)).to_slash();
             Some((matching, json!({"id": x.meta.id, "title": x.meta.title, "status": x.status, "project": x.meta.project(),
                 "started": x.meta.started, "note": rel, "matching_lines": matching, "matches": top})))
         })
