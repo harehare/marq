@@ -1695,7 +1695,7 @@ export default function App() {
       {railOn && sidebarOpen && (
         <nav className="rail">
           <button className="rail-btn logo" title={`${vault}\nSwitch vaults`} onClick={vaultMenu}><LogoMark size={20} /></button>
-          <button className="rail-btn" title="Search (⌘P)" onClick={() => setShowQuickOpen(true)}><Search size={17} /></button>
+          <button className="rail-btn" title="Search notes and sessions (⇧⌘F)" onClick={() => openSearch("")}><Search size={17} /></button>
           <button className="rail-btn accent" title="New task (⌘N)" onClick={() => setShowNewTask(true)}><Plus size={18} /></button>
           <span className="rail-sep" />
           {([
@@ -1744,8 +1744,8 @@ export default function App() {
           <button className="theme-btn" title="Icons only" onClick={(e) => (e.stopPropagation(), setSidebarMode("rail"))}><PanelLeft size={14} /></button>
           <button className="theme-btn" title="Hide the sidebar (⌘B)" onClick={(e) => (e.stopPropagation(), setSidebarOpen(false))}><PanelLeftClose size={14} /></button>
         </div>
-        <button className="side-search" onClick={() => setShowQuickOpen(true)} title="Open a note, crew or session (⌘P) or search notes (⇧⌘F)">
-          <Search size={13} /> <span>Search</span> <kbd>⌘P</kbd>
+        <button className="side-search" onClick={() => openSearch("")} title="Search the text of notes and sessions (⇧⌘F). Open a note, crew or session by name: ⌘P">
+          <Search size={13} /> <span>Search</span> <kbd>⇧⌘F</kbd>
         </button>
         <button className="new-task" onClick={() => setShowNewTask(true)}>
           <Plus size={15} /> New task <kbd>⌘N</kbd>
