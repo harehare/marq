@@ -19,10 +19,12 @@ The `model` in a note's frontmatter, or the model picker in the New task dialog,
 | Value | Runs on |
 | --- | --- |
 | empty | Claude Code's default |
-| `opus`, `sonnet`, `haiku`, or a full Claude model name | Claude |
+| `fable`, `opus`, `sonnet`, `haiku`, or a full Claude model name | Claude |
 | `ollama:<name>` | A local model served by Ollama |
 
-The model is stored with the session and used again when it is resumed.
+The model picker lists the models Claude Code offers for your login (with versions, e.g. Opus 5.5), and the Codex field suggests the ones Codex lists; other names can be typed. The effort choices follow the chosen model. The model is stored with the session and used again when it is resumed.
+
+The `effort` in the frontmatter, or the effort picker in the New task dialog, sets how much Claude or Codex reasons: `low`, `medium`, `high`, `xhigh` or `max` for Claude; `minimal` to `xhigh` for Codex. Empty is the agent's default.
 
 ## Ollama
 
@@ -61,7 +63,7 @@ kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
 
 Marq's [vault tools](tools.md) reach the agent over MCP (HTTP) when it supports that, and its permission requests show up as approval cards. Limitations compared with Claude:
 
-- Crews and model choice are Claude only. An ACP agent can be one of the runs of a [comparison](sessions.md#compare-agents-and-models), on its own model.
+- Crews and the model picker are Claude only. For Codex, the New task dialog has a model field (empty: Codex's own default, from `~/.codex/config.toml`); other ACP agents run on their own model. An ACP agent can be one of the runs of a [comparison](sessions.md#compare-agents-and-models), on its own model.
 - The sandbox is Claude only; an ACP agent with `sandbox:` set refuses to start.
 
 ## Permission modes

@@ -1,6 +1,6 @@
 // The interface an agent backend implements. main.ts owns what is the same for every agent (the session table,
 // approvals, the idle timeout and how a session ends); a backend only runs its agent and translates its messages.
-import type { AgentEvent } from "./protocol.ts";
+import type { AgentEvent, ModelOption } from "./protocol.ts";
 
 export type StartOptions = {
   id: string;
@@ -12,6 +12,8 @@ export type StartOptions = {
   resume: boolean;
   permissionMode?: string;
   model?: string | null;
+  /** low, medium, high, xhigh or max (Codex: minimal to high); the agent's default when empty. */
+  effort?: string | null;
   executable?: string;
   args?: string[];
   /** The agent's own id for the conversation (from an earlier `init`), when it differs from marq's. */
@@ -60,6 +62,8 @@ export interface AgentBackend {
   start(opts: StartOptions, host: SessionHost): AgentSession;
   /** A one-turn answer from a small model, for naming a task. */
   title(o: { prompt: string; model?: string | null; executable?: string }): Promise<string>;
+  /** The models the agent offers, when it can list them. */
+  models?(o: { executable?: string; args?: string[] }): Promise<ModelOption[]>;
   /** Slash commands and skills available in `cwd`, without a running session. */
   commands(o: { cwd: string; executable?: string }): Promise<unknown>;
 }

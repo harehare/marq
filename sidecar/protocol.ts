@@ -2,7 +2,7 @@
 
 export type Command =
   | {
-      op: "start"; id: string; cwd: string; prompt: string; resume: boolean; permissionMode?: string; model?: string | null;
+      op: "start"; id: string; cwd: string; prompt: string; resume: boolean; permissionMode?: string; model?: string | null; effort?: string | null;
       /** The agent backend to run; `claude` when left out. */
       agent?: string;
       /** The agent's executable, when the app resolved one, and its arguments. */
@@ -22,7 +22,11 @@ export type Command =
   | { op: "commands"; reqId: string; id?: string; cwd: string; agent?: string; executable?: string }
   | { op: "title"; reqId: string; text: string; model?: string | null; agent?: string; executable?: string }
   | { op: "ollama_models"; reqId: string }
+  | { op: "models"; reqId: string; agent?: string; executable?: string; args?: string[] }
   | { op: "rpc_result"; reqId: string; result?: unknown; error?: string };
+
+/** A model an agent offers: what to pass as `model`, what to show, and the efforts it supports. */
+export type ModelOption = { value: string; label: string; description?: string; efforts?: string[]; default?: boolean };
 
 /** What a tool does, so the app can show and count calls without knowing each agent's tool names (ACP's tool kinds). */
 export type ToolKind = "read" | "edit" | "delete" | "move" | "search" | "execute" | "think" | "fetch" | "other";

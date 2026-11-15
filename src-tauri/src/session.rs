@@ -31,6 +31,9 @@ pub struct SessionMeta {
     /// A Claude alias (`sonnet`…) or `ollama:<name>`; None is the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// How much the agent reasons (`low`…`max`); None is the agent's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// The agent backend the session runs on; None is Claude.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,

@@ -136,6 +136,7 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         "resume": resume,
         "permissionMode": meta.permission_mode,
         "model": meta.model,
+        "effort": meta.effort,
         "agent": meta.agent,
         "executable": executable,
         "args": args,
@@ -295,6 +296,21 @@ impl Runner {
             .map_err(|_| Error::Other("the sidecar exited".into()))?
             .map_err(Error::Other)?;
         clean_title(value.as_str().unwrap_or("")).ok_or_else(|| Error::Other("no title".into()))
+    }
+
+    /// The models `agent` (None: Claude) offers, as the sidecar lists them: value, label, efforts.
+    pub async fn agent_models(&self, app: &AppHandle, agent: Option<&str>) -> Result<Value> {
+        let (executable, args) = agents::command(agent);
+        let req_id = vault::new_id();
+        let (tx, rx) = oneshot::channel();
+        self.replies.lock().unwrap().insert(req_id.clone(), tx);
+        self.send(app, json!({"op": "models", "reqId": req_id, "agent": agent, "executable": executable, "args": args}))?;
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(20), rx).await;
+        self.replies.lock().unwrap().remove(&req_id);
+        reply
+            .map_err(|_| Error::Other("the agent did not list its models".into()))?
+            .map_err(|_| Error::Other("the sidecar exited".into()))?
+            .map_err(Error::Other)
     }
 
     /// Pulled Ollama models as `ollama:<name>`.

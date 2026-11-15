@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
 import { Connection, RpcError } from "./jsonrpc.ts";
 import { mcpUrl } from "./mcp-http.ts";
-import { log, message, type ToolKind } from "./protocol.ts";
+import { log, message, type ModelOption, type ToolKind } from "./protocol.ts";
 
 // The parts of the app-server's messages marq reads. Everything else is passed over.
 type FileChange = { path: string; kind?: { type?: string }; diff?: string };
@@ -189,6 +189,7 @@ class CodexSession implements AgentSession {
         threadId: this.threadId,
         input: text(prompt),
         model: this.model ?? undefined,
+        effort: this.c.effort || undefined,
       });
       this.turnId = r.turn.id;
       const turn = await finished;
@@ -343,4 +344,31 @@ export const codex: AgentBackend = {
   title: (c) => oneTurn({ ...c, cwd: process.cwd() }, c.prompt),
 
   commands: async () => [],
+
+  /** The app-server's own model list; the ones hidden from Codex's picker are left out. */
+  async models(c) {
+    const l = launch({ ...c, cwd: process.cwd(), tag: "codex" }, async () => ({}), () => {});
+    try {
+      await Promise.race([l.initialized, l.exited.then((r) => Promise.reject(r.error ?? new Error("codex exited")))]);
+      const out: ModelOption[] = [];
+      let cursor: string | null = null;
+      do {
+        const r: { data: any[]; nextCursor: string | null } = await l.conn.request("model/list", { cursor, limit: 100 });
+        for (const m of r.data) {
+          out.push({
+            value: m.model,
+            label: m.displayName || m.model,
+            description: m.description || undefined,
+            efforts: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort),
+            default: !!m.isDefault,
+          });
+        }
+        cursor = r.nextCursor;
+      } while (cursor);
+      return out;
+    } finally {
+      l.child.stdin?.end();
+      l.child.kill();
+    }
+  },
 };

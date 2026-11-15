@@ -156,6 +156,8 @@ function handle(c: Command) {
       return void reply(c.reqId, () => commands(c));
     case "title":
       return void reply(c.reqId, () => title(c));
+    case "models":
+      return void reply(c.reqId, async () => (await backendFor(c.agent).models?.({ executable: c.executable, args: c.args })) ?? []);
     case "ollama_models":
       return void reply(c.reqId, ollamaModels);
     case "rpc_result":

@@ -109,6 +109,7 @@ function sandbox(mode?: string | null) {
   return { sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: mode === "on", failIfUnavailable: true } };
 }
 
+const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const PERMISSION_MODES = new Set(["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"]);
 
 class ClaudeSession implements AgentSession {
@@ -146,6 +147,7 @@ class ClaudeSession implements AgentSession {
         ...sandbox(c.sandbox),
         pathToClaudeCodeExecutable: c.executable,
         ...backend(c.model),
+        ...(c.effort && EFFORTS.has(c.effort) ? { effort: c.effort as "low" | "medium" | "high" | "xhigh" | "max" } : {}),
         stderr: (d: string) => log(`[${c.id.slice(-8)}]`, d.trimEnd()),
       },
     }));
@@ -211,6 +213,27 @@ export const claude: AgentBackend = {
       }),
       "title",
     ),
+
+  /** The models Claude Code offers for this login, from a query that is opened only to ask and closed again. */
+  async models(c) {
+    const input = new InputQueue();
+    const q = query({
+      prompt: input,
+      options: { cwd: process.cwd(), settingSources: ["user"], pathToClaudeCodeExecutable: c.executable, env: BASE_ENV },
+    });
+    try {
+      return (await q.supportedModels()).map((m) => ({
+        value: m.value,
+        label: m.displayName,
+        description: m.description,
+        efforts: m.supportsEffort ? m.supportedEffortLevels : undefined,
+        default: m.value === "default",
+      }));
+    } finally {
+      input.close();
+      q.close();
+    }
+  },
 
   /** A query opened just to initialize (no prompt is sent, so there is no model call) and closed again. */
   async commands(c) {

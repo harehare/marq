@@ -151,6 +151,8 @@ export type CrewState = {
 // Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit.
 export type SessionEvent = { type: string; [k: string]: any };
 
+export type ModelOption = { value: string; label: string; description?: string; efforts?: string[]; default?: boolean };
+
 export type AgentInfo = {
   id: string; label: string; command: string; args: string[]; installed: boolean;
   /** Built into Marq, as opposed to added in config.toml. */
@@ -193,19 +195,19 @@ export const api = {
   listSessions: (vault: string, origin?: string) => invoke<SessionInfo[]>("list_sessions", { vault, origin }),
   /** With `autoTitle`, a small model names the task and `title` is the fallback. */
   newTask: (vault: string, task: {
-    title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
+    title: string; prompt: string; project: string; permissionMode?: string; model?: string; effort?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   } & TaskChecks) =>
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
   /** Agents a task can run on: Claude, and others that speak ACP. */
   listAgents: () => invoke<AgentInfo[]>("list_agents"),
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {
-    title: string; prompt: string; project: string; permissionMode?: string; model?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
+    title: string; prompt: string; project: string; permissionMode?: string; model?: string; effort?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
   } & TaskChecks) => invoke<string>("save_task", { vault, task }),
   /** One request on 2 to 4 runs, each in its own worktree. A run is a Claude model, or another agent (which runs on its own model). */
   newTaskCompare: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
-  } & TaskChecks, targets: { agent?: string; model?: string }[]) =>
+  } & TaskChecks, targets: { agent?: string; model?: string; effort?: string }[]) =>
     invoke<{ request: string; sessions: { session_id: string; title: string }[] }>("new_task_compare", { vault, task, targets }),
   /** `answers`: for AskUserQuestion, question text -> chosen label(s), comma-separated. */
   answerApproval: (requestId: string, allow: boolean, always: boolean, message?: string, answers?: Record<string, string>) =>
@@ -320,6 +322,8 @@ export const api = {
   terminalResize: (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows }),
   terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
   /** `ollama:<name>` for each model the local Ollama has; rejects when Ollama is not running. */
+  /** The models an agent (empty: Claude) lists for this login, with the efforts each supports. */
+  agentModels: (agent?: string) => invoke<ModelOption[]>("agent_models", { agent }),
   ollamaModels: () => invoke<string[]>("ollama_models"),
   newCrew: (vault: string, task: { title: string; prompt: string; project: string; autoTitle: boolean; workspace?: string; directories?: DirSpec[] }) =>
     invoke<{ rel: string; title: string }>("new_crew", { vault, ...task }),

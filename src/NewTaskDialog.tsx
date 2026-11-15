@@ -5,7 +5,7 @@ import { ChevronRight, FolderGit2, FolderPlus, FolderSearch, GitCompare, Layers,
 import { api, type AgentInfo, type DirSpec, type TaskChecks, type Workspace } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
 import { usePastes } from "./pastes";
-import { ModelSelect } from "./ModelSelect";
+import { CodexModelInput, EffortSelect, ModelSelect, effortsOf, useAgentModels } from "./ModelSelect";
 import { QueryContext } from "./queryContext";
 
 type Props = {
@@ -37,6 +37,8 @@ export const MODES = [
 const PROJECT_KEY = "marq.lastProject";
 const AGENT_KEY = "marq.lastAgent";
 const MODEL_KEY = "marq.lastModel";
+const EFFORT_KEY = "marq.lastEffort";
+const CODEX_MODEL_KEY = "marq.lastCodexModel";
 const MODE_KEY = "marq.lastMode";
 const TEAM_KEY = "marq.lastTeam";
 const WORKTREE_KEY = "marq.lastWorktree";
@@ -75,7 +77,11 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [project, setProject] = useState(() => stored(PROJECT_KEY, ""));
   const [mode, setMode] = useState(() => stored(MODE_KEY, "auto"));
   const [model, setModel] = useState(() => stored(MODEL_KEY, ""));
+  const [effort, setEffort] = useState(() => stored(EFFORT_KEY, ""));
+  const [codexModel, setCodexModel] = useState(() => stored(CODEX_MODEL_KEY, ""));
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const claudeModels = useAgentModels("claude");
+  const codexModels = useAgentModels("codex");
   const [agent, setAgent] = useState(() => stored(AGENT_KEY, "claude"));
   const [carry, setCarry] = useState(false);
   // Where the worktree's branch starts. Uncommitted changes only fit a start at HEAD.
@@ -85,7 +91,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   });
   const [baseBranch, setBaseBranch] = useState(() => stored(BASE_KEY + ".branch", ""));
   // More agents or models to run the same task on, to compare the results.
-  const [extra, setExtra] = useState<{ agent: string; model: string }[]>([]);
+  const [extra, setExtra] = useState<{ agent: string; model: string; effort: string }[]>([]);
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
   // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
@@ -170,8 +176,16 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const comparing = worktree && !team && extra.length > 0;
   // A comparison with any non-Claude run cannot use what only Claude has.
   const anyOther = other || (comparing && extra.some((x) => x.agent !== "claude"));
-  const runOn = other ? { agent, model: undefined } : { model };
-  const targets = [{ agent, model }, ...extra].map((t) => (t.agent === "claude" ? { model: t.model } : { agent: t.agent }));
+  // Codex takes a model of its own; the other ACP agents run on theirs.
+  const agentModel = (a: string, m: string) => (a === "codex" ? m || undefined : undefined);
+  const agentEffort = (a: string, e: string) => (a === "claude" || a === "codex" ? e || undefined : undefined);
+  const runOn = other
+    ? { agent, model: agentModel(agent, codexModel), effort: agentEffort(agent, effort) }
+    : { model, effort: agentEffort("claude", effort) };
+  const targets = [{ agent, model: agent === "codex" ? codexModel : model, effort }, ...extra].map((t) =>
+    t.agent === "claude"
+      ? { model: t.model, effort: agentEffort("claude", t.effort) }
+      : { agent: t.agent, model: agentModel(t.agent, t.model), effort: agentEffort(t.agent, t.effort) });
   const agentLabel = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
   const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !team && !comparing;
   const splitting = canSplit && perFile;
@@ -203,6 +217,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         localStorage.setItem(BASE_KEY + ".branch", baseBranch);
         localStorage.setItem(MODE_KEY, mode);
         localStorage.setItem(MODEL_KEY, model);
+        localStorage.setItem(CODEX_MODEL_KEY, codexModel);
+        localStorage.setItem(EFFORT_KEY, effort);
         localStorage.setItem(AGENT_KEY, agent);
         localStorage.setItem(TEAM_KEY, String(team));
         localStorage.setItem(WORKTREE_KEY, String(worktree));
@@ -396,7 +412,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
 
             <Section id="run" title="Run" summary={runSummary} disabled={team}>
               {agents.length > 1 && (
-                <select className="model-select" value={agent} onChange={(e) => setAgent(e.target.value)}
+                <select className="model-select" value={agent} onChange={(e) => { setAgent(e.target.value); setEffort(""); }}
                   title="Agents other than Claude run over ACP on their own default model. Add or change them under [agents] in config.toml.">
                   {agents.map((a) => (
                     <option key={a.id} value={a.id} disabled={!a.installed && a.id !== agent}>
@@ -405,12 +421,15 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                   ))}
                 </select>
               )}
-              {!other && <ModelSelect value={model} onChange={setModel} />}
+              {!other && <ModelSelect value={model} onChange={setModel} models={claudeModels} />}
+              {other && agent === "codex" && <CodexModelInput value={codexModel} onChange={setCodexModel} models={codexModels} />}
+              <EffortSelect agent={agent} value={effort} onChange={setEffort}
+                levels={effortsOf(agent === "codex" ? codexModels : claudeModels, agent === "codex" ? codexModel : model)} />
               {worktree && extra.map((t, i) => (
                 <div key={i} className="compare-row">
                   {agents.length > 1 && (
                     <select className="model-select" value={t.agent}
-                      onChange={(e) => setExtra(extra.map((x, j) => (j === i ? { ...x, agent: e.target.value } : x)))}>
+                      onChange={(e) => setExtra(extra.map((x, j) => (j === i ? { ...x, agent: e.target.value, effort: "" } : x)))}>
                       {agents.map((a) => (
                         <option key={a.id} value={a.id} disabled={!a.installed && a.id !== t.agent}>
                           {a.label}{a.installed ? "" : ` (not found: ${a.command})`}
@@ -419,13 +438,18 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                     </select>
                   )}
                   {t.agent === "claude" && (
-                    <ModelSelect value={t.model} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? { ...x, model: v } : x)))} />
+                    <ModelSelect value={t.model} models={claudeModels} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? { ...x, model: v } : x)))} />
                   )}
+                  {t.agent === "codex" && (
+                    <CodexModelInput value={t.model} models={codexModels} onChange={(v) => setExtra(extra.map((x, j) => (j === i ? { ...x, model: v } : x)))} />
+                  )}
+                  <EffortSelect agent={t.agent} value={t.effort} levels={effortsOf(t.agent === "codex" ? codexModels : claudeModels, t.model)}
+                    onChange={(v) => setExtra(extra.map((x, j) => (j === i ? { ...x, effort: v } : x)))} />
                   <button className="icon" onClick={() => setExtra(extra.filter((_, j) => j !== i))} title="Remove"><X size={13} /></button>
                 </div>
               ))}
               {worktree && extra.length < 3 && (
-                <button className="link compare-add" onClick={() => setExtra([...extra, { agent: "claude", model }])}
+                <button className="link compare-add" onClick={() => setExtra([...extra, { agent: "claude", model, effort }])}
                   title="Run the same task once per agent or model, each in its own worktree, compare the results side by side and keep one">
                   <GitCompare size={13} /> Compare with another agent or model
                 </button>

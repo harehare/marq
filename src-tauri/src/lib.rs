@@ -139,6 +139,7 @@ pub struct RunOptions {
     project: Option<String>,
     worktree: Option<bool>,
     model: Option<String>,
+    effort: Option<String>,
     /// The agent to run on instead of the note's `agent:` (None keeps the note's).
     agent: Option<String>,
     /// do (default), review, plan or explain.
@@ -202,6 +203,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         _ => vault::fm_get(&text, "permission_mode").filter(|s| !s.is_empty()),
     };
     let model = opts.model.or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
+    let effort = opts.effort.or_else(|| vault::fm_get(&text, "effort")).filter(|s| !s.is_empty());
     let agent = opts.agent.or_else(|| vault::fm_get(&text, "agent")).filter(|s| !s.is_empty() && s != agents::DEFAULT);
     let use_worktree = opts.worktree.unwrap_or_else(|| vault::fm_get(&text, "worktree").as_deref() != Some("false"));
     let is_request = vault::fm_get(&text, "type").as_deref() == Some("request");
@@ -315,6 +317,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         started: vault::now(),
         permission_mode,
         model,
+        effort,
         agent,
         worktree,
         crew: None,
@@ -405,6 +408,9 @@ struct NewTask {
     /// See `SessionMeta::model`.
     #[serde(default)]
     model: Option<String>,
+    /// See `SessionMeta::effort`.
+    #[serde(default)]
+    effort: Option<String>,
     /// See `SessionMeta::agent`.
     #[serde(default)]
     agent: Option<String>,
@@ -508,7 +514,7 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 /// Writes the task as a request note (`status: todo`) and returns its path relative to the vault.
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let NewTask {
-        title, prompt, project, permission_mode, model, agent, carry_changes, base, worktree, verify, verify_retry, verify_retries,
+        title, prompt, project, permission_mode, model, effort, agent, carry_changes, base, worktree, verify, verify_retry, verify_retries,
         sandbox, phases, acceptance, extra, workspace: ws, directories, ..
     } = task;
     let v = Path::new(vault);
@@ -518,6 +524,9 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let mut mode = permission_mode.filter(|m| !m.is_empty()).map(|m| format!("permission_mode: {m}\n")).unwrap_or_default();
     if let Some(m) = model.filter(|m| !m.is_empty()) {
         mode.push_str(&format!("model: {m}\n"));
+    }
+    if let Some(e) = effort.filter(|e| !e.is_empty()) {
+        mode.push_str(&format!("effort: {e}\n"));
     }
     if let Some(a) = agent.filter(|a| !a.is_empty() && a != agents::DEFAULT) {
         mode.push_str(&format!("agent: {a}\n"));
@@ -581,6 +590,8 @@ struct CompareTarget {
     agent: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 impl CompareTarget {
@@ -616,14 +627,19 @@ async fn new_task_compare(app: AppHandle, vault: String, mut task: NewTask, targ
     }
     // Each session gets its agent and model from the options below, not from the note.
     task.model = None;
+    task.effort = None;
     task.agent = None;
     blocking(move || {
         let request = write_request(&vault, task)?;
         let mut sessions = vec![];
         for t in targets {
-            // An ACP agent runs on its own model.
+            // Codex takes a model; other ACP agents run on their own.
+            let model = t.model.clone().filter(|m| !m.is_empty());
+            let effort = t.effort.clone().filter(|e| !e.is_empty());
             let opts = if t.is_claude() {
-                RunOptions { model: t.model.filter(|m| !m.is_empty()), ..Default::default() }
+                RunOptions { model, effort, ..Default::default() }
+            } else if t.agent.as_deref() == Some("codex") {
+                RunOptions { agent: t.agent, model, effort, ..Default::default() }
             } else {
                 RunOptions { agent: t.agent, ..Default::default() }
             };
@@ -1114,6 +1130,13 @@ fn terminal_resize(terms: State<terminal::Terminals>, id: String, cols: u16, row
 #[tauri::command]
 fn terminal_close(terms: State<terminal::Terminals>, id: String) {
     terms.close(&id)
+}
+
+/// The models an agent lists for the new-task dialog.
+#[tauri::command]
+async fn agent_models(app: AppHandle, agent: Option<String>) -> Result<serde_json::Value> {
+    let agent = agent.filter(|a| !a.is_empty() && a != agents::DEFAULT);
+    app.state::<Runner>().agent_models(&app, agent.as_deref()).await
 }
 
 /// Ollama models for the new-task dialog.
@@ -1661,6 +1684,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ollama_models,
+            agent_models,
             save_query,
             search_text,
             search_sessions,

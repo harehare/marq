@@ -395,6 +395,7 @@ fn start_acceptance(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verif
         permission_mode: meta.permission_mode.clone(),
         model: v.model.clone().or_else(|| meta.model.clone()),
         agent: meta.agent.clone(),
+        effort: meta.effort.clone(),
         sandbox: meta.sandbox.clone(),
         verifies: Some(meta.id.clone()),
         ..Default::default()
