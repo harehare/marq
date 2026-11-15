@@ -3,7 +3,7 @@ import { isSendKey, sendHint, useSettings } from "./settings";
 import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowUp, CornerUpLeft, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
+  ArrowUp, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
   FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
@@ -615,12 +615,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     });
   };
 
-  const openOrigin = async () => {
-    const o = await api.sessionOrigin(vault, sessionId);
-    if (o) onOpenOrigin(o.path, o.line);
-    else setError("Origin note not found");
-  };
-
   return (
     <div className="session" ref={rootRef}>
       <header className="session-head">
@@ -663,7 +657,6 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             {pushing ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Push
           </button>
         )}
-        <button onClick={openOrigin}><CornerUpLeft size={14} /> Origin note</button>
         {running && <button className="danger" onClick={() => api.stopSession(sessionId)}><Square size={12} /> Stop</button>}
         <button className={`icon ${sideOpen ? "on" : ""}`} title="Toggle side panel" onClick={() => setSideOpen(!sideOpen)}>
           <PanelRight size={14} />
