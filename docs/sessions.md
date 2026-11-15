@@ -61,7 +61,7 @@ mq-docs is the documentation site; update it when a feature changes.
 
 Choose it under **Workspace** in the New task dialog. A request that uses a workspace unchanged records `workspace: workspaces/mq-docs.md`, so later edits to the workspace apply to it. If you change the directories in the dialog, the request lists them itself instead. The workspace's body goes to the agent as context. A request's own `project:` and `directories:` take precedence over the workspace's.
 
-Board queues (**Workspace** in the Queue dialog, `queue_workspace`), schedules (`workspace:` or `directories:`) and [crews](crews-and-boards.md#workspaces) take a workspace too.
+Schedules (`workspace:` or `directories:`) and [crews](crews-and-boards.md#workspaces) take a workspace too.
 
 ## Worktrees and review
 
@@ -119,8 +119,6 @@ Pick the ones you can fix and open a pull request for each.   # empty: the query
 ```
 
 **Run now** on a schedule whose query finds nothing says so instead of starting a session.
-
-Pairing a schedule with a [board queue](crews-and-boards.md#queue) lets one session pick the work and the queue run it.
 
 ## Active sessions
 

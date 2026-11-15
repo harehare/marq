@@ -1,6 +1,6 @@
 # Workflows
 
-A request can check its own work, run in phases, run sandboxed, and start from a spec. Set these in the request note's frontmatter (or in the New task dialog, under **How it runs and is checked**), on a board's queue, or on a schedule.
+A request can check its own work, run in phases, run sandboxed, and start from a spec. Set these in the request note's frontmatter (or in the New task dialog, under **How it runs and is checked**), or on a schedule.
 
 ```markdown
 ---
@@ -64,7 +64,7 @@ When the sandbox cannot run, the session fails instead of running unsandboxed. O
 
 Read, Edit and Write are not sandboxed, so keep secrets out of reach with permission rules in Claude Code's settings (for example, `"deny": ["Read(./.env*)"]`). Domains, extra writable paths and excluded commands also go in Claude Code's own `sandbox` settings: see [Sandboxing](https://code.claude.com/docs/en/sandboxing).
 
-Board queues and schedules start sessions that nobody watches. `[sandbox] unattended = "on"` in [config.toml](settings.md) sandboxes every one of them that does not set its own sandbox.
+Schedules start sessions that nobody watches. `[sandbox] unattended = "on"` in [config.toml](settings.md) sandboxes every one of them that does not set its own sandbox.
 
 ## Specs
 
@@ -98,14 +98,6 @@ board: boards/show-types-on-hover.md   # set by Break down
 Create one with **New spec** in the command palette, or ask an agent to write one with `/marq:spec`.
 
 **Break down**, in the spec's toolbar, puts each open item under `## Tasks` on the spec's board as a card that links to the spec. The first time, it also creates the board and records it in `board:`. Running it again adds only the new items.
-
-When a [board queue](crews-and-boards.md#queue) runs a card linked to a spec, the card's request gets these from the spec:
-
-- The spec as context, without `## Tasks` and `## Acceptance`.
-- The spec's `verify`, `verify_retries`, `verify_retry`, `verify_timeout`, `verify_model` and `sandbox`. The queue's own **Check** and **Sandbox** come first.
-- The spec's `## Acceptance` as the request's acceptance criteria.
-
-A card moves to the review list only after its check has passed or given up.
 
 ## Skills
 

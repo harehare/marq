@@ -440,7 +440,7 @@ async fn handle(app: &AppHandle, ev: Value) {
                     if let Err(e) = relay::on_turn_end(&app, &v, &id) {
                         eprintln!("marq: reply failed: {e}");
                     }
-                    // Checks the work, moves a phased request on, and settles the session for the queue.
+                    // Checks the work, moves a phased request on, and settles the session.
                     workflow::on_turn_end(&app, &v, &id);
                 });
             }

@@ -653,7 +653,7 @@ export default function App() {
   }, [vault]);
 
 
-  // Board queues and schedules run for the open vault, and only while Marq runs.
+  // Schedules and the inbox run for the open vault, and only while Marq runs.
   useEffect(() => {
     if (vault) api.automationWatch(vault).catch(() => {});
   }, [vault]);
@@ -684,7 +684,7 @@ export default function App() {
     };
   }, [refresh]);
 
-  // Sessions the board queues and schedules start on their own.
+  // Sessions the schedules and the inbox start on their own.
   useEffect(() => {
     const un = listen<{ session_id: string; title: string; from: string }>("automation://started", (e) => {
       void notify(`Started: ${e.payload.title}`, `From ${e.payload.from}`);

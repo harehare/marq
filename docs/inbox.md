@@ -9,7 +9,7 @@ Marq can keep working while you are away, and tell you what needs you when you c
 | **Needs your approval** | A session asks to run a tool. It stays until you answer it or the session ends |
 | **Stopped with an error** | A session ended with an error |
 | **Finished a turn** | A session finished; the entry shows its latest result. Opening the session handles it |
-| **Queued** / **Starting…** | Work waiting for room to run: a schedule, a request you queued, a board card, or a follow-up that fell due |
+| **Queued** / **Starting…** | Work waiting for room to run: a schedule, a request you queued (from New task or a board card), or a follow-up that fell due |
 | **Failed** | Queued work that could not start, with the reason. It stays until you dismiss it |
 | **todo** | A request saved for later, and a knowledge draft nobody has checked yet |
 
@@ -19,18 +19,17 @@ Entries are saved in `.marq/inbox.json` in the vault, so they survive a restart.
 
 ## Work queues
 
-Four things start sessions on their own. All of them wait in the Inbox first and start from there:
+Three things start sessions on their own. All of them wait in the Inbox first and start from there:
 
 | Work | How it gets queued |
 | --- | --- |
 | [Schedule](sessions.md#schedules) | When it falls due. Each schedule waits at most once: a schedule that is still queued or running is not queued again |
-| Request | You choose **Queue** in New task, or press ▶ **Queue** on a request saved for later. Nothing is queued without it |
-| [Board card](crews-and-boards.md#queue) | A card sits in the board's queue list, or you choose **Queue** in the card's dialog |
+| Request | You choose **Queue** in New task or in a [board card](crews-and-boards.md#boards)'s dialog, or press ▶ **Queue** on a request saved for later. Nothing is queued without it |
 | Follow-up | A timer an agent set for itself falls due (see below) |
 
-**Start** in New task, **Ask** and a card's **Start a session** still start at once; only **Queue** waits for room. Schedules and queued requests run two at a time together. A board's cards run up to that board's own limit (`queue_max`). Follow-ups are not counted: they resume a session that already exists, once it is idle, and never in the middle of a turn.
+**Start** in New task, **Ask** and a card's **Start a session** still start at once; only **Queue** waits for room. Schedules and queued requests run two at a time together. Follow-ups are not counted: they resume a session that already exists, once it is idle, and never in the middle of a turn.
 
-A queued schedule, card or follow-up cannot be dismissed, because the thing that queued it would queue it again at once. To take a card back, move it out of the queue list; to stop a schedule, switch it off. A queued request can be dismissed.
+A queued schedule or follow-up cannot be dismissed, because the thing that queued it would queue it again at once. To stop a schedule, switch it off. A queued request can be dismissed.
 
 If Marq closes while something is starting, it is queued again the next time Marq opens, so it is not lost.
 

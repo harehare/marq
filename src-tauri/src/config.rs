@@ -51,7 +51,7 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # keep_days = 7                   # scratch memos not changed for this many days go to the Trash; 0 keeps them
 
 [sandbox]
-# unattended = "on"               # on | strict: Claude Code's sandbox for board queues and schedules that do not set one
+# unattended = "on"               # on | strict: Claude Code's sandbox for schedules that do not set one
 
 # Keys: a command id = "Key" or ["Key", ...]; "" unbinds. Modifiers: Ctrl, Alt, Shift, Cmd.
 # All commands and their keys: ⌘K (command palette).

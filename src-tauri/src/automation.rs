@@ -1,12 +1,11 @@
-//! Work marq starts on its own while it runs: board queues and scheduled tasks.
+//! Work marq starts on its own while it runs: scheduled tasks, requests the user queued and
+//! follow-ups that fell due.
 //!
 //! Every 30 seconds it looks at the open vault and queues what is due in the inbox (see `inbox`),
-//! where it waits for room and is started. A board with a queue list (see `boards::Queue`)
-//! starts a session for each card put there, up to its limit; the card moves to the queue's doing
-//! list and, when the session's turn ends, on to its review list. A schedule is a note in
-//! `schedules/` (`type: schedule`) whose body is the prompt; it runs `every` so long, or daily `at`
-//! a time, as a request note like any other task. With `query:` naming a saved query note, it runs
-//! the query first and starts a session only when there are results, giving them to the agent.
+//! where it waits for room and is started. A schedule is a note in `schedules/` (`type: schedule`)
+//! whose body is the prompt; it runs `every` so long, or daily `at` a time, as a request note like
+//! any other task. With `query:` naming a saved query note, it runs the query first and starts a
+//! session only when there are results, giving them to the agent.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +16,6 @@ use chrono::{DateTime, Local, NaiveTime, TimeZone};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
-use crate::boards::{self, Change, Queue};
 use crate::error::{Error, Result};
 use crate::{mq, vault, workflow, NewTask, RunOptions};
 
@@ -25,7 +23,6 @@ const TICK: Duration = Duration::from_secs(30);
 
 /// What a session started here works on.
 enum Run {
-    Card { board: PathBuf, card: String, doing: String, review: String },
     Schedule { path: PathBuf },
     Request,
 }
@@ -55,10 +52,6 @@ impl Automation {
     fn running_schedules(&self) -> usize {
         self.runs.lock().unwrap().values().filter(|r| matches!(r, Run::Schedule { .. } | Run::Request)).count()
     }
-
-    fn running_cards(&self, board: &Path) -> usize {
-        self.runs.lock().unwrap().values().filter(|r| matches!(r, Run::Card { board: b, .. } if b == board)).count()
-    }
 }
 
 /// Starts the timer and follows session turns. Called once at startup.
@@ -77,17 +70,17 @@ pub fn start(app: &AppHandle) {
     app.listen("workflow://settled", move |e| {
         let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
         let Some(id) = v["session_id"].as_str() else { return };
-        on_turn_end(&handle, id, v["note"].as_str().map(str::to_string));
+        on_turn_end(&handle, id);
     });
     let handle = app.clone();
     app.listen("session://exit", move |e| {
         let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
         let Some(id) = v["session_id"].as_str() else { return };
         if v["status"].as_str() == Some("error") {
-            on_turn_end(&handle, id, Some("⚠ The session ended with an error".into()));
+            on_turn_end(&handle, id);
         }
     });
-    // A retry or the next phase in a new session carries on the same card or schedule run.
+    // A retry or the next phase in a new session carries on the same run.
     let handle = app.clone();
     app.listen("workflow://handoff", move |e| {
         let Ok(v) = serde_json::from_str::<Value>(e.payload()) else { return };
@@ -102,25 +95,15 @@ pub fn start(app: &AppHandle) {
 
 fn tick(app: &AppHandle) {
     let Some(vault) = app.state::<Automation>().vault.lock().unwrap().clone() else { return };
-    for f in vault::list_files(&vault) {
+    // A schedule falling due only queues the run; `drain` starts it when there is room.
+    for f in vault::list_files(&vault).into_iter().filter(|f| f.kind.as_deref() == Some("schedule")) {
         let path = PathBuf::from(&f.path);
-        let done = match f.kind.as_deref() {
-            Some("board") => work_queue(app, &path),
-            // Falling due only queues the run; `drain_schedules` starts it when there is room.
-            Some("schedule") => {
-                if let Ok(text) = std::fs::read_to_string(&path)
-                    && is_due(&text, Local::now())
-                    && !app.state::<Automation>().running_schedule(&path)
-                {
-                    let title = vault::fm_get(&text, "title").unwrap_or_else(|| f.rel.clone());
-                    crate::inbox::enqueue(app, "schedule", &path.to_string_lossy(), &title, "", None);
-                }
-                Ok(())
-            }
-            _ => Ok(()),
-        };
-        if let Err(e) = done {
-            eprintln!("marq: automation for {}: {e}", f.rel);
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && is_due(&text, Local::now())
+            && !app.state::<Automation>().running_schedule(&path)
+        {
+            let title = vault::fm_get(&text, "title").unwrap_or_else(|| f.rel.clone());
+            crate::inbox::enqueue(app, "schedule", &path.to_string_lossy(), &title, "", None);
         }
     }
     drain(app, &vault);
@@ -170,21 +153,6 @@ fn drain(app: &AppHandle, vault: &Path) {
         }
     }
 
-    // A board's cards start up to its own limit, whatever is going on elsewhere.
-    let room_on_board = |e: &crate::inbox::Event| {
-        let Some((board, _)) = card_ref(&e.source) else { return true };
-        let max = boards::read(&board).ok().and_then(|b| b.queue).map_or(0, |q| q.max);
-        app.state::<Automation>().running_cards(&board) < max
-    };
-    // One at a time, since each started card changes what its board has room for.
-    while let Some(e) = crate::inbox::claim(app, "card", 1, room_on_board).pop() {
-        match start_queued_card(app, vault, &e.source) {
-            Ok(Some(id)) => crate::inbox::finish(app, &e.id, true, "", Some(id)),
-            Ok(None) => crate::inbox::finish(app, &e.id, true, "The card is no longer waiting.", None),
-            Err(err) => crate::inbox::finish(app, &e.id, false, &err.to_string(), None),
-        }
-    }
-
     // A session in the middle of a turn gets its follow-up after the turn, not on top of it.
     let idle = |e: &crate::inbox::Event| e.session_id.as_deref().is_some_and(|id| !app.state::<crate::sidecar::Runner>().is_alive(id));
     for e in crate::inbox::claim(app, "followup", usize::MAX, idle) {
@@ -213,156 +181,6 @@ fn start_request(app: &AppHandle, vault: &Path, path: &Path) -> Result<Option<St
     Ok(Some(started.session_id))
 }
 
-/// Queues the cards waiting in the board's queue list. They start from the inbox (see `drain`),
-/// up to the board's limit; a card the user moves out of the list before then is skipped.
-fn work_queue(app: &AppHandle, board: &Path) -> Result<()> {
-    let b = boards::read(board)?;
-    let Some(queue) = b.queue else { return Ok(()) };
-    let Some(waiting) = b.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&queue.list)) else { return Ok(()) };
-    for card in waiting.cards.iter().filter(|c| !c.done) {
-        crate::inbox::enqueue(app, "card", &format!("{}#{}", board.to_string_lossy(), card.id), &card.title, "", None);
-    }
-    Ok(())
-}
-
-/// Queues the board's waiting cards in the inbox and handles it at once, for a card the user just
-/// put in the queue list, instead of at the next tick.
-pub fn queue_board(app: &AppHandle, board: &Path) -> Result<()> {
-    work_queue(app, board)?;
-    drain_now(app);
-    Ok(())
-}
-
-/// The board and card an inbox `card` event stands for.
-fn card_ref(source: &str) -> Option<(PathBuf, &str)> {
-    let (board, card) = source.rsplit_once('#')?;
-    Some((PathBuf::from(board), card))
-}
-
-/// Starts a queued card. `None` when it is no longer waiting in the queue list.
-fn start_queued_card(app: &AppHandle, vault: &Path, source: &str) -> Result<Option<String>> {
-    let (board, id) = card_ref(source).ok_or_else(|| Error::Other("bad card reference".into()))?;
-    let b = boards::read(&board)?;
-    let Some(queue) = b.queue.clone() else { return Ok(None) };
-    let card = b
-        .lists
-        .iter()
-        .filter(|l| l.name.eq_ignore_ascii_case(&queue.list))
-        .flat_map(|l| &l.cards)
-        .find(|c| c.id == id && !c.done);
-    match card {
-        Some(card) => start_card(app, vault, &board, &queue, card).map(Some),
-        None => Ok(None),
-    }
-}
-
-fn start_card(app: &AppHandle, vault: &Path, board: &Path, queue: &Queue, card: &boards::Card) -> Result<String> {
-    // Moved first, so a card that fails to start is not picked up again on the next tick.
-    boards::update(board, &card.id, Change { list: Some(queue.doing.clone()), ..Default::default() })?;
-    let board_rel = rel(vault, board);
-    let mut prompt = card_prompt(vault, board, card, &queue.doing);
-    // A card from a spec gets the spec as context, and its check, sandbox and acceptance criteria.
-    let spec = card.notes.iter().filter_map(|n| note_link(n)).find_map(|(_, href)| {
-        let dir = board.parent().unwrap_or(vault);
-        workflow::from_spec(vault, &normalize(&dir.join(href)))
-    });
-    let (extra, acceptance) = match spec {
-        Some(s) => {
-            prompt.push_str(&format!("\n\n{}", s.context));
-            (s.frontmatter, s.acceptance)
-        }
-        None => (vec![], None),
-    };
-    // So the card can follow its request to Done once the user marks the session done (see `card_done`).
-    let mut extra = extra;
-    extra.push(("board".into(), board_rel.clone()));
-    extra.push(("card".into(), card.id.clone()));
-    let inherited = |k: &str| extra.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
-    let task = NewTask {
-        title: card.title.clone(),
-        prompt,
-        project: queue.project.clone(),
-        permission_mode: queue.permission_mode.clone(),
-        model: queue.model.clone(),
-        agent: None,
-        carry_changes: false,
-        worktree: queue.worktree,
-        auto_title: false,
-        verify: queue.verify.clone().or_else(|| inherited("verify")),
-        sandbox: queue.sandbox.clone().or_else(|| inherited("sandbox")).or_else(workflow::unattended_sandbox),
-        acceptance,
-        extra,
-        workspace: queue.workspace.clone(),
-        ..Default::default()
-    };
-    let v = vault.to_string_lossy();
-    let started = crate::write_request(&v, task)
-        .and_then(|request| Ok((crate::start_from_note(app.clone(), &v, &request, 0, RunOptions::default())?, request)));
-    let note = match &started {
-        Ok((_, request)) => link(&board_rel, "Session started by the queue", request),
-        Err(e) => format!("⚠ The queue could not start this card: {e}"),
-    };
-    let to_review = started.is_err().then(|| queue.review.clone());
-    boards::update(board, &card.id, Change { note: Some(note), list: to_review, ..Default::default() })?;
-    let _ = app.emit("vault://changed", json!({"path": board}));
-    let (s, _) = started?;
-    app.state::<Automation>().runs.lock().unwrap().insert(
-        s.session_id.clone(),
-        Run::Card { board: board.to_path_buf(), card: card.id.clone(), doing: queue.doing.clone(), review: queue.review.clone() },
-    );
-    let _ = app.emit("sessions://changed", &s.session_id);
-    let _ = app.emit("automation://started", json!({"session_id": s.session_id, "title": s.title, "from": board_rel}));
-    Ok(s.session_id)
-}
-
-/// The card as a prompt, like the board's Start a session, with linked notes as vault paths.
-fn card_prompt(vault: &Path, board: &Path, card: &boards::Card, list: &str) -> String {
-    let dir = board.parent().unwrap_or(vault);
-    let mut lines = vec![card.title.clone()];
-    let mut linked = false;
-    for n in &card.notes {
-        match note_link(n) {
-            Some((title, href)) => {
-                linked = true;
-                lines.push(format!("- {title}: {}", rel(vault, &normalize(&dir.join(href)))));
-            }
-            None => lines.push(format!("- {n}")),
-        }
-    }
-    lines.push(String::new());
-    if linked {
-        lines.push("Read the linked notes first; they hold the details for this card.".into());
-        lines.push(String::new());
-    }
-    lines.push(format!(
-        "(Card {} on the board {}, list {list}. Keep it up to date with board_update_card as you work, but leave it in this list: marq moves it to review when you finish.)",
-        card.id,
-        rel(vault, board)
-    ));
-    lines.join("\n")
-}
-
-/// `[Title](relative/path.md)`, the form the board uses to link notes.
-fn note_link(item: &str) -> Option<(&str, &str)> {
-    let (title, rest) = item.strip_prefix('[')?.split_once("](")?;
-    let href = rest.strip_suffix(')')?;
-    (!href.contains("://") && href.split('#').next()?.ends_with(".md")).then(|| (title, href.split('#').next().unwrap()))
-}
-
-fn normalize(p: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in p.components() {
-        match c {
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            std::path::Component::CurDir => {}
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 fn rel(vault: &Path, p: &Path) -> String {
     p.strip_prefix(vault).unwrap_or(p).to_string_lossy().into_owned()
 }
@@ -373,34 +191,9 @@ pub fn link(from: &str, title: &str, to: &str) -> String {
     format!("[{title}]({}{})", "../".repeat(up), to.replace(' ', "%20"))
 }
 
-/// A request that a queue started is done: its card moves to the board's Done list. Returns the board
-/// when it changed. Left alone if the card is gone or already there.
-pub fn card_done(vault: &Path, request: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(request).ok()?;
-    let (board, card) = (vault::fm_get(&text, "board")?, vault::fm_get(&text, "card")?);
-    let board = vault::resolve(vault, &board).ok()?;
-    let b = boards::read(&board).ok()?;
-    let done = b.lists.iter().find(|l| l.name.eq_ignore_ascii_case("done"))?;
-    if done.cards.iter().any(|c| c.id == card) || !b.lists.iter().any(|l| l.cards.iter().any(|c| c.id == card)) {
-        return None;
-    }
-    boards::update(&board, &card, Change { list: Some(done.name.clone()), ..Default::default() }).ok()?;
-    Some(board)
-}
-
-fn on_turn_end(app: &AppHandle, session: &str, note: Option<String>) {
-    let Some(run) = app.state::<Automation>().runs.lock().unwrap().remove(session) else { return };
-    let Run::Card { board, card, doing, review } = run else { return };
-    // Left alone if the session or the user already moved it.
-    let Ok(b) = boards::read(&board) else { return };
-    let still_doing = b.lists.iter().any(|l| l.name.eq_ignore_ascii_case(&doing) && l.cards.iter().any(|c| c.id == card));
-    if !still_doing {
-        return;
-    }
-    if let Err(e) = boards::update(&board, &card, Change { list: Some(review), note, ..Default::default() }) {
-        eprintln!("marq: could not move {card} to review: {e}");
-    }
-    let _ = app.emit("vault://changed", json!({"path": board}));
+/// A session started here has finished its first turn: it no longer counts against the limit.
+fn on_turn_end(app: &AppHandle, session: &str) {
+    app.state::<Automation>().runs.lock().unwrap().remove(session);
 }
 
 // ---- schedules ----
@@ -629,38 +422,6 @@ mod tests {
 
     #[test]
     fn links() {
-        assert_eq!(note_link("[Spec](../notes/spec.md)"), Some(("Spec", "../notes/spec.md")));
-        assert_eq!(note_link("[x](https://a.md)"), None);
         assert_eq!(link("boards/a.md", "S", "requests/b c.md"), "[S](../requests/b%20c.md)");
-        assert_eq!(normalize(Path::new("/v/boards/../notes/x.md")), PathBuf::from("/v/notes/x.md"));
-    }
-
-    #[test]
-    fn a_done_request_moves_its_card_to_done() {
-        let dir = tempfile::tempdir().unwrap();
-        let v = &dir.path().canonicalize().unwrap();
-        let board = boards::create(v, "sprint", &[]).unwrap();
-        let card = boards::add(&board, "Fix it", Some("Doing"), None, None).unwrap();
-        std::fs::create_dir(v.join("requests")).unwrap();
-        let req = v.join("requests/r.md");
-        std::fs::write(&req, format!("---\nstatus: done\nboard: boards/sprint.md\ncard: {}\n---\n", card.id)).unwrap();
-        assert_eq!(card_done(v, &req), Some(board.clone()));
-        let b = boards::read(&board).unwrap();
-        assert_eq!(b.lists[2].cards[0].id, card.id);
-        assert!(b.lists[2].cards[0].done);
-        assert_eq!(card_done(v, &req), None);
-    }
-}
-
-#[cfg(test)]
-mod card_tests {
-    use super::*;
-
-    #[test]
-    fn card_source_splits_at_the_last_hash() {
-        let (board, card) = card_ref("/v/boards/a#b.md#c1").unwrap();
-        assert_eq!(board, PathBuf::from("/v/boards/a#b.md"));
-        assert_eq!(card, "c1");
-        assert!(card_ref("no-card").is_none());
     }
 }

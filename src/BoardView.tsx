@@ -1,11 +1,11 @@
+import { lastTaskDefaults } from "./NewTaskDialog";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  AlignLeft, ArrowLeft, ArrowRight, Bot, Check, ChevronDown, Columns3, FilePlus2, FileText, Link2, List as ListIcon, ListTodo, Pencil, Plus, Search, Sparkles, Tag,
+  AlignLeft, ArrowLeft, ArrowRight, Check, ChevronDown, Columns3, FilePlus2, FileText, Link2, List as ListIcon, ListTodo, Pencil, Plus, Search, Sparkles, Tag,
   Trash2, User, X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { QueueDialog } from "./AutomationDialogs";
 import { api, Board, Card, FileEntry } from "./api";
 import { composing } from "./keys";
 import { linkTo, noteLink, resolveLink } from "./links";
@@ -84,7 +84,6 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   // The card picking a note to link, or naming a new one.
   const [linking, setLinking] = useState<Card | null>(null);
   const [creating, setCreating] = useState<Card | null>(null);
-  const [queueOpen, setQueueOpen] = useState(false);
   // Cards shown: those with every picked label and the text in their title, id or owner.
   const [filterLabels, setFilterLabels] = useState<string[]>([]);
   const [filterText, setFilterText] = useState("");
@@ -118,7 +117,8 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   const listOp = (op: string, name: string, to?: string) => run(api.boardList(vault, path, op, name, to));
 
   const vaultRel = (p: string) => (p.startsWith(`${vault}/`) ? p.slice(vault.length + 1) : p);
-  const start = (c: Card, list: string) => {
+  /** The card as a task prompt: its notes, and where it lives so the agent keeps it up to date. */
+  const cardPrompt = (c: Card, list: string) => {
     const notes = c.notes.map((n) => {
       const l = noteLink(n);
       const file = l && resolveLink(path, l.href);
@@ -126,25 +126,36 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
       return file ? `- ${l.title}: ${vaultRel(file)}` : `- ${n}`;
     });
     const linked = linksOf(c).length > 0;
-    // Once the session has started the card goes to the doing list: the queue's, else one named Doing / In progress.
-    const doing = board?.queue?.doing
-      ?? board?.lists.find((l) => /^(doing|in progress|wip)$/i.test(l.name.trim()))?.name;
+    return [c.title, ...notes, "",
+      ...(linked ? ["Read the linked notes first; they hold the details for this card.", ""] : []),
+      `(Card ${c.id} on the board ${vaultRel(path)}, list ${list}. Keep it up to date with board_update_card as you work.)`].join("\n");
+  };
+  const start = (c: Card, list: string) => {
+    // Once the session has started the card goes to the list named Doing / In progress, if there is one.
+    const doing = board?.lists.find((l) => /^(doing|in progress|wip)$/i.test(l.name.trim()))?.name;
     const target = doing && board?.lists.find((l) => l.name.toLowerCase() === doing.toLowerCase())?.name;
     onStartTask(
-      [c.title, ...notes, "",
-        ...(linked ? ["Read the linked notes first; they hold the details for this card.", ""] : []),
-        `(Card ${c.id} on the board ${vaultRel(path)}, list ${list}. Keep it up to date with board_update_card as you work.)`].join("\n"),
+      cardPrompt(c, list),
       target && target.toLowerCase() !== list.toLowerCase() ? () => update(c.id, { list: target }) : undefined,
     );
   };
-  // Puts the card in the queue list, so it waits in the inbox for its turn instead of starting now.
-  const queueCard = async (c: Card) => {
-    if (!board?.queue) {
-      setQueueOpen(true);
+  // Queues the card in the inbox so it waits for its turn instead of starting now: it becomes a request
+  // that runs with what the last task used, or, with nothing to go on, opens New task to choose.
+  const queueCard = async (c: Card, list: string) => {
+    const { project, mode } = lastTaskDefaults();
+    if (!project) {
+      start(c, list);
       return;
     }
-    await update(c.id, { list: board.queue.list });
-    api.boardQueueNow(vault, path).catch(() => {});
+    try {
+      const rel = await api.saveTask(vault, {
+        title: c.title, prompt: cardPrompt(c, list), project, permissionMode: mode, carryChanges: false, worktree: true, autoTitle: false,
+      });
+      await api.inboxQueueRequest(`${vault}/${rel}`, c.title);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
   };
   const link = (c: Card, title: string, file: string) => update(c.id, { note: linkTo(path, title, file) });
   const openLink = (href: string) => {
@@ -227,10 +238,6 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
         </span>
         <span className="spacer" />
         <NewList onAdd={(name) => listOp("add", name)} />
-        {!crew && <button className={board.queue ? "on" : ""} onClick={() => setQueueOpen(true)}
-          title={board.queue ? `Cards in ${board.queue.list} start sessions while Marq runs` : "Let Marq work through a list of cards"}>
-          <ListTodo size={14} /> {board.queue ? `Queue: ${board.queue.list}` : "Queue"}
-        </button>}
         <button onClick={onOpenMarkdown} title="Edit the board as Markdown"><FileText size={14} /> Markdown</button>
       </header>
       {error && <div className="banner error" onClick={() => setError(null)}>{error}</div>}
@@ -276,7 +283,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
               e.preventDefault();
               drop(l.name, drag?.over?.list === l.name ? drag.over.index : l.cards.length);
             }}>
-            <ListHeader onDragStart={() => setDragList({ name: l.name })} onDragEnd={() => { snapshot(); setDragList(null); }} name={l.name} queue={board.queue?.list.toLowerCase() === l.name.toLowerCase()} count={l.cards.length} shown={filtering ? l.cards.filter(shows).length : undefined} first={li === 0} last={li === board.lists.length - 1}
+            <ListHeader onDragStart={() => setDragList({ name: l.name })} onDragEnd={() => { snapshot(); setDragList(null); }} name={l.name} count={l.cards.length} shown={filtering ? l.cards.filter(shows).length : undefined} first={li === 0} last={li === board.lists.length - 1}
               onRename={(to) => listOp("rename", l.name, to)} onMove={(d) => listOp(d < 0 ? "left" : "right", l.name)}
               onRemove={() => listOp("remove", l.name)} />
             <div className="board-cards">
@@ -342,12 +349,11 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
       {openCard && (
         <CardDialog card={openCard.c} list={openCard.list} lists={board.lists.map((l) => l.name)} labels={allLabels} members={crew?.members}
           onUpdate={(ch) => update(openCard.c.id, ch)} onStart={crew ? undefined : () => { start(openCard.c, openCard.list); setOpen(null); }}
-          onQueue={crew ? undefined : () => { void queueCard(openCard.c); setOpen(null); }} queueSet={!!board.queue}
+          onQueue={crew ? undefined : () => { void queueCard(openCard.c, openCard.list); setOpen(null); }}
           onOpenLink={openLink} onLinkNote={() => setLinking(openCard.c)} onNewNote={() => setCreating(openCard.c)}
           onRemove={() => { setOpen(null); run(api.boardRemove(vault, path, openCard.c.id)); }}
           onClose={() => setOpen(null)} />
       )}
-      {queueOpen && <QueueDialog vault={vault} path={path} board={board} onClose={() => { setQueueOpen(false); load(); }} />}
       {linking && (
         <QuickOpen recent={recent} placeholder={`Link a note to ${linking.id}…`}
           files={files.filter((f) => !f.kind || !["board", "crew"].includes(f.kind))
@@ -370,9 +376,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   );
 }
 
-function ListHeader({ name, queue, count, shown, first, last, onRename, onMove, onRemove, onDragStart, onDragEnd }: {
-  /** The board's queue list: its cards start sessions. */
-  queue?: boolean;
+function ListHeader({ name, count, shown, first, last, onRename, onMove, onRemove, onDragStart, onDragEnd }: {
   /** Cards the filter shows, while filtering. */
   shown?: number;
   name: string; count: number; first: boolean; last: boolean;
@@ -407,7 +411,6 @@ function ListHeader({ name, queue, count, shown, first, last, onRename, onMove, 
       }} onDragEnd={onDragEnd}
       onDoubleClick={() => { setValue(name); setEditing(true); }}>
       <span className="board-list-name ellipsis">{name}</span>
-      {queue && <span className="board-queue-badge" title="Cards put here start a session while Marq runs"><Bot size={11} /> queue</span>}
       <span className="count">{shown !== undefined ? `${shown}/${count}` : count}</span>
       <span className="board-list-actions">
         <button className="icon" title="Rename" onClick={() => { setValue(name); setEditing(true); }}><Pencil size={12} /></button>
@@ -421,13 +424,13 @@ function ListHeader({ name, queue, count, shown, first, last, onRename, onMove, 
   );
 }
 
-function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQueue, queueSet, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
+function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQueue, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
   card: Card; list: string; lists: string[];
   /** Every label on the board, offered when adding one. */
   labels: string[];
   onUpdate: (c: Parameters<typeof api.boardUpdate>[3]) => void; onStart?: () => void;
-  /** Puts the card in the board's queue list (or opens the queue settings when there is none). */
-  onQueue?: () => void; queueSet?: boolean;
+  /** Puts the card in the inbox to start when there is room. */
+  onQueue?: () => void;
   /** Crew roles to pick the owner from, instead of typing one. */
   members?: string[];
   onOpenLink: (href: string) => void; onLinkNote: () => void; onNewNote: () => void; onRemove: () => void; onClose: () => void;
@@ -553,8 +556,8 @@ function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQ
             <label className="field-label">Actions</label>
             {onStart && <button className="primary" onClick={onStart}><Sparkles size={13} /> Start a session</button>}
             {onQueue && (
-              <button onClick={onQueue} title={queueSet ? "Put the card in the queue list: it waits in the Inbox and starts when there is room" : "Set up the board's queue first"}>
-                <ListTodo size={13} /> {queueSet ? "Queue" : "Set up queue…"}
+              <button onClick={onQueue} title="Put the card in the Inbox: it starts when there is room, two at a time with schedules">
+                <ListTodo size={13} /> Queue
               </button>
             )}
             <button onClick={onLinkNote}><Link2 size={13} /> Link a note</button>

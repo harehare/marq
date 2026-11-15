@@ -55,6 +55,8 @@ export const SANDBOXES = [
 
 /** The project the last task was started in, where a new terminal opens when nothing else says. */
 export const lastProject = () => stored(PROJECT_KEY, "");
+/** What the last task used, for work that is queued without opening the dialog. */
+export const lastTaskDefaults = () => ({ project: stored(PROJECT_KEY, ""), mode: stored(MODE_KEY, "auto") });
 
 function stored(key: string, fallback: string) {
   try {
@@ -259,6 +261,10 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     setBusy(true);
     setStage(queue ? "Queueing the request…" : "Saving the request…");
     try {
+      try {
+        localStorage.setItem(PROJECT_KEY, project);
+        localStorage.setItem(MODE_KEY, mode);
+      } catch {}
       const rel = await api.saveTask(vault, {
         title: derivedTitle, prompt: withContext(prompt), project, permissionMode: mode, ...runOn, carryChanges: carry, worktree, autoTitle: !title.trim(), ...checks,
       });

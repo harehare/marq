@@ -97,7 +97,7 @@ pub fn render(list: &TaskList) -> String {
             lists.push(boards::List { name: heading(st), cards: cards(st) });
         }
     }
-    boards::render(&boards::Board { head: list.head.clone(), lists, queue: None })
+    boards::render(&boards::Board { head: list.head.clone(), lists })
 }
 
 /// A new list's file.

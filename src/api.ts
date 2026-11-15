@@ -29,18 +29,7 @@ export type SessionHit = {
   note: string; matching_lines: number; matches: { line: number; text: string }[];
 };
 export type Card = { id: string; title: string; done: boolean; owner: string | null; labels: string[]; notes: string[] };
-export type Board = { lists: { name: string; cards: Card[] }[]; queue: Queue | null };
-/** A list marq works through: each card put there starts a session (see automation.rs). */
-export type Queue = {
-  list: string; doing: string; review: string; max: number; project: string;
-  model: string | null; permission_mode: string | null; worktree: boolean;
-  /** A command that checks each card's work after its turn. */
-  verify?: string | null;
-  /** A workspace note whose directories each card's session gets. */
-  workspace?: string | null;
-  /** `on` or `strict`: Bash runs in Claude Code's sandbox. */
-  sandbox?: string | null;
-};
+export type Board = { lists: { name: string; cards: Card[] }[] };
 /** How a request's work is checked and run; see docs/workflows.md. */
 export type TaskChecks = {
   verify?: string; verifyRetry?: "fresh"; verifyRetries?: number; sandbox?: string; phases?: string[]; acceptance?: string;
@@ -303,8 +292,6 @@ export const api = {
   boardCreate: (vault: string, name: string) => invoke<string>("board_create", { vault, name }),
   boardRead: (vault: string, path: string) => invoke<Board>("board_read", { vault, path }),
   boardAdd: (vault: string, path: string, title: string, list?: string) => invoke<Card>("board_add", { vault, path, title, list }),
-  /** Queues the cards waiting in the board's queue list in the inbox now. */
-  boardQueueNow: (vault: string, path: string) => invoke<void>("board_queue_now", { vault, path }),
   boardUpdate: (vault: string, path: string, id: string,
     change: { list?: string; index?: number; owner?: string; title?: string; done?: boolean; labels?: string[]; note?: string; remove_note?: number }) =>
     invoke<Card>("board_update", { vault, path, id, change }),
@@ -312,8 +299,7 @@ export const api = {
   /** `op`: add, rename (to `to`), left, right, move (to index `to`) or remove. */
   boardList: (vault: string, path: string, op: string, name: string, to?: string) =>
     invoke<void>("board_list", { vault, path, op, name, to }),
-  boardSetQueue: (vault: string, path: string, queue: Queue | null) => invoke<void>("board_set_queue", { vault, path, queue }),
-  /** Tells the backend which vault's queues and schedules to run. */
+  /** Tells the backend which vault's schedules and inbox to work on. */
   automationWatch: (vault: string) => invoke<void>("automation_watch", { vault }),
   schedulesList: (vault: string) => invoke<Schedule[]>("schedules_list", { vault }),
   /** `when`: an interval (30m, 2h, 1d) or a daily time (09:00). */

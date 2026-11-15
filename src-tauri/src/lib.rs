@@ -726,9 +726,6 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
             return Err(error::Error::Other(format!("unknown review state: {state}")));
         }
         if let Some(path) = session::set_review(Path::new(&vault), &session_id, &state, None)? {
-            if state == "done" && let Some(board) = automation::card_done(Path::new(&vault), Path::new(&path)) {
-                let _ = app.emit("vault://changed", serde_json::json!({"path": board}));
-            }
             let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
         }
         let _ = app.emit("sessions://changed", &session_id);
@@ -969,12 +966,7 @@ fn board_create(app: AppHandle, vault: String, name: String) -> Result<String> {
     Ok(p.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
-fn board_set_queue(app: AppHandle, vault: String, path: String, queue: Option<boards::Queue>) -> Result<()> {
-    on_board(&app, &vault, &path, |p| boards::set_queue(p, queue))
-}
-
-/// The vault the window has open, for the board queues and schedules.
+/// The vault the window has open, for schedules and the inbox.
 #[tauri::command]
 fn automation_watch(app: AppHandle, vault: String) {
     app.state::<automation::Automation>().watch(&vault);
@@ -1025,13 +1017,6 @@ fn board_add(app: AppHandle, vault: String, path: String, title: String, list: O
 #[tauri::command]
 fn board_update(app: AppHandle, vault: String, path: String, id: String, change: boards::Change) -> Result<boards::Card> {
     on_board(&app, &vault, &path, |p| boards::update(p, &id, change))
-}
-
-/// Queues the cards waiting in the board's queue list now, rather than at the next 30-second tick.
-#[tauri::command]
-fn board_queue_now(app: AppHandle, vault: String, path: String) -> Result<()> {
-    let p = vault::resolve(Path::new(&vault), &path)?;
-    automation::queue_board(&app, &p)
 }
 
 #[tauri::command]
@@ -1282,7 +1267,7 @@ fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktre
 
 /// Sets a request's `status` (todo, running, review, done, dropped).
 #[tauri::command]
-async fn set_note_status(app: AppHandle, vault: String, path: String, status: String) -> Result<()> {
+async fn set_note_status(vault: String, path: String, status: String) -> Result<()> {
     blocking(move || {
         if !["todo", "running", "review", "done", "dropped"].contains(&status.as_str()) {
             return Err(error::Error::Other(format!("unknown status: {status}")));
@@ -1291,9 +1276,6 @@ async fn set_note_status(app: AppHandle, vault: String, path: String, status: St
         let t = std::fs::read_to_string(&p)?;
         let t = vault::fm_set(&t, "status", &status);
         std::fs::write(&p, vault::fm_set(&t, "updated", &vault::now()))?;
-        if status == "done" && let Some(board) = automation::card_done(Path::new(&vault), &p) {
-            let _ = app.emit("vault://changed", serde_json::json!({"path": board}));
-        }
         Ok(())
     })
     .await
@@ -1667,10 +1649,8 @@ pub fn run() {
             board_read,
             board_add,
             board_update,
-            board_queue_now,
             board_remove,
             board_list,
-            board_set_queue,
             automation_watch,
             schedules_list,
             schedule_create,

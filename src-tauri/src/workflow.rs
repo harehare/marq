@@ -22,7 +22,7 @@
 //!
 //! When a session's turn ends, `on_turn_end` runs the check. A failure goes back to the agent (or to a
 //! new session) until it passes or the retries run out; then the session is *settled* and
-//! `workflow://settled` tells the board queue to move its card. A request with phases runs each phase
+//! `workflow://settled` tells `automation` the session's first turn is settled. A request with phases runs each phase
 //! in a new session on the same worktree, and saves each phase's reply in `phases/` for the next one.
 //!
 //! Log lines: `marq_verify` (a check started, passed or failed) and `marq_phase` (a phase finished).
@@ -55,7 +55,7 @@ pub fn normalize_sandbox(v: Option<&str>) -> Option<String> {
     }
 }
 
-/// The sandbox for sessions nobody watches start (board queues, schedules): `[sandbox] unattended`
+/// The sandbox for sessions nobody watches start (schedules): `[sandbox] unattended`
 /// in config.toml.
 pub fn unattended_sandbox() -> Option<String> {
     crate::config::read().ok().and_then(|c| normalize_sandbox(c["sandbox"]["unattended"].as_str()))
@@ -342,7 +342,7 @@ fn retry(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verify, attempt:
     handoff(app, vault, &meta.id, &started.session_id, "retry")
 }
 
-/// Records that `to` carries on `from`'s work, so the queue follows it.
+/// Records that `to` carries on `from`'s work, so what started `from` follows it.
 fn handoff(app: &AppHandle, vault: &Path, from: &str, to: &str, why: &str) -> Result<()> {
     log(app, vault, from, json!({"type": "marq_verify", "stage": "handoff", "session": to, "why": why, "at": vault::now()}))?;
     let _ = app.emit("workflow://handoff", json!({"from": from, "to": to}));
@@ -440,7 +440,7 @@ fn verdict(app: &AppHandle, vault: &Path, check: &SessionMeta, target: &str, eve
 }
 
 /// The session's work is over for now: records the outcome on the request, moves a phased request on,
-/// and tells the queue.
+/// and tells `automation`.
 fn settle(app: &AppHandle, vault: &Path, meta: &SessionMeta, outcome: &str, note: Option<&str>) -> Result<()> {
     if let Some(path) = session::find_origin(vault, meta) {
         let text = std::fs::read_to_string(&path)?;
@@ -697,33 +697,6 @@ pub fn spec_to_board(vault: &Path, spec: &Path) -> Result<(PathBuf, usize)> {
     Ok((board, added))
 }
 
-/// What a card linked to a spec takes from it: the spec as context (without Tasks and Acceptance),
-/// and the keys and acceptance criteria its request inherits.
-pub struct FromSpec {
-    pub context: String,
-    pub frontmatter: Vec<(String, String)>,
-    pub acceptance: Option<String>,
-}
-
-pub const INHERITED_KEYS: [&str; 6] = ["verify", "verify_retries", "verify_retry", "verify_timeout", "verify_model", "sandbox"];
-
-pub fn from_spec(vault: &Path, spec: &Path) -> Option<FromSpec> {
-    let text = std::fs::read_to_string(spec).ok()?;
-    if vault::fm_get(&text, "type").as_deref() != Some("spec") {
-        return None;
-    }
-    let rel = spec.strip_prefix(vault).unwrap_or(spec).to_string_lossy().into_owned();
-    let body = without_sections(vault::split_frontmatter(&text).1, &["Tasks", "Acceptance"]);
-    Some(FromSpec {
-        context: format!("<context source=\"{rel}\">\n{body}\n</context>"),
-        frontmatter: INHERITED_KEYS
-            .iter()
-            .filter_map(|k| Some((k.to_string(), vault::fm_get(&text, k).filter(|v| !v.trim().is_empty())?)))
-            .collect(),
-        acceptance: section(vault::split_frontmatter(&text).1, "Acceptance"),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -796,13 +769,6 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         std::fs::create_dir_all(dir.join("specs")).unwrap();
         let path = dir.join("specs/hover.md");
         std::fs::write(&path, spec.replace("<!-- How to tell it is done. Not shown to the agents doing the tasks: a separate session checks their work against it. -->", "- types show on hover")).unwrap();
-        let from = from_spec(&dir, &path).unwrap();
-        assert!(from.context.contains("## Requirements"));
-        assert!(!from.context.contains("Parse types"));
-        assert!(!from.context.contains("types show on hover"));
-        assert_eq!(from.acceptance.as_deref(), Some("- types show on hover"));
-        assert_eq!(from.frontmatter, [("verify".to_string(), "cargo test".to_string())]);
-
         let (board, added) = spec_to_board(&dir, &path).unwrap();
         assert_eq!(added, 2);
         let b = boards::read(&board).unwrap();

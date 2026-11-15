@@ -202,17 +202,6 @@ pub fn fm_set(text: &str, key: &str, value: &str) -> String {
     }
 }
 
-/// Removes a top-level key; the text is returned as is when it has none.
-pub fn fm_remove(text: &str, key: &str) -> String {
-    match split_frontmatter(text) {
-        (Some(fm), body) => {
-            let lines: Vec<&str> = fm.lines().filter(|l| !l.strip_prefix(key).is_some_and(|r| r.starts_with(':'))).collect();
-            format!("---\n{}\n---\n{}", lines.join("\n"), body)
-        }
-        (None, _) => text.to_string(),
-    }
-}
-
 /// Moves a file to the Trash. On macOS this uses NSFileManager: the crate's default asks Finder
 /// through osascript, which is slow and can wait on an automation permission prompt.
 pub fn move_to_trash(path: &Path) -> Result<()> {

@@ -47,96 +47,6 @@ pub struct Board {
     #[serde(skip)]
     pub head: String,
     pub lists: Vec<List>,
-    /// Set when the board has a queue list; read from the `queue*` frontmatter keys.
-    pub queue: Option<Queue>,
-}
-
-/// A list that marq works through while it runs: each card put there starts a session, moves to
-/// `doing`, and moves on to `review` when the session's turn ends.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Queue {
-    pub list: String,
-    pub doing: String,
-    pub review: String,
-    /// Sessions from this queue running at once.
-    pub max: usize,
-    pub project: String,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub permission_mode: Option<String>,
-    pub worktree: bool,
-    /// A command that checks each card's work after its turn; see `workflow`.
-    #[serde(default)]
-    pub verify: Option<String>,
-    /// `on` or `strict`.
-    #[serde(default)]
-    pub sandbox: Option<String>,
-    /// A workspace note whose directories each card's session gets.
-    #[serde(default)]
-    pub workspace: Option<String>,
-}
-
-/// Frontmatter key for each queue field.
-const QUEUE_KEYS: [&str; 11] = [
-    "queue", "queue_doing", "queue_review", "queue_max", "queue_project", "queue_model", "queue_permission_mode", "queue_worktree",
-    "queue_verify", "queue_sandbox", "queue_workspace",
-];
-
-fn queue_of(head: &str) -> Option<Queue> {
-    let get = |k: &str| vault::fm_get(head, k).filter(|v| !v.is_empty());
-    Some(Queue {
-        list: get("queue")?,
-        doing: get("queue_doing").unwrap_or_else(|| "Doing".into()),
-        review: get("queue_review").unwrap_or_else(|| "Review".into()),
-        max: get("queue_max").and_then(|v| v.parse().ok()).unwrap_or(1).max(1),
-        project: get("queue_project").unwrap_or_default(),
-        model: get("queue_model"),
-        permission_mode: get("queue_permission_mode"),
-        worktree: get("queue_worktree").as_deref() != Some("false"),
-        verify: get("queue_verify"),
-        sandbox: get("queue_sandbox"),
-        workspace: get("queue_workspace"),
-    })
-}
-
-/// Sets the board's queue, or removes it. Lists it names that do not exist yet are added.
-pub fn set_queue(path: &Path, queue: Option<Queue>) -> Result<()> {
-    edit(path, |b| {
-        let q = |s: &str| serde_json::to_string(s.trim()).unwrap();
-        let mut head = b.head.clone();
-        for k in QUEUE_KEYS {
-            head = vault::fm_remove(&head, k);
-        }
-        if let Some(queue) = &queue {
-            if queue.list.trim().is_empty() {
-                return Err(Error::Other("the queue needs a list".into()));
-            }
-            let values = [
-                q(&queue.list),
-                q(&queue.doing),
-                q(&queue.review),
-                queue.max.max(1).to_string(),
-                q(&queue.project),
-                q(queue.model.as_deref().unwrap_or_default()),
-                q(queue.permission_mode.as_deref().unwrap_or_default()),
-                queue.worktree.to_string(),
-                q(queue.verify.as_deref().unwrap_or_default()),
-                q(queue.sandbox.as_deref().unwrap_or_default()),
-                q(queue.workspace.as_deref().unwrap_or_default()),
-            ];
-            for (k, v) in QUEUE_KEYS.iter().zip(values) {
-                head = vault::fm_set(&head, k, &v);
-            }
-            for name in [&queue.list, &queue.doing, &queue.review] {
-                if b.list_index(name).is_err() {
-                    b.lists.push(List { name: name.trim().to_string(), cards: vec![] });
-                }
-            }
-        }
-        b.head = head;
-        Ok(())
-    })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -237,7 +147,6 @@ pub fn parse(text: &str) -> Result<Board> {
             _ => {}
         }
     }
-    b.queue = queue_of(&b.head);
     // Ids for items written by hand.
     let mut next = b.max_id();
     for c in b.lists.iter_mut().flat_map(|l| l.cards.iter_mut()).filter(|c| c.id.is_empty()) {
@@ -333,7 +242,6 @@ pub fn create(vault: &Path, name: &str, lists: &[String]) -> Result<PathBuf> {
             let mut seen = std::collections::HashSet::new();
             names.into_iter().filter(|n| seen.insert(n.to_lowercase())).map(|n| List { name: n.to_string(), cards: vec![] }).collect()
         },
-        queue: None,
     };
     std::fs::write(&path, render(&b))?;
     Ok(path)

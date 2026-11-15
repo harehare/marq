@@ -10,10 +10,10 @@
 //!   session that finishes five turns in a row leaves one entry with the latest result.
 //! - `status` is `pending`, then `done` (handled) or `dismissed` (dropped by the user). Resolved
 //!   events are kept for a while as history and trimmed to the newest `KEEP`.
-//! - `schedule`, `request`, `followup` and `card` (a board card waiting in its queue list) events are work to do rather than news: queued `pending`
+//! - `schedule`, `request` and `followup` events are work to do rather than news: queued `pending`
 //!   (a schedule fell due, the user queued a request, a follow-up timer fired), `running` while a
-//!   worker has it, then `done` or `failed` (which stays until dismissed). Queued schedules,
-//!   follow-ups and cards cannot be dismissed, or they would be queued again at once.
+//!   worker has it, then `done` or `failed` (which stays until dismissed). Queued schedules and
+//!   follow-ups cannot be dismissed, or they would be queued again at once.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -30,7 +30,7 @@ const KEEP: usize = 200;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: String,
-    /// `approval`, `result`, `error`, `schedule`, `request`, `followup` or `card`.
+    /// `approval`, `result`, `error`, `schedule`, `request` or `followup`.
     pub kind: String,
     /// Dedupe key; see the module docs.
     pub source: String,
@@ -99,7 +99,7 @@ fn resolve(events: &mut [Event], status: &str, pred: impl Fn(&Event) -> bool) ->
 
 /// Kinds whose queued events the user cannot dismiss: the source would queue them again.
 fn pinned(kind: &str) -> bool {
-    kind == "schedule" || kind == "followup" || kind == "card"
+    kind == "schedule" || kind == "followup"
 }
 
 fn resolved(e: &Event) -> bool {

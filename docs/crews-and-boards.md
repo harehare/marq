@@ -135,16 +135,11 @@ A board is a Markdown note, `boards/<name>.md` with `type: board`. Each `## ` he
 
 Editing the Markdown is editing the board: moving an item under another heading moves the card, items written without `**T<n>**` get an id on the next save, and moving a card into a list named Done checks it. New boards start with Todo, Doing and Done.
 
-The board tab shows the lists as columns (**Board**) or stacked (**List**). Drag cards between and within lists; lists can be added, renamed, moved and removed when empty. A card can start a session whose prompt names the card. **Markdown** opens the note itself.
+The board tab shows the lists as columns (**Board**) or stacked (**List**). Drag cards between and within lists; lists can be added, renamed, moved and removed when empty. **Markdown** opens the note itself.
 
-### Queue
+Open a card to work on it with an agent:
 
-**Queue** in the board's header lets Marq work through a list on its own while it runs. Pick the queue list (e.g. Agent), the list cards move to while a session works on them (Doing) and the one they move to when its turn ends (Review), how many run at once, the project, permissions and model. Lists that do not exist yet are added.
-
-Every 30 seconds Marq puts the cards in the queue list into the [Inbox](sessions.md#inbox), where they show as **Queued**, and starts them from there, up to the board's limit. **Queue** in a card's dialog puts that card in the queue list and queues it at once, next to **Start a session**, which still starts immediately; on a board with no queue it opens the queue settings. To take a card back, move it out of the queue list; a queued card cannot be dismissed in Inbox. A started card moves to the working list, gets a link to the request note it started, and runs like **Start a session**, in its own worktree unless you turn that off. When the session's turn ends the card moves to the review list, unless the session or you moved it elsewhere already. When you mark the session done (or its request note's status), the card moves to the Done list; until then it waits in review for you to check the result. A card that fails to start goes to the review list with the reason.
-
-**Check** runs a command after each card's turn, and **Sandbox** sandboxes the queue's sessions. A card moves to the review list only after its check has passed or given up. Cards linked to a [spec](workflows.md#specs) also get the spec as context, plus its check, sandbox and acceptance criteria.
-
-The settings are frontmatter keys on the board note (`queue`, `queue_doing`, `queue_review`, `queue_max`, `queue_project`, `queue_model`, `queue_permission_mode`, `queue_worktree`, `queue_verify`, `queue_sandbox`). Nobody watches these sessions start, so with **Ask** permissions they wait for your approval; **Accept edits** or **Auto** lets them get on with it.
+- **Start a session** opens New task with the card as the prompt (its text and linked notes, and where the card lives so the agent keeps it up to date with `board_update_card`). When the session starts, the card moves to a list named Doing, if the board has one.
+- **Queue** puts the card in the [Inbox](inbox.md) as a request, with the project and permissions your last task used, and it starts when there is room. With no earlier task to go on, it opens New task instead.
 
 Agents read and change boards with `list_boards`, `read_board`, `board_add_card`, `board_update_card` and `board_add_list`. See [Vault tools for agents](tools.md).
