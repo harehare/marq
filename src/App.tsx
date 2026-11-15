@@ -5,7 +5,7 @@ import {
   Inbox, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
-  PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft,
+  ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -115,8 +115,56 @@ function loadTabs(vault: string | null): { tabs: Tab[]; active: string | null; s
 
 type Tree = { dirs: Map<string, Tree>; files: FileEntry[] };
 
+/** How notes are ordered in the sidebar. Folders follow the same order, by their newest note when sorting by date. */
+type NoteSort = "name" | "name-desc" | "modified" | "modified-old";
+const NOTE_SORTS: { value: NoteSort; label: string; icon: LucideIcon }[] = [
+  { value: "name", label: "Name (A → Z)", icon: ArrowDownAZ },
+  { value: "name-desc", label: "Name (Z → A)", icon: ArrowUpZA },
+  { value: "modified", label: "Modified (newest first)", icon: Clock },
+  { value: "modified-old", label: "Modified (oldest first)", icon: History },
+];
+const SORT_KEY = "marq.noteSort";
+
+/** The chosen order, remembered across launches. */
+function useNoteSort() {
+  const [sort, setSort] = useState<NoteSort>(() => {
+    try {
+      const v = localStorage.getItem(SORT_KEY);
+      if (NOTE_SORTS.some((s) => s.value === v)) return v as NoteSort;
+    } catch {}
+    return "name";
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_KEY, sort);
+    } catch {}
+  }, [sort]);
+  return [sort, setSort] as const;
+}
+
+/** The newest change under a folder. */
+function newest(t: Tree, memo: Map<Tree, number>): number {
+  let n = memo.get(t);
+  if (n === undefined) {
+    n = Math.max(0, ...t.files.map((f) => f.modified), ...[...t.dirs.values()].map((d) => newest(d, memo)));
+    memo.set(t, n);
+  }
+  return n;
+}
+
+function sortTree(t: Tree, sort: NoteSort, memo = new Map<Tree, number>()) {
+  const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  // +1 is ascending (A → Z, oldest first).
+  const dir = sort === "name" || sort === "modified-old" ? 1 : -1;
+  const date = sort.startsWith("modified");
+  t.files.sort((a, b) => (date && dir * (a.modified - b.modified)) || dir * byName(a.rel, b.rel));
+  const sorted = [...t.dirs].sort((a, b) => (date && dir * (newest(a[1], memo) - newest(b[1], memo))) || dir * byName(a[0], b[0]));
+  t.dirs = new Map(sorted);
+  for (const [, sub] of sorted) sortTree(sub, sort, memo);
+}
+
 /** Folders come from `dirs` too, so empty ones are shown. */
-function buildTree(files: FileEntry[], dirs: string[]): Tree {
+function buildTree(files: FileEntry[], dirs: string[], sort: NoteSort): Tree {
   const root: Tree = { dirs: new Map(), files: [] };
   const dirOf = (parts: string[]) => {
     let node = root;
@@ -128,6 +176,7 @@ function buildTree(files: FileEntry[], dirs: string[]): Tree {
   };
   for (const d of dirs) dirOf(d.split("/"));
   for (const f of files) dirOf(f.rel.split("/").slice(0, -1)).files.push(f);
+  sortTree(root, sort);
   return root;
 }
 
@@ -690,7 +739,8 @@ export default function App() {
     getCurrentWindow().setBadgeCount(n || undefined).catch(() => {});
   }, [unread, sessions]);
 
-  const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
+  const [noteSort, setNoteSort] = useNoteSort();
+  const tree = useMemo(() => buildTree(files, dirs, noteSort), [files, dirs, noteSort]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   // Newest first: their names are the time they were made.
   // Untitled notes are named by what they say, so their tabs follow as the text changes.
@@ -1797,6 +1847,15 @@ export default function App() {
               </button>
               <button className="section-action" title="Collapse all folders" onClick={() => setClosedDirs(new Set(allDirs))}>
                 <ChevronsDownUp size={13} />
+              </button>
+              <button className="section-action" title="Sort notes" onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenu({
+                  x: r.left, y: r.bottom + 4,
+                  items: NOTE_SORTS.map((s) => ({ label: `${s.value === noteSort ? "✓" : "\u2003"} ${s.label}`, icon: s.icon, onClick: () => setNoteSort(s.value) })),
+                });
+              }}>
+                <ArrowDownUp size={13} />
               </button>
               <button className="section-action" title="New folder" onClick={() => setPathDialog({ mode: "folder", initial: "" })}>
                 <FolderPlus size={13} />

@@ -68,6 +68,8 @@ export type FileEntry = {
   path: string; id: string | null; rel: string; title: string | null; kind: string | null; status: string | null;
   /** From the frontmatter `tags:` and `aliases:`. */
   tags: string[]; aliases: string[];
+  /** Last change, in milliseconds since the epoch. */
+  modified: number;
 };
 export type Anchor = { id: string; line: number };
 export type FileResult = { file: string | null; items: string[] };

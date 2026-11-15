@@ -22,6 +22,8 @@ pub struct FileEntry {
     pub tags: Vec<String>,
     /// Other names for the note, from `aliases:`; the thesaurus treats them like its title.
     pub aliases: Vec<String>,
+    /// When the file was last changed, in milliseconds since the epoch; the sidebar can sort by it.
+    pub modified: u64,
 }
 
 /// What a file says about itself, kept until the file changes.
@@ -53,6 +55,7 @@ fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scann
         status: fm_get(&text, "status"),
         tags: fm_list(&text, "tags"),
         aliases: fm_list(&text, "aliases"),
+        modified: stamp.0.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
     };
     let doc = entry.kind.as_deref() == Some("doc");
     Scanned {
