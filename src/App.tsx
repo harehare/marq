@@ -770,7 +770,13 @@ export default function App() {
   const inboxFiles = useMemo(() => files.filter((f) =>
     (f.kind === "request" && f.status === "todo") || (f.kind === "knowledge" && f.status === "draft")), [files]);
   // Done and dismissed events are history; queued, running and failed ones are still open.
-  const openEvents = useMemo(() => inboxEvents.filter((e) => e.status === "pending" || e.status === "running" || e.status === "failed"), [inboxEvents]);
+  // A result or error of a session that was marked done or deleted needs nothing more.
+  const openEvents = useMemo(() => inboxEvents.filter((e) => {
+    if (e.status !== "pending" && e.status !== "running" && e.status !== "failed") return false;
+    if (e.kind !== "result" && e.kind !== "error") return true;
+    const s = sessions.find((x) => x.id === e.session_id);
+    return sessions.length === 0 || (!!s && !s.review);
+  }), [inboxEvents, sessions]);
   // Requests already queued show as their event, not twice.
   const waitingFiles = useMemo(() => inboxFiles.filter((f) => !openEvents.some((e) => e.kind === "request" && e.source === f.path)), [inboxFiles, openEvents]);
   const inboxCount = openEvents.length + waitingFiles.length;
@@ -1821,7 +1827,12 @@ export default function App() {
           {groups.map((g) => (
             <Collapsible key={g.key} title={g.label} panel="sessions" count={g.items.length}
               action={<button className="section-action" title={`Mark all ${g.items.length} as done`}
-                onClick={() => Promise.all(g.items.map((s) => api.setSessionReview(vault!, s.id, "done"))).then(refresh, refresh)}>
+                onClick={() => {
+                  const ids = new Set(g.items.map((s) => s.id));
+                  // Leave the list at once; the saves and the diffstats behind them take a moment.
+                  setSessions((all) => all.map((s) => (ids.has(s.id) ? { ...s, review: "done" } : s)));
+                  Promise.all([...ids].map((id) => api.setSessionReview(vault!, id, "done"))).then(refresh, refresh);
+                }}>
                 <CheckCheck size={13} /></button>}>
               {g.items.map((s) => (
                 <a key={s.id} className={`session-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
