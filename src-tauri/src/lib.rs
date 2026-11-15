@@ -5,8 +5,10 @@ mod config;
 mod crew;
 mod error;
 mod git;
+mod inbox;
 mod knowledge;
 mod links;
+mod memory;
 mod mq;
 mod navigation;
 mod organize;
@@ -17,6 +19,7 @@ mod session;
 mod shell;
 mod tasks;
 mod terminal;
+mod timers;
 mod thesaurus;
 mod sidecar;
 mod vault;
@@ -1628,8 +1631,10 @@ pub fn run() {
         .manage(Runner::default())
         .manage(terminal::Terminals::default())
         .manage(automation::Automation::default())
+        .manage(inbox::Inbox::default())
         .setup(|app| {
             automation::start(app.handle());
+            inbox::start(app.handle());
             // Resolving `claude` and `node` through the login shell and starting Node take a few
             // seconds, so do it now instead of on the first run.
             let handle = app.handle().clone();
@@ -1705,6 +1710,10 @@ pub fn run() {
             delete_session,
             delete_note,
             set_note_status,
+            inbox::inbox_list,
+            inbox::inbox_resolve,
+            inbox::inbox_clear,
+            inbox::inbox_queue_request,
             list_dirs,
             create_folder,
             move_path,

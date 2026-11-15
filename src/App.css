@@ -876,6 +876,14 @@ kbd {
   background: var(--bg-raised); border: 1px solid var(--border); margin-bottom: 4px;
 }
 .inbox-row:hover, .inbox-row.on { border-color: var(--border-strong); box-shadow: var(--shadow); }
+.inbox-row.ib-approval { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.inbox-row:is(.ib-schedule, .ib-request, .ib-card):is(.ib-pending, .ib-running), .inbox-row.ib-followup.ib-running { opacity: 0.8; }
+.inbox-row.ib-error, .inbox-row.ib-failed { border-color: color-mix(in srgb, var(--err) 55%, transparent); }
+.inbox-row .dot { flex: none; }
+.inbox-text { display: flex; flex-direction: column; min-width: 0; flex: 1; font-size: 12.5px; color: var(--fg-strong); }
+.inbox-sub { font-size: 11px; color: var(--muted); }
+.inbox-row .row-action { padding: 2px; opacity: 0; flex: none; }
+.inbox-row:hover .row-action { opacity: 1; }
 /* Long names wrap to a second line instead of being cut; icons stay on the first line. */
 .tree-row {
   position: relative; display: flex; align-items: flex-start; gap: 6px; padding: 4px 8px; border-radius: 0;

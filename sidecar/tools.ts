@@ -125,6 +125,19 @@ export function vaultServer(sessionId: string, crew: boolean) {
           "tags: a few topic tags, using the glossary's terms where it has them.",
         { title: z.string(), content: z.string(), folder: z.string().optional(), path: z.string().optional(), tags: z.array(z.string()).optional() },
         async (a) => text(await rpc("write_doc", { ...a, session: sessionId }))),
+      tool("set_progress",
+        "Save short progress notes for this session, replacing the earlier ones: what is done, what is left, where you stopped and what to do next. " +
+          "They are given back to you at the start of every later run of this session, even after the conversation is compacted. " +
+          "Keep only what you could not look up again (decisions, ids, partial results), not copies of files or notes. Empty text clears them.",
+        { text: z.string() }, async (a) => text(await rpc("set_progress", { ...a, session: sessionId }))),
+      tool("set_followup",
+        "Ask to be resumed later in this session, e.g. to check a CI run or see whether someone replied. after is how long to wait: 5m, 2h, 1d or 1w (at least five minutes). " +
+          "note is what you will be told when it fires, so write what to check and what to do next. It fires once, and only when you are idle. Then end your turn instead of waiting.",
+        { after: z.string(), note: z.string() }, async (a) => text(await rpc("set_followup", { ...a, session: sessionId }))),
+      tool("list_followups", "The follow-ups this session has waiting, soonest first, with their ids.",
+        {}, async () => text(await rpc("list_followups", { session: sessionId }))),
+      tool("cancel_followup", "Cancel a follow-up of this session that has not fired yet.",
+        { id: z.string() }, async (a) => text(await rpc("cancel_followup", { ...a, session: sessionId }))),
       tool("append_learning", "Record a reusable learning (a gotcha, decision or fact worth remembering) in this session's notes.",
         { text: z.string() }, async (a) => text(await rpc("append_learning", { ...a, session: sessionId }))),
       tool("list_notes", "List folders and notes in the user's vault (path, title, type, status). folder narrows it to one folder.",
@@ -159,7 +172,7 @@ export function vaultServer(sessionId: string, crew: boolean) {
 // move_note and trash_note change the user's notes, so they ask too.
 // Crew messages are pre-approved too: the crew's hop limit, not an approval card, keeps them in check.
 // crew_add_member asks, since every member is another session to pay for.
-export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "list_sessions", "search_sessions", "read_session",
+export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
   "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);

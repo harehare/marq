@@ -10,7 +10,7 @@ import {
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { LucideIcon } from "lucide-react";
-import { api, FileEntry, Schedule, SessionInfo } from "./api";
+import { api, FileEntry, InboxEvent, Schedule, SessionInfo } from "./api";
 import { ScheduleDialog } from "./AutomationDialogs";
 import { setVaultFiles } from "./wikilinks";
 import { NoteEditor } from "./NoteEditor";
@@ -444,6 +444,11 @@ const UNCAPPED = 4000;
 /** The icon-only sidebar: `panel` is the list open over the content, null while all are closed. */
 const RailContext = createContext<{ rail: boolean; panel: string | null }>({ rail: false, panel: null });
 
+/** Queued schedules, follow-ups and cards come back at once if dismissed (move a card out of its queue list instead), so only the rest can be. */
+function dismissable(e: InboxEvent) {
+  return e.status === "failed" || (e.status === "pending" && e.kind !== "schedule" && e.kind !== "followup" && e.kind !== "card");
+}
+
 function Collapsible({ title, icon, count, children, defaultOpen = true, action, size, fill, panel }: {
   /** Which icon of the icon-only sidebar opens this section. */
   panel?: string;
@@ -689,6 +694,19 @@ export default function App() {
     };
   }, []);
 
+  // ---- inbox: what waits for you ----
+  const [inboxEvents, setInboxEvents] = useState<InboxEvent[]>([]);
+  const loadInbox = useCallback(() => {
+    if (vault) api.inboxList(vault).then(setInboxEvents).catch(() => {});
+  }, [vault]);
+  useEffect(() => {
+    loadInbox();
+    const un = listen("inbox://changed", loadInbox);
+    return () => {
+      un.then((f) => f());
+    };
+  }, [loadInbox]);
+
   // ---- notifications and unread results ----
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const watch = useRef({ sessions, active });
@@ -740,6 +758,14 @@ export default function App() {
   }, [unread, sessions]);
 
   const [noteSort, setNoteSort] = useNoteSort();
+  // Requests waiting to run, and knowledge notes an agent wrote that nobody has checked yet.
+  const inboxFiles = useMemo(() => files.filter((f) =>
+    (f.kind === "request" && f.status === "todo") || (f.kind === "knowledge" && f.status === "draft")), [files]);
+  // Done and dismissed events are history; queued, running and failed ones are still open.
+  const openEvents = useMemo(() => inboxEvents.filter((e) => e.status === "pending" || e.status === "running" || e.status === "failed"), [inboxEvents]);
+  // Requests already queued show as their event, not twice.
+  const waitingFiles = useMemo(() => inboxFiles.filter((f) => !openEvents.some((e) => e.kind === "request" && e.source === f.path)), [inboxFiles, openEvents]);
+  const inboxCount = openEvents.length + waitingFiles.length;
   const tree = useMemo(() => buildTree(files, dirs, noteSort), [files, dirs, noteSort]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   // Newest first: their names are the time they were made.
@@ -985,6 +1011,10 @@ export default function App() {
 
   const openSession = (id: string, title: string) => {
     openTab({ key: `session:${id}`, kind: "session", id, title });
+    // Looking at a session handles what it had waiting, except an approval, which needs an answer.
+    if (inboxEvents.some((e) => e.session_id === id && e.kind !== "approval")) {
+      api.inboxResolve({ sessionId: id }).catch(() => {});
+    }
     refresh();
   };
 
@@ -1652,6 +1682,7 @@ export default function App() {
           <button className="rail-btn accent" title="New task (⌘N)" onClick={() => setShowNewTask(true)}><Plus size={18} /></button>
           <span className="rail-sep" />
           {([
+            ...(inboxCount ? [["inbox", "Inbox", Inbox, inboxCount] as [string, string, LucideIcon, number]] : []),
             ["active", "Active", Activity, activeSessions.length],
             ...(groups.length ? [["sessions", "Needs review", GitPullRequest, groups.reduce((n, g) => n + g.items.length, 0)] as [string, string, LucideIcon, number]] : []),
             ["recent", "Recent", History, 0],
@@ -1710,6 +1741,47 @@ export default function App() {
           <button onClick={() => openTerminal(terminalCwd())} title="Terminal in the project New task last used (the vault if none)"><SquareTerminal size={14} /> Terminal</button>
         </div>
         <div className="side-scroll">
+          {inboxCount > 0 && (
+            <Collapsible title="Inbox" panel="inbox" icon={<Inbox size={11} />} count={inboxCount}
+              action={openEvents.some((e) => dismissable(e)) ? (
+                <button className="row-action" title="Dismiss all" onClick={(e) => { e.stopPropagation(); api.inboxClear(); }}><X size={12} /></button>
+              ) : undefined}>
+              {openEvents.map((e) => {
+                const s = sessions.find((x) => x.id === e.session_id);
+                const work = e.kind === "schedule" || e.kind === "request" || e.kind === "followup" || e.kind === "card";
+                const sub = work
+                  ? e.status === "pending" ? (e.kind === "followup" ? `Follow-up due${e.body ? ` · ${summary(e.body, 50)}` : ""}` : "Queued")
+                    : e.status === "running" ? "Starting…" : `Failed${e.body ? ` · ${summary(e.body, 60)}` : ""}`
+                  : e.kind === "result" ? summary(e.body, 80) || e.title
+                  : !s ? summary(e.body, 80) || e.title : `${e.title}${e.body ? ` · ${summary(e.body, 60)}` : ""}`;
+                const dot = work ? (e.status === "failed" ? "error" : "status-todo") : e.kind === "approval" ? "waiting" : e.kind === "error" ? "error" : "status-review";
+                return (
+                  <a key={e.id} className={`inbox-row ib-${e.kind} ib-${e.status}`} title={e.body || e.title}
+                    onClick={() => (e.session_id ? openSession(e.session_id, s?.title ?? "Session") : e.kind !== "followup" && openNote(e.kind === "card" ? e.source.slice(0, e.source.lastIndexOf("#")) : e.source))}>
+                    <span className={`dot ${dot}`} />
+                    <span className="inbox-text">
+                      <span className="ellipsis">{work ? e.title : s?.title ?? e.title}</span>
+                      <span className="inbox-sub ellipsis">{sub}</span>
+                    </span>
+                    {dismissable(e) && (
+                      <button className="row-action" title="Dismiss" onClick={(ev) => { ev.stopPropagation(); api.inboxResolve({ id: e.id, status: "dismissed" }); }}><X size={12} /></button>
+                    )}
+                  </a>
+                );
+              })}
+              {waitingFiles.map((f) => (
+                <a key={f.path} className={`inbox-row ${current?.kind === "note" && current.path === f.path ? "on" : ""}`}
+                  onClick={() => openNote(f.path)} onContextMenu={(e) => fileMenu(e, f)}>
+                  <span className={`pill status-${f.status}`}>{f.status}</span>
+                  <span className="ellipsis">{fileLabel(f)}</span>
+                  {f.kind === "request" && (
+                    <button className="row-action" title="Queue: start it when there is room"
+                      onClick={(ev) => { ev.stopPropagation(); api.inboxQueueRequest(f.path, fileLabel(f)); }}><Play size={12} /></button>
+                  )}
+                </a>
+              ))}
+            </Collapsible>
+          )}
           <Collapsible title="Active" panel="active" count={activeSessions.length}
             icon={activeSessions.length ? <span className={`dot ${activeSessions[0].status}`} /> : undefined}>
             {activeByProject.map(([project, list]) => (

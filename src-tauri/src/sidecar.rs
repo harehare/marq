@@ -19,7 +19,7 @@ use crate::agents;
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
-use crate::{boards, crew, knowledge, links, mq, organize, relay, vault, workflow, workspace};
+use crate::{boards, crew, knowledge, links, memory, mq, organize, relay, vault, workflow, workspace};
 
 /// How a turn reaches the agent.
 #[derive(Clone, Copy, PartialEq)]
@@ -104,7 +104,9 @@ notes, belong in the vault: save them with the marq write_doc tool, not as files
 To revise one, call write_doc again with its path. Only put a document in the repository when the user asks for \
 that, or when it is part of the code (README, docs the project ships, code comments). \
 Mention the saved path in your reply.\n\n\
-When you learn something worth keeping (a gotcha, a decision, a fact about the codebase), record it with append_learning.\n\n\
+When you learn something worth keeping (a gotcha, a decision, a fact about the codebase), record it with append_learning. \
+On a long task, or one you will come back to after a follow-up, keep short progress notes with set_progress (done, left, where you stopped); \
+they are given back to you at every later run, even after the conversation is compacted.\n\n\
 When the user asks you to organize their notes, use list_notes to see the vault, create_folder for new folders, \
 and move_note to move or rename notes and folders; it keeps relative links between notes working. \
 Leave sessions/ alone, since Marq manages it.\n\n\
@@ -117,6 +119,7 @@ with a lead that forms the team and runs it. The user approves it. Do small and 
 fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Value {
     let mut system = SYSTEM_APPEND.to_string();
     let mut dirs = vec![];
+    system.push_str(&memory::system_prompt(vault, &meta.id));
     system.push_str(&knowledge::for_project(vault, meta.project()));
     if let Some(c) = &meta.crew {
         system.push_str(&crew::system_prompt(vault, c));
@@ -613,6 +616,16 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             let _ = app.emit("vault://changed", json!({"path": vault.join(&doc.rel)}));
             Ok(json!({"saved": doc.rel, "created": doc.created}))
         }
+        "set_progress" => {
+            memory::set_progress(vault, session, &s("text"))?;
+            Ok(json!("Saved. You get these notes back at the start of every later run of this session."))
+        }
+        "set_followup" => {
+            let t = crate::timers::add(vault, session, &s("after"), &s("note"), chrono::Local::now())?;
+            Ok(json!({"id": t.id, "due": t.due, "note": "You will be resumed with your note when it is due. Do not wait or poll; end your turn."}))
+        }
+        "list_followups" => Ok(json!(crate::timers::waiting(vault, session))),
+        "cancel_followup" => Ok(json!({"cancelled": crate::timers::cancel(vault, session, &s("id"))?})),
         "append_learning" => {
             session::append_learning(vault, session, &s("text"))?;
             Ok(json!("recorded"))

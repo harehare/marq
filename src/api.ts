@@ -254,6 +254,13 @@ export const api = {
   /** Moves or renames a note or folder (relative paths) and rewrites relative links. */
   movePath: (vault: string, from: string, to: string) =>
     invoke<{ to: string; moved: { from: string; to: string }[]; relinked: string[] }>("move_path", { vault, from, to }),
+  inboxList: (vault: string) => invoke<InboxEvent[]>("inbox_list", { vault }),
+  /** Marks one event, or every pending event of a session, as done or dismissed. */
+  inboxResolve: (a: { id?: string; sessionId?: string; status?: "done" | "dismissed" }) =>
+    invoke<void>("inbox_resolve", { id: a.id ?? null, sessionId: a.sessionId ?? null, status: a.status ?? "done" }),
+  /** Queues a request saved for later; it starts when there is room. */
+  inboxQueueRequest: (path: string, title: string) => invoke<boolean>("inbox_queue_request", { path, title }),
+  inboxClear: () => invoke<void>("inbox_clear"),
   setNoteStatus: (vault: string, path: string, status: string) => invoke<void>("set_note_status", { vault, path, status }),
   recentProjects: (vault: string) => invoke<string[]>("recent_projects", { vault }),
   /** `crewId` is the crew note's id or vault-relative path. */
@@ -337,3 +344,17 @@ export const api = {
 export const INBOX_QUERY = `import "yaml"
 | let fm = yaml::yaml_parse(to_text(first(.)))
 | if (fm["status"] == "todo"): s"\${fm["title"]}"`;
+
+/** Something that wants your attention, kept in the vault's `.marq/inbox.json` until handled. */
+export type InboxEvent = {
+  id: string;
+  kind: "approval" | "result" | "error" | "schedule" | "request" | "followup" | "card";
+  title: string;
+  body: string;
+  session_id: string | null;
+  /** For a schedule or request, the path of its note; for a card, the board's path, `#` and the card id. */
+  source: string;
+  status: "pending" | "running" | "failed" | "done" | "dismissed";
+  created: string;
+  updated: string;
+};
