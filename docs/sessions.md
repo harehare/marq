@@ -23,7 +23,11 @@ A session from Ask starts with the section's heading as its title and is renamed
 - The task is saved as a request note in `requests/` first, so every task stays in the vault.
 - Choose **Team** to run it as a [crew](crews-and-boards.md) from the start.
 
-**Save for later** in the New task dialog saves the task as a request note without running it. You can also write a request by hand: set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started show a dot in the Notes tree and in the Query tab's Inbox preset. Right-click one to mark it done, drop it, or move it back to todo.
+**Save for later** in the New task dialog saves the task as a request note without running it. You can also write a request by hand: set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started show a dot in the Notes tree, and are listed in **Inbox** and in the Query tab's Inbox preset. Right-click one to mark it done, drop it, or move it back to todo.
+
+## Inbox
+
+Requests saved for later are listed in **Inbox** with a ▶ **Queue** button. Schedules, queued requests, board cards and agents' follow-ups wait there for room to run, together with what needs your attention. See [Inbox and follow-ups](inbox.md).
 
 ## Workspaces
 

@@ -9,7 +9,7 @@
 
 Run coding agents in parallel, and keep every prompt, session, task and doc they produce as Markdown in your vault, ready to search, query, and hand to the next agent.
 
-<img src="site/assets/demo.gif" width="860" alt="Marq running a request that queries the vault and works in its own worktree, then a crew of three agents splitting and reviewing a task"/>
+<img src="site/assets/demo.gif" width="860" alt="Marq's inbox with a request queued and started, then the agent working in its own worktree, then a crew of three agents splitting and reviewing a task"/>
 
 </div>
 
@@ -29,7 +29,9 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 - **Crews.** Several sessions work on one project as a team by role, with a shared task list. Kanban boards are Markdown too.
 - **Checks, phases and specs.** A request can run a command after each turn and send failures back to the agent (or to a fresh session), have a separate session check hidden acceptance criteria, run as research → plan → implement with a fresh context per phase, and run in Claude Code's sandbox. Specs break down into board cards that a queue runs with those checks.
 - **Compare agents and models.** Run one task on 2 to 4 runs, Claude models or other agents such as Codex, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
-- **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar.
+- **Inbox and queues.** What needs you (approvals, errors, finished turns) and what waits its turn to run (schedules, requests you queue, board cards) sit in one Inbox that survives a restart. Work starts from it a couple at a time, and a failure stays visible until you dismiss it.
+- **Follow-ups and memory.** An agent can set a follow-up for itself ("check the CI run in 30 minutes") and is resumed with its own note when it falls due. Standing instructions (`instructions.md`) and the agent's progress notes carry over between runs.
+- **Notifications.** A system notification and a Dock badge when a session finishes, stops with an error or needs an approval, and an unread marker in the sidebar. Bursts are combined into one.
 - **Approvals and resume.** Tool calls that need permission show an approval card. Interrupted sessions can be resumed, and you can send follow-ups while an agent is working.
 - **Terminal tabs** next to your sessions, for dev servers and builds.
 - **Claude, Ollama and ACP agents.** Use your own `claude` login, a local model served by Ollama, or another agent that speaks ACP (Gemini CLI, Codex, OpenCode, Qwen Code, Goose).
@@ -91,6 +93,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | [Getting started](docs/getting-started.md) | Install, open a vault, your first session, the sidebar |
 | [Vault and file formats](docs/vault.md) | Folder layout, frontmatter, anchors, result blocks, session files |
 | [Sessions](docs/sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume, sending text |
+| [Inbox and follow-ups](docs/inbox.md) | What waits for you, queued work, agents' follow-ups, standing instructions, notifications |
 | [mq queries](docs/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
 | [Crews and boards](docs/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
 | [Workflows](docs/workflows.md) | Checks after each turn, acceptance criteria, phases, the sandbox, specs, skills |

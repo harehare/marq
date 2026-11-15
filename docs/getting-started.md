@@ -37,6 +37,7 @@ To work on a repository instead, press ⌘N for **New task**. See [Sessions](ses
 
 | Section | Contents |
 | --- | --- |
+| Inbox | What waits for you (approvals, errors, finished turns, requests saved for later) and what waits its turn to run. See [Inbox and follow-ups](inbox.md) |
 | Notes | The folder tree. Create, rename, move and drag notes and folders; relative links are rewritten |
 | Needs you | Sessions waiting for an approval |
 | Needs review | Stopped sessions with changes in their worktree and no review state |

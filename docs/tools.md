@@ -27,6 +27,17 @@ Moving never overwrites, never leaves the vault, and refuses `sessions/` and dot
 | `read_session(session_id)` | no | Another session's status, first prompt and latest result |
 | `send_to_session(session_id, text, reply?)` | yes | Send a message to another session. Messages start with "Message from another Marq session". With `reply` (default true), the answer to it comes back as a new message when that session finishes the turn |
 
+## Follow-ups and progress
+
+| Tool | Approval | Description |
+| --- | --- | --- |
+| `set_followup(after, note)` | no | Resume this session later: `after` is `5m`, `2h`, `1d` or `1w` (at least five minutes), `note` is what to check and do. Fires once, when the session is idle; five waiting at most |
+| `list_followups()` | no | This session's waiting follow-ups, soonest first, with ids |
+| `cancel_followup(id)` | no | Cancel a follow-up that has not fired |
+| `set_progress(text)` | no | Save progress notes for this session, replacing the earlier ones; given back at every later run. Empty text clears them |
+
+See [Inbox and follow-ups](inbox.md).
+
 ## Boards
 
 | Tool | Approval | Description |

@@ -17,10 +17,12 @@ The Markdown files in the vault are the source of truth. There is no database to
 ├─ specs/<slug>.md                    # specs: requirements, design, tasks, acceptance
 ├─ workspaces/<slug>.md               # sets of directories to pick for tasks
 ├─ phases/<request>-<phase>.md        # each phase's reply, for the phases after it
-└─ queries/*.mq                       # saved mq queries
+├─ queries/*.mq                       # saved mq queries
+├─ instructions.md                    # standing instructions every session reads
+└─ .marq/                             # inbox.json, timers.json, progress/<session>.md (see Inbox)
 ```
 
-Only `sessions/` and dot folders belong to Marq. Everything else can be edited or moved freely, by you or by other editors.
+Only `sessions/` and dot folders belong to Marq; `instructions.md` is yours, and [Inbox and follow-ups](inbox.md) says what `.marq/` holds. Everything else can be edited or moved freely, by you or by other editors.
 
 ## IDs
 
