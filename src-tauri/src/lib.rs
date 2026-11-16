@@ -808,6 +808,19 @@ async fn session_remove_worktree(vault: String, session_id: String, repo: Option
     blocking(move || git::remove(&worktree_of(&vault, &session_id, repo.as_deref())?)).await
 }
 
+/// Drops what an environment note's `resources:` made for the session. Returns what could not be dropped.
+/// Not part of removing a worktree, which can be done by hand while the session goes on.
+#[tauri::command]
+async fn session_release_resources(app: AppHandle, vault: String, session_id: String) -> Result<Vec<String>> {
+    blocking(move || {
+        if app.state::<Runner>().is_alive(&session_id) {
+            return Err(error::Error::Other("the session is still running".into()));
+        }
+        Ok(sidecar::release_resources(&app, Path::new(&vault), &session_id))
+    })
+    .await
+}
+
 /// Opens a path in Finder or VS Code, or reveals a file in Finder.
 #[tauri::command]
 async fn open_in(path: String, app: String) -> Result<()> {
@@ -1813,6 +1826,7 @@ pub fn run() {
             session_push_cwd,
             set_session_review,
             session_remove_worktree,
+            session_release_resources,
             session_rename_branch,
             delete_session,
             delete_note,

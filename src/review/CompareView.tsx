@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { ChevronRight, ExternalLink, Loader2, Trophy } from "lucide-react";
 import { AgentInfo, api, Changes, SessionInfo } from "../api";
 import { DiffView } from "./DiffView";
@@ -99,6 +99,11 @@ export function CompareView({ vault, ids, sessions, onOpenSession, onChanged }: 
     setPending(true);
     try {
       await Promise.all(others.map((r) => api.sessionRemoveWorktree(vault, r.id)));
+      // A database or the like made for a run that was not kept goes with its worktree.
+      const failed = (await Promise.all(others.map((r) => api.sessionReleaseResources(vault, r.id).catch((e) => [String(e)])))).flat();
+      if (failed.length) {
+        await message(`The other runs' worktrees were removed, but some of their resources were not dropped:\n\n${failed.join("\n")}`, { title: "Resources", kind: "warning" });
+      }
       onChanged();
       onOpenSession(winner.id, winner.title);
     } catch (e) {

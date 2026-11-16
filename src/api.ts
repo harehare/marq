@@ -238,6 +238,8 @@ export const api = {
     invoke<string>("session_create_pr", { vault, sessionId, message, repo }),
   sessionRenameBranch: (vault: string, sessionId: string, branch: string, repo?: string) =>
     invoke<Worktree>("session_rename_branch", { vault, sessionId, branch, repo }),
+  /** What an environment note's resources made for the session is dropped; returns what could not be. */
+  sessionReleaseResources: (vault: string, sessionId: string) => invoke<string[]>("session_release_resources", { vault, sessionId }),
   sessionRemoveWorktree: (vault: string, sessionId: string, repo?: string) => invoke<void>("session_remove_worktree", { vault, sessionId, repo }),
   listWorkspaces: (vault: string) => invoke<Workspace[]>("list_workspaces", { vault }),
   /** Saves the directories as `workspaces/<title>.md`; returns its path. */
