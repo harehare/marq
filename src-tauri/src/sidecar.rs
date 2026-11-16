@@ -938,6 +938,47 @@ mod tests {
         let first = |id: &str| session_env(id, None)["MARQ_PORT_1"].as_str().unwrap().to_string();
         assert_ne!(first("0192f1c2-aaaa-7000-8000-123456789abc"), first("0192f1c2-bbbb-7000-8000-fedcba987654"));
     }
+
+    #[test]
+    fn a_trusted_resource_sets_its_variables_and_an_untrusted_one_does_not() {
+        let id = "0192f1c2-aaaa-7000-8000-123456789abc";
+        let note = "---\nresources:\n  db:\n    create: make {id}\n    drop: rm {id}\n    env:\n      DATABASE_URL: pg://app_{id}\n---\n";
+        assert_eq!(session_env(id, Some(&environment::parse(note, "n", true)))["DATABASE_URL"], "pg://app_56789abc");
+        assert!(session_env(id, Some(&environment::parse(note, "n", false))).get("DATABASE_URL").is_none());
+    }
+
+    #[test]
+    fn every_session_gets_four_consecutive_aligned_ports_in_range() {
+        for i in 0..2000u32 {
+            let id = format!("0192f1c2-{i:04x}-7000-8000-{:012x}", u64::from(i) * 7919);
+            let a = session_env(&id, None);
+            let ports: Vec<u32> = (1..=4).map(|n| a[format!("MARQ_PORT_{n}")].as_str().unwrap().parse().unwrap()).collect();
+            assert!(ports[0] >= 20000 && ports[3] < 30000, "{ports:?}");
+            assert!(ports.windows(2).all(|w| w[1] == w[0] + 1));
+            assert_eq!(ports[0] % 4, 0);
+        }
+    }
+
+    #[test]
+    fn named_ports_follow_the_order_and_stay_within_the_reserved_four() {
+        let id = "0192f1c2-aaaa-7000-8000-123456789abc";
+        let e = environment::parse("---\nports: [a, b, c, d, e]\n---\n", "n", false);
+        let a = session_env(id, Some(&e));
+        for (n, name) in ["A", "B", "C", "D"].iter().enumerate() {
+            assert_eq!(a[format!("MARQ_PORT_{name}")], a[format!("MARQ_PORT_{}", n + 1)]);
+        }
+        assert!(a.get("MARQ_PORT_E").is_none());
+    }
+
+    #[test]
+    fn a_users_own_note_may_set_any_variable() {
+        let id = "0192f1c2-aaaa-7000-8000-123456789abc";
+        let plain = session_env(id, None);
+        // A vault note is the user's own, so nothing stops it; this pins that.
+        let e = environment::parse("---\nvars:\n  MARQ_SESSION_ID: mine\n---\n", "n", true);
+        assert_eq!(session_env(id, Some(&e))["MARQ_SESSION_ID"], "mine");
+        assert_eq!(plain["MARQ_SESSION_ID"], "56789abc");
+    }
     /// Commands call `spawn` from the main thread, which has no tokio runtime of its own.
     #[test]
     #[cfg(unix)] // runs `true`

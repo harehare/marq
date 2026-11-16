@@ -258,4 +258,203 @@ mod tests {
         let e = environment::parse("---\nresources:\n  db:\n    create: createdb app\n    drop: dropdb app_{id}\n---\n", "n.md", true);
         assert!(e.resources.is_empty() && e.invalid.len() == 1, "{:?}", e.invalid);
     }
+
+    fn env2(yaml: &str) -> Environment {
+        environment::parse(&format!("---\nresources:\n{yaml}---\n"), "n.md", true)
+    }
+
+    #[test]
+    fn a_bad_session_id_has_no_ledger() {
+        let vault = tempfile::tempdir().unwrap();
+        for bad in ["", "../x", "a/b", "a b"] {
+            assert!(ledger_path(vault.path(), bad).is_err(), "{bad}");
+            assert!(ledger(vault.path(), bad).is_empty());
+        }
+        assert!(ledger_path(vault.path(), ID).is_ok());
+    }
+
+    #[test]
+    fn a_corrupt_ledger_reads_as_empty() {
+        let vault = tempfile::tempdir().unwrap();
+        let p = ledger_path(vault.path(), ID).unwrap();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{nope").unwrap();
+        assert!(ledger(vault.path(), ID).is_empty());
+    }
+
+    #[test]
+    fn the_ledger_survives_a_restart_and_an_empty_one_is_deleted() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let e = env(dir.path(), "'true {id}'", "'true {id}'");
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        let p = ledger_path(vault.path(), ID).unwrap();
+        assert!(p.exists());
+        assert!(release(vault.path(), ID, &json!({}), &no_progress).is_empty());
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn the_id_in_the_command_is_the_short_one_and_the_session_variables_are_set() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_string_lossy();
+        let e = env(dir.path(), &format!("'echo $MARQ_SESSION_ID-$MARQ_PORT_1-{{id}} > {d}/out'"), "'true {id}'");
+        provision(vault.path(), ID, dir.path(), &e, &json!({"MARQ_SESSION_ID": "56789abc", "MARQ_PORT_1": "20004"}), &no_progress).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("out")).unwrap().trim(), "56789abc-20004-56789abc");
+    }
+
+    #[test]
+    fn create_runs_in_the_session_directory() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let e = env(dir.path(), "'pwd > where_{id}'", "'true {id}'");
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        assert!(dir.path().join("where_56789abc").exists());
+    }
+
+    #[test]
+    fn resources_are_made_in_order_and_the_first_failure_stops_the_rest() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let e = env2("  a:\n    create: 'touch a_{id}'\n    drop: 'true {id}'\n  b:\n    create: 'exit 2 # {id}'\n    drop: 'true {id}'\n  c:\n    create: 'touch c_{id}'\n    drop: 'true {id}'\n");
+        assert_eq!(e.resources.len(), 3);
+        let seen = std::cell::RefCell::new(vec![]);
+        let progress = |m: &str| seen.borrow_mut().push(m.to_string());
+        let err = provision(vault.path(), ID, dir.path(), &e, &json!({}), &progress).unwrap_err().to_string();
+        assert!(err.contains("b"), "{err}");
+        assert!(dir.path().join("a_56789abc").exists() && !dir.path().join("c_56789abc").exists());
+        let l = ledger(vault.path(), ID);
+        assert_eq!((l["a"].state.as_str(), l["b"].state.as_str(), l.contains_key("c")), ("ready", "failed", false));
+        assert_eq!(*seen.borrow(), ["Creating a…", "Creating b…"]);
+    }
+
+    #[test]
+    fn a_ready_resource_is_skipped_and_the_others_are_made_on_resume() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let e = env2("  a:\n    create: 'echo x >> a_runs_{id}'\n    drop: 'true {id}'\n  b:\n    create: 'echo x >> b_runs_{id}'\n    drop: 'true {id}'\n");
+        let mut l = Ledger::new();
+        l.insert("a".into(), Entry { state: "ready".into(), drop: "true".into(), cwd: dir.path().to_string_lossy().into(), error: None });
+        save(vault.path(), ID, &l).unwrap();
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        assert!(!dir.path().join("a_runs_56789abc").exists());
+        assert_eq!(std::fs::read_to_string(dir.path().join("b_runs_56789abc")).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn a_retried_create_keeps_the_drop_command_it_was_first_made_with() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_string_lossy();
+        let first = env(dir.path(), "'exit 1 # {id}'", &format!("'touch {d}/old_{{id}}'"));
+        provision(vault.path(), ID, dir.path(), &first, &json!({}), &no_progress).unwrap_err();
+        // The note is edited, then the session is resumed.
+        let second = env(dir.path(), "'true {id}'", &format!("'touch {d}/new_{{id}}'"));
+        provision(vault.path(), ID, dir.path(), &second, &json!({}), &no_progress).unwrap();
+        release(vault.path(), ID, &json!({}), &no_progress);
+        assert!(dir.path().join("old_56789abc").exists() && !dir.path().join("new_56789abc").exists());
+    }
+
+    #[test]
+    fn a_hung_command_is_stopped_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = Instant::now();
+        let err = run("sleep 30", dir.path(), &json!({}), Duration::from_millis(300)).unwrap_err();
+        assert!(err.contains("did not finish") && t.elapsed() < Duration::from_secs(10), "{err}");
+    }
+
+    #[test]
+    fn a_failure_reports_the_exit_status_and_the_end_of_the_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run("echo first; echo last; exit 4", dir.path(), &json!({}), TIMEOUT).unwrap_err();
+        assert!(err.contains("exited") && err.contains("4") && err.contains("last"), "{err}");
+        assert_eq!(run("echo hi", dir.path(), &json!({}), TIMEOUT).unwrap().trim(), "hi");
+        let long = run("yes line | head -n 5000", dir.path(), &json!({}), TIMEOUT).unwrap();
+        assert!(long.chars().count() <= 600);
+        // A failure with no output is still explained.
+        assert!(!run("exit 1", dir.path(), &json!({}), TIMEOUT).unwrap_err().is_empty());
+    }
+
+    #[test]
+    fn a_missing_directory_is_an_error_not_a_panic() {
+        assert!(run("true", Path::new("/no/such/dir"), &json!({}), TIMEOUT).is_err());
+    }
+
+    #[test]
+    fn drop_goes_on_after_one_fails_and_only_the_failure_stays() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_string_lossy();
+        let e = env2(&format!("  a:\n    create: 'true {{id}}'\n    drop: 'exit 1 # {{id}}'\n  b:\n    create: 'touch {d}/b_{{id}}'\n    drop: 'rm {d}/b_{{id}}'\n"));
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        let failures = release(vault.path(), ID, &json!({}), &no_progress);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].starts_with("a:") && failures[0].contains("run `exit 1 # 56789abc` yourself"), "{failures:?}");
+        assert!(!dir.path().join("b_56789abc").exists());
+        let l = ledger(vault.path(), ID);
+        assert_eq!(l.keys().collect::<Vec<_>>(), ["a"]);
+        assert!(l["a"].error.is_some());
+    }
+
+    #[test]
+    fn a_failed_drop_is_retried_and_then_forgotten() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("fixed");
+        let e = env(dir.path(), "'true {id}'", &format!("'test -e {} # {{id}}'", flag.display()));
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        assert_eq!(release(vault.path(), ID, &json!({}), &no_progress).len(), 1);
+        std::fs::write(&flag, "").unwrap();
+        assert!(release(vault.path(), ID, &json!({}), &no_progress).is_empty());
+        assert!(ledger(vault.path(), ID).is_empty());
+    }
+
+    #[test]
+    fn a_cut_off_resource_is_dropped_too_even_though_nobody_knows_if_it_exists() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_string_lossy();
+        let mut l = Ledger::new();
+        l.insert("db".into(), Entry { state: "creating".into(), drop: format!("touch {d}/dropped"), cwd: d.to_string(), error: None });
+        save(vault.path(), ID, &l).unwrap();
+        assert!(release(vault.path(), ID, &json!({}), &no_progress).is_empty());
+        assert!(dir.path().join("dropped").exists() && ledger(vault.path(), ID).is_empty());
+    }
+
+    #[test]
+    fn drop_falls_back_to_the_vault_when_the_worktree_is_gone() {
+        let vault = tempfile::tempdir().unwrap();
+        let mut l = Ledger::new();
+        l.insert("db".into(), Entry { state: "ready".into(), drop: "touch dropped_here".into(), cwd: "/no/such/worktree".into(), error: None });
+        save(vault.path(), ID, &l).unwrap();
+        assert!(release(vault.path(), ID, &json!({}), &no_progress).is_empty());
+        assert!(vault.path().join("dropped_here").exists());
+    }
+
+    #[test]
+    fn nothing_to_release_is_fine() {
+        let vault = tempfile::tempdir().unwrap();
+        assert!(release(vault.path(), ID, &json!({}), &no_progress).is_empty());
+    }
+
+    #[test]
+    fn a_session_does_not_touch_another_sessions_ledger() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let e = env(dir.path(), "'true {id}'", "'true {id}'");
+        provision(vault.path(), ID, dir.path(), &e, &json!({}), &no_progress).unwrap();
+        let other = "0192f1c2-bbbb-7000-8000-fedcba987654";
+        assert!(release(vault.path(), other, &json!({}), &no_progress).is_empty());
+        assert_eq!(ledger(vault.path(), ID).len(), 1);
+    }
+
+    #[test]
+    fn no_resources_means_no_ledger() {
+        let vault = tempfile::tempdir().unwrap();
+        let e = environment::parse("---\nports: [a]\n---\n", "n", true);
+        provision(vault.path(), ID, vault.path(), &e, &json!({}), &no_progress).unwrap();
+        assert!(ledger(vault.path(), ID).is_empty());
+    }
 }

