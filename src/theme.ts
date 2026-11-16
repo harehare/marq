@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type Palette = "tarn" | "amber" | "nord" | "solarized" | "rose-pine";
+export type Palette = "tarn" | "amber" | "nord" | "solarized" | "rose-pine" | "gruvbox" | "catppuccin" | "tokyo-night" | "everforest" | "dracula" | "kanagawa";
 type Mode = "system" | "light" | "dark";
 export type Theme = { palette: Palette; mode: Mode };
 
@@ -10,6 +10,12 @@ export const PALETTES: { key: Palette; label: string }[] = [
   { key: "nord", label: "Nord" },
   { key: "solarized", label: "Solarized" },
   { key: "rose-pine", label: "Rosé Pine" },
+  { key: "gruvbox", label: "Gruvbox" },
+  { key: "catppuccin", label: "Catppuccin" },
+  { key: "tokyo-night", label: "Tokyo Night" },
+  { key: "everforest", label: "Everforest" },
+  { key: "dracula", label: "Dracula" },
+  { key: "kanagawa", label: "Kanagawa" },
 ];
 
 const THEME_KEY = "marq.theme";
