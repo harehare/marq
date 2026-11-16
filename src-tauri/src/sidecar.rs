@@ -17,6 +17,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agents;
+use crate::environment::{self, Environment};
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
@@ -115,6 +116,51 @@ For a large task that needs several kinds of work in parallel, such as a feature
 designed, implemented, reviewed and tested separately, you can hand it to a crew with start_crew: a team of sessions \
 with a lead that forms the team and runs it. The user approves it. Do small and medium tasks yourself.";
 
+/// Ports each session gets, as `MARQ_PORT_1`…, and the range they are taken from. The range sits below
+/// the OS's ephemeral ports, so a port picked here is not handed out to an outgoing connection.
+const SESSION_PORTS: u16 = 4;
+const PORT_RANGE: (u16, u16) = (20000, 10000);
+
+/// The environment that tells sessions apart, so that tasks running at the same time (a comparison, a
+/// crew) can each start their own dev server or database without colliding. It is derived from the
+/// session's id alone, so a resumed session gets the same values and finds its own server again.
+///
+/// - `MARQ_SESSION_ID`: the session's short id, for naming databases, containers or temp directories.
+/// - `MARQ_PORT_1`…`MARQ_PORT_4`: ports reserved for this session. Two sessions can still draw the
+///   same block (rarely), and a port can be taken by another program: the agent is told to check.
+fn session_env(id: &str, env: Option<&Environment>) -> Value {
+    let short = &id[id.len().saturating_sub(8)..];
+    // FNV-1a: stable across runs and Rust versions, unlike the std hasher.
+    let hash = id.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    let blocks = u64::from(PORT_RANGE.1 / SESSION_PORTS);
+    let base = u64::from(PORT_RANGE.0) + hash % blocks * u64::from(SESSION_PORTS);
+    let mut out = serde_json::Map::new();
+    out.insert("MARQ_SESSION_ID".into(), json!(short));
+    for i in 0..u64::from(SESSION_PORTS) {
+        out.insert(format!("MARQ_PORT_{}", i + 1), json!((base + i).to_string()));
+    }
+    if let Some(e) = env {
+        // The environment note names ports in order, and sets variables only when it is the user's own.
+        for (i, name) in e.ports.iter().enumerate() {
+            out.insert(format!("MARQ_PORT_{name}"), json!((base + i as u64).to_string()));
+        }
+        if e.trusted {
+            for (k, v) in &e.vars {
+                out.insert(k.clone(), json!(environment::expand(v, short)));
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+/// What the agent is told about [`session_env`].
+const ENV_NOTE: &str = "\n\nThis session shares the machine with other sessions that may run at the same time. \
+Do not use fixed ports such as 3000 or 8080 for dev servers, previews or test databases: use the ports reserved \
+for you in $MARQ_PORT_1 to $MARQ_PORT_4 (for example `PORT=$MARQ_PORT_1 npm run dev`), and put $MARQ_SESSION_ID in \
+the names of databases, containers and temp directories you create. If a reserved port is already in use, \
+take another free one rather than stopping the process that holds it, which may belong to another session. \
+A command that was cut off before it reported its result (a migration, a deploy) may have run: check before you repeat it.";
+
 /// The sidecar command that starts a session's process. Crew members also get the crew's
 /// system prompt, the crew tools and read access to the other members' directories.
 fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Value {
@@ -127,6 +173,11 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         dirs = crew::other_dirs(vault, c);
     }
     system.push_str(&workspace::system_prompt(&meta.dirs, None));
+    system.push_str(ENV_NOTE);
+    let environment = environment::load(vault, meta.project());
+    if let Some(e) = &environment {
+        system.push_str(&environment::system_prompt(e, &meta.id[meta.id.len().saturating_sub(8)..]));
+    }
     dirs.extend(meta.dirs.iter().map(|d| d.path.clone()));
     let (executable, args) = agents::command(meta.agent.as_deref());
     json!({
@@ -146,6 +197,7 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         "crew": meta.crew.is_some(),
         "additionalDirectories": dirs,
         "sandbox": meta.sandbox,
+        "env": session_env(&meta.id, environment.as_ref()),
     })
 }
 
@@ -828,6 +880,36 @@ pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn a_session_gets_the_same_ports_every_time() {
+        let a = session_env("0192f1c2-aaaa-7000-8000-123456789abc", None);
+        assert_eq!(a, session_env("0192f1c2-aaaa-7000-8000-123456789abc", None));
+        assert_eq!(a["MARQ_SESSION_ID"], "56789abc");
+        let ports: Vec<u16> = (1..=4).map(|i| a[format!("MARQ_PORT_{i}")].as_str().unwrap().parse().unwrap()).collect();
+        assert!(ports.windows(2).all(|w| w[1] == w[0] + 1));
+        assert!(ports[0] >= 20000 && ports[3] < 30000);
+    }
+
+    #[test]
+    fn an_environment_names_ports_and_a_repository_cannot_set_variables() {
+        let id = "0192f1c2-aaaa-7000-8000-123456789abc";
+        let note = "---\nports: [web, api]\nvars:\n  DATABASE_URL: db_{id}\n  PATH: /evil\n---\n";
+        let mine = session_env(id, Some(&environment::parse(note, "n.md", true)));
+        assert_eq!(mine["MARQ_PORT_WEB"], mine["MARQ_PORT_1"]);
+        assert_eq!(mine["MARQ_PORT_API"], mine["MARQ_PORT_2"]);
+        assert_eq!(mine["DATABASE_URL"], "db_56789abc");
+        let theirs = session_env(id, Some(&environment::parse(note, "n.md", false)));
+        assert_eq!(theirs["MARQ_PORT_WEB"], mine["MARQ_PORT_WEB"]);
+        assert!(theirs.get("DATABASE_URL").is_none() && theirs.get("PATH").is_none());
+    }
+
+    #[test]
+    fn sessions_mostly_get_different_ports() {
+        let first = |id: &str| session_env(id, None)["MARQ_PORT_1"].as_str().unwrap().to_string();
+        assert_ne!(first("0192f1c2-aaaa-7000-8000-123456789abc"), first("0192f1c2-bbbb-7000-8000-fedcba987654"));
+    }
     /// Commands call `spawn` from the main thread, which has no tokio runtime of its own.
     #[test]
     #[cfg(unix)] // runs `true`

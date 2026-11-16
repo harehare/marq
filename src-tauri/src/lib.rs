@@ -4,6 +4,7 @@ mod boards;
 mod commands;
 mod config;
 mod crew;
+mod environment;
 mod error;
 mod git;
 mod inbox;
@@ -1263,6 +1264,18 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
     Ok(serde_json::Value::Array(list))
 }
 
+/// The environment note for a project, for New task to say what it sets and whether it is trusted.
+#[tauri::command]
+async fn environment_status(vault: String, project: String) -> Result<Option<environment::Status>> {
+    blocking(move || Ok(environment::status(Path::new(&vault), &project))).await
+}
+
+/// Trusts the variables in a repository's environment file as they are now.
+#[tauri::command]
+async fn trust_environment(project: String) -> Result<()> {
+    blocking(move || environment::trust(&project)).await
+}
+
 /// The agents a task can run on, with whether each is installed.
 #[tauri::command]
 async fn list_agents() -> Result<Vec<agents::AgentInfo>> {
@@ -1753,6 +1766,8 @@ pub fn run() {
             answer_approval,
             list_approvals,
             list_agents,
+            environment_status,
+            trust_environment,
             list_commands,
             session_events,
             list_sessions,

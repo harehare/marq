@@ -47,12 +47,12 @@ const text = (s: string) => [{ type: "text", text: s, text_elements: [] }];
 
 /** Runs `codex app-server` and initializes the connection. `exited` settles with the process. */
 function launch(
-  o: { executable?: string; args?: string[]; cwd: string; tag: string },
+  o: { executable?: string; args?: string[]; cwd: string; tag: string; env?: Record<string, string> },
   onRequest: (method: string, params: any) => Promise<unknown>,
   onNotification: (method: string, params: any) => void,
 ) {
   if (!o.executable) throw new Error("no command for this agent");
-  const child = spawn(o.executable, o.args?.length ? o.args : ["app-server"], { cwd: o.cwd, stdio: ["pipe", "pipe", "pipe"], env: process.env });
+  const child = spawn(o.executable, o.args?.length ? o.args : ["app-server"], { cwd: o.cwd, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...o.env } });
   const conn = new Connection(child, onRequest, onNotification);
   const stderr: string[] = [];
   createInterface({ input: child.stderr! }).on("line", (l) => {
@@ -126,7 +126,7 @@ class CodexSession implements AgentSession {
     this.host = host;
     this.model = c.model;
     const l = launch(
-      { executable: c.executable, args: c.args, cwd: c.cwd, tag: c.id.slice(-8) },
+      { executable: c.executable, args: c.args, cwd: c.cwd, tag: c.id.slice(-8), env: c.env },
       (method, params) => this.request(method, params),
       (method, params) => this.notification(method, params),
     );

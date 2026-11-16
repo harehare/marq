@@ -10,13 +10,14 @@ import { VAULT_TOOLS, vaultServer } from "./tools.ts";
 const BASE_ENV = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marq/0.1" };
 
 /** Model and env for a session's `model`; `ollama:<name>` routes everything to Ollama. */
-function backend(model?: string | null): { model?: string; env: Record<string, string | undefined> } {
-  if (!model?.startsWith("ollama:")) return { model: model || undefined, env: BASE_ENV };
+function backend(model?: string | null, extra: Record<string, string> = {}): { model?: string; env: Record<string, string | undefined> } {
+  if (!model?.startsWith("ollama:")) return { model: model || undefined, env: { ...BASE_ENV, ...extra } };
   const name = model.slice("ollama:".length);
   return {
     model: name,
     env: {
       ...BASE_ENV,
+      ...extra,
       ANTHROPIC_BASE_URL: ollamaUrl(),
       ANTHROPIC_AUTH_TOKEN: "ollama",
       ANTHROPIC_API_KEY: "",
@@ -146,7 +147,7 @@ class ClaudeSession implements AgentSession {
         plugins: [{ type: "local", path: PLUGIN }],
         ...sandbox(c.sandbox),
         pathToClaudeCodeExecutable: c.executable,
-        ...backend(c.model),
+        ...backend(c.model, c.env),
         ...(c.effort && EFFORTS.has(c.effort) ? { effort: c.effort as "low" | "medium" | "high" | "xhigh" | "max" } : {}),
         stderr: (d: string) => log(`[${c.id.slice(-8)}]`, d.trimEnd()),
       },

@@ -21,6 +21,9 @@ async function timed<T>(cmd: string, args?: Parameters<typeof rawInvoke>[1], opt
   }
 }
 
+/** A project's environment note: what it names and sets, and whether a repository's variables are trusted. */
+export type EnvironmentStatus = { source: string; from_repo: boolean; ports: string[]; vars: [string, string][]; trusted: boolean };
+
 export type SearchHit = { path: string; rel: string; title: string | null; lines: [number, string][]; more: number };
 /** A past session that matches a search: its best lines, and how many lines matched in all. */
 export type SessionHit = {
@@ -200,6 +203,8 @@ export const api = {
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
   /** Agents a task can run on: Claude, and others that speak ACP. */
   listAgents: () => invoke<AgentInfo[]>("list_agents"),
+  environmentStatus: (vault: string, project: string) => invoke<EnvironmentStatus | null>("environment_status", { vault, project }),
+  trustEnvironment: (project: string) => invoke<void>("trust_environment", { project }),
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; effort?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;

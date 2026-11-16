@@ -14,6 +14,8 @@ export type Command =
       crew?: boolean; additionalDirectories?: string[];
       /** `on` or `strict`: run Bash in Claude Code's OS sandbox. Only the Claude backend has one. */
       sandbox?: string | null;
+      /** Environment variables for the agent's process, such as the ports reserved for the session. */
+      env?: Record<string, string>;
     }
   | { op: "send"; id: string; text: string; model?: string | null }
   | { op: "interrupt"; id: string }

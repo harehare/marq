@@ -24,6 +24,8 @@ export type StartOptions = {
   additionalDirectories?: string[];
   /** `on` or `strict`: run Bash in Claude Code's OS sandbox. */
   sandbox?: string | null;
+  /** Added to the agent's environment: what tells this session from the others running at the same time. */
+  env?: Record<string, string>;
 };
 
 export type ApprovalRequest = {

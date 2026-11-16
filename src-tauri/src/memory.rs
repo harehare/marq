@@ -18,7 +18,7 @@ pub const INSTRUCTIONS: &str = "instructions.md";
 /// Longest instructions or progress text given to a session, in characters.
 const MAX: usize = 4000;
 
-fn clip(text: &str) -> String {
+pub(crate) fn clip(text: &str) -> String {
     let t = text.trim();
     if t.chars().count() <= MAX {
         return t.to_string();
@@ -53,7 +53,7 @@ pub fn progress(vault: &Path, session: &str) -> Option<String> {
 }
 
 /// `text` without its `<!-- … -->` comments, which are notes to the user and not for the agent.
-fn without_comments(text: &str) -> String {
+pub(crate) fn without_comments(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
     while let Some(start) = rest.find("<!--") {

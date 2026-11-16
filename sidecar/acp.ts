@@ -36,12 +36,12 @@ type Initialized = { protocolVersion: number; agentCapabilities?: { loadSession?
 
 /** Runs the agent and initializes the connection. `exited` settles with the process, with its last stderr lines. */
 function launch(
-  o: { executable?: string; args?: string[]; cwd: string; tag: string },
+  o: { executable?: string; args?: string[]; cwd: string; tag: string; env?: Record<string, string> },
   onRequest: (method: string, params: any) => Promise<unknown>,
   onNotification: (method: string, params: any) => void,
 ) {
   if (!o.executable) throw new Error("no command for this agent");
-  const child = spawn(o.executable, o.args ?? [], { cwd: o.cwd, stdio: ["pipe", "pipe", "pipe"], env: process.env });
+  const child = spawn(o.executable, o.args ?? [], { cwd: o.cwd, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...o.env } });
   const conn = new Connection(child, onRequest, onNotification);
   const stderr: string[] = [];
   createInterface({ input: child.stderr! }).on("line", (l) => {
@@ -114,7 +114,7 @@ class AcpSession implements AgentSession {
     this.c = c;
     this.host = host;
     const l = launch(
-      { executable: c.executable, args: c.args, cwd: c.cwd, tag: c.id.slice(-8) },
+      { executable: c.executable, args: c.args, cwd: c.cwd, tag: c.id.slice(-8), env: c.env },
       (method, params) => this.request(method, params),
       (method, params) => method === "session/update" && params?.sessionId === this.sessionId && this.update(params.update),
     );

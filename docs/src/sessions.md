@@ -73,6 +73,40 @@ When the project is inside a git repository, each session gets its own worktree 
 - **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).
 - **Mark as done** moves a session out of **Needs review** and removes its worktrees (the branches stay). A worktree with uncommitted or untracked files is kept, and so are those of a session that is still running. A created PR shows a badge in the sidebar.
 
+## Running side by side
+
+A worktree separates the code, not the machine. Tasks that run at the same time still share ports, databases and anything else outside git. To keep them from colliding, every session's agent gets these environment variables:
+
+- `MARQ_SESSION_ID`: the session's short id, for naming databases, containers and temp directories.
+- `MARQ_PORT_1` to `MARQ_PORT_4`: four consecutive ports reserved for the session, taken from 20000–29999.
+
+The values come from the session's id, so a resumed session gets the same ones and finds its own dev server again. The agent is told to use them instead of fixed ports and to check before repeating a command that was cut off before it reported its result (a migration, a deploy). Your project has to read them to benefit: `PORT=${MARQ_PORT_1:-3000}` in a `.env`, `mise.toml` or script is enough.
+
+### Environment notes
+
+To say more about how a project should run, write an environment note. Its text goes into the system prompt of every session on the project, and its frontmatter names ports and sets variables:
+
+```markdown
+---
+type: environment
+ports: [web, api]          # MARQ_PORT_WEB and MARQ_PORT_API (the first two of the four ports)
+vars:
+  DATABASE_URL: "postgres://localhost/app_{id}"   # {id} is the session's short id
+---
+## Rules
+- Start the dev server on $MARQ_PORT_WEB.
+- Never deploy without asking. A migration runs on the shared database: check its state before you repeat one.
+```
+
+There are two places for it:
+
+- **`.marq/environment.md` in the repository** is shared with everyone who clones it, and wins when both exist.
+- **A note with `type: environment` in the vault**, with `project:` set to the project (or empty for every project).
+
+Up to four names are used. `vars:` from a vault note are set in the agent's environment. A repository's `vars:` are not, until you trust them: a file you cloned could otherwise set `PATH`, `NODE_OPTIONS` or `ANTHROPIC_BASE_URL` for the agent's process. **New task** lists them when you pick such a project, with **Trust and apply**. Until then the agent only reads them as text and sets them in the commands that need them, under the usual permissions. The choice is kept in `~/.marq/trusted-environments.json` for that project and those exact variables, so changing one asks again; editing the rest of the file does not. Tasks that start without the dialog (schedules, queued work) use what you trusted earlier. Naming ports is always safe, so it works from either place.
+
+Two sessions can occasionally draw the same block, and another program may hold a port; Marq does not check. Nothing is isolated beyond that: a migration or deploy still hits the shared database or target.
+
 ## Compare agents and models
 
 In **New task**, choose **Compare with another agent or model** under Run to add up to three more runs. Each run is a Claude model, or another agent such as Codex or Gemini CLI, which runs on its own model. Marq saves one request note and starts one session per run, each in its own worktree, so the runs cannot overwrite each other. This needs a git repository and **Work in a new worktree**. The sandbox is Claude only, so it is left off when a comparison includes another agent.
