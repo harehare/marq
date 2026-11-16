@@ -1,10 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="90 93 336 336">
-  <style>
-    .a { stop-color: #1fa0d6 } .b { stop-color: #17a3a3 }
-    @media (prefers-color-scheme: dark) { .a { stop-color: #85d4ff } .b { stop-color: #56d4d4 } }
-  </style>
-  <defs>
-    <linearGradient id="m" x1="0" y1="96" x2="0" y2="416" gradientUnits="userSpaceOnUse"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>
-  </defs>
-  <path d="M122 330 V130 L232 246 L342 130 V392 M290 340 L342 392 L394 340" fill="none" stroke="url(#m)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="230" fill="#0d0f12"/>
+  <g transform="translate(512 512) scale(1.8) translate(-258 -261)">
+    <path d="M122 330 V130 L232 246 L342 130 V392 M290 340 L342 392 L394 340" fill="none" stroke="#4cc9e6" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>
