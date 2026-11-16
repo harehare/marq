@@ -58,7 +58,7 @@ export const SANDBOXES = [
 /** The project the last task was started in, where a new terminal opens when nothing else says. */
 export const lastProject = () => stored(PROJECT_KEY, "");
 /** What the last task used, for work that is queued without opening the dialog. */
-export const lastTaskDefaults = () => ({ project: stored(PROJECT_KEY, ""), mode: stored(MODE_KEY, "auto") });
+export const lastTaskDefaults = () => ({ project: stored(PROJECT_KEY, ""), mode: stored(MODE_KEY, "auto"), worktree: stored(WORKTREE_KEY, "true") === "true" });
 
 function stored(key: string, fallback: string) {
   try {

@@ -142,14 +142,14 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   // Queues the card in the inbox so it waits for its turn instead of starting now: it becomes a request
   // that runs with what the last task used, or, with nothing to go on, opens New task to choose.
   const queueCard = async (c: Card, list: string) => {
-    const { project, mode } = lastTaskDefaults();
+    const { project, mode, worktree } = lastTaskDefaults();
     if (!project) {
       start(c, list);
       return;
     }
     try {
       const rel = await api.saveTask(vault, {
-        title: c.title, prompt: cardPrompt(c, list), project, permissionMode: mode, carryChanges: false, worktree: true, autoTitle: false,
+        title: c.title, prompt: cardPrompt(c, list), project, permissionMode: mode, carryChanges: false, worktree, autoTitle: false,
       });
       await api.inboxQueueRequest(`${vault}/${rel}`, c.title);
       setError(null);
