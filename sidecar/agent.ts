@@ -1,6 +1,7 @@
 // The interface an agent backend implements. main.ts owns what is the same for every agent (the session table,
 // approvals, the idle timeout and how a session ends); a backend only runs its agent and translates its messages.
 import type { AgentEvent, ModelOption } from "./protocol.ts";
+import type { Rules } from "./rules.ts";
 
 export type StartOptions = {
   id: string;
@@ -26,6 +27,8 @@ export type StartOptions = {
   sandbox?: string | null;
   /** Added to the agent's environment: what tells this session from the others running at the same time. */
   env?: Record<string, string>;
+  /** Bash commands that are denied, or wait for the user's approval, from the project's environment note. */
+  rules?: Rules;
 };
 
 export type ApprovalRequest = {

@@ -107,6 +107,21 @@ There are two places for it:
 
 Up to four names are used. `vars:` from a vault note are set in the agent's environment. A repository's `vars:` are not, and its `resources:` commands are not run, until you trust them: a file you cloned could otherwise set `PATH`, `NODE_OPTIONS` or `ANTHROPIC_BASE_URL` for the agent's process. **New task** lists them when you pick such a project, with **Trust and apply**. Until then the agent only reads them as text and sets them in the commands that need them, under the usual permissions. The choice is kept in `~/.marq/trusted-environments.json` for that project and those exact variables and commands, so changing one asks again; editing the rest of the file does not. Tasks that start without the dialog (schedules, queued work) use what you trusted earlier. Naming ports is always safe, so it works from either place.
 
+### Stopping commands: `ask` and `deny`
+
+A rule in the note's text is only a request. `ask` and `deny` are enforced:
+
+```yaml
+ask: ["wrangler deploy", "db:migrate"]     # waits for your approval, even in Auto
+deny: ["rm -rf", "docker compose down"]    # refused; the agent is told to ask you to run it
+```
+
+- A Bash command that **contains** a string is stopped, so `wrangler deploy` also catches `pnpm exec wrangler deploy --env prod` and a command in the middle of `a && b`. Runs of spaces count as one. `deny` wins over `ask`.
+- `ask` shows the usual approval in the session, in every permission mode, including Auto, where a classifier would otherwise decide.
+- It is a safety net against slips, not a lock. A command built at run time (in a variable, in `sh -c "…"` or in a script that runs it) is not seen. Use the [sandbox](workflows.md) to cut off what must not be reached.
+- The rules are enforced for **Claude** sessions. Other agents only read them as text in their prompt.
+- They only restrict, so a repository's `ask` and `deny` apply without being trusted. At most 50 of each are used.
+
 ### Resources a worktree cannot isolate
 
 A database, a bucket prefix or a scratch directory is shared by every task, whatever its worktree. List them under `resources:` and Marq makes one for each session and removes it afterwards:

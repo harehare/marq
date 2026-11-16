@@ -24,6 +24,15 @@
 //! are shown to the agent as text instead, and the agent sets them itself where needed, in a command
 //! the usual permissions apply to. Ports are only named, so they are always safe to take from it.
 //!
+//! `ask:` and `deny:` list Bash commands to stop (see `sidecar/rules.ts`): a command that contains one
+//! of the `deny` strings is refused, and one with an `ask` string waits for the user's approval even
+//! in Auto mode. They only restrict, so a repository's rules apply without being trusted.
+//!
+//! ```yaml
+//! ask: ["wrangler deploy", "db:migrate"]
+//! deny: ["rm -rf", "docker compose down"]
+//! ```
+//!
 //! `resources:` names what a worktree cannot isolate, such as a database, and how to make one for
 //! each session and remove it again (see `resources`):
 //!
@@ -57,6 +66,8 @@ pub const FILE: &str = ".marq/environment.md";
 pub const KIND: &str = "environment";
 /// A session reserves this many ports, so this many can be named.
 pub const MAX_PORTS: usize = 4;
+/// Most `ask` and `deny` entries each.
+const MAX_RULES: usize = 50;
 
 /// Something made for a session and removed after it, from `resources:`.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +88,9 @@ pub struct Environment {
     /// Unexpanded: `{id}` is still in the values.
     pub vars: Vec<(String, String)>,
     pub resources: Vec<Resource>,
+    /// Commands that wait for the user's approval, and commands that are refused.
+    pub ask: Vec<String>,
+    pub deny: Vec<String>,
     /// Resources that were left out and why, so that the agent and the user are not left guessing.
     pub invalid: Vec<String>,
     /// Whether `vars` may be set and `resources` made: a vault note is the user's own, a repository's file has to be trusted.
@@ -153,6 +167,17 @@ fn resources_of(fm: &str) -> (Vec<Resource>, Vec<String>) {
     (ok, bad)
 }
 
+/// A rule list: trimmed, without empty or very long entries, and at most `MAX_RULES`.
+fn rules_of(text: &str, key: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for r in vault::fm_list(text, key).into_iter().map(|r| r.trim().to_string()) {
+        if !r.is_empty() && r.chars().count() <= 200 && !out.contains(&r) && out.len() < MAX_RULES {
+            out.push(r);
+        }
+    }
+    out
+}
+
 /// An environment note's text. A note without frontmatter is all body.
 pub fn parse(text: &str, source: &str, trusted: bool) -> Environment {
     let (fm, body) = vault::split_frontmatter(text);
@@ -164,7 +189,7 @@ pub fn parse(text: &str, source: &str, trusted: bool) -> Environment {
     }
     let body = memory::clip(&memory::without_comments(body));
     let (resources, invalid) = fm.map(resources_of).unwrap_or_default();
-    Environment { source: source.into(), ports, vars: fm.map(vars_of).unwrap_or_default(), resources, invalid, trusted, from_repo: false, body }
+    Environment { source: source.into(), ports, vars: fm.map(vars_of).unwrap_or_default(), resources, ask: rules_of(text, "ask"), deny: rules_of(text, "deny"), invalid, trusted, from_repo: false, body }
 }
 
 /// Where the variables the user trusted are remembered.
@@ -321,6 +346,15 @@ pub fn system_prompt(env: &Environment, short: &str) -> String {
             format!("\nThe file lists resources ({}) that Marq has not made: the user has not trusted its commands. Do not assume they exist.", names.join(", "))
         });
     }
+    if !env.deny.is_empty() {
+        out.push_str(&format!("\nDo not run commands that contain any of: {}.", env.deny.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ")));
+    }
+    if !env.ask.is_empty() {
+        out.push_str(&format!(
+            "\nAsk the user before running commands that contain any of: {}.",
+            env.ask.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ")
+        ));
+    }
     if !env.invalid.is_empty() {
         out.push_str(&format!("\nThese resources were left out: {}.", env.invalid.join("; ")));
     }
@@ -376,6 +410,16 @@ mod tests {
         let e = parse(&std::fs::read_to_string(&path).unwrap(), "f", false);
         assert!(e.ports.is_empty() && e.vars.is_empty() && e.body == "## Rules");
         assert!(ensure_repo_file("").is_err() && ensure_repo_file("/no/such/dir").is_err());
+    }
+
+    #[test]
+    fn reads_ask_and_deny_rules() {
+        let e = parse("---\nask: [\"wrangler deploy\", \" db:migrate \", \"\", \"wrangler deploy\"]\ndeny: [rm -rf]\n---\n", "f", false);
+        assert_eq!(e.ask, ["wrangler deploy", "db:migrate"]);
+        assert_eq!(e.deny, ["rm -rf"]);
+        // They only restrict, so a repository's rules are used although it is not trusted.
+        let p = system_prompt(&e, "abc12345");
+        assert!(p.contains("Do not run commands that contain any of: `rm -rf`") && p.contains("Ask the user before"));
     }
 
     #[test]

@@ -5,6 +5,7 @@ import type { Query, SDKMessage, SDKUserMessage, PermissionMode, PermissionResul
 import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
 import { ollamaUrl } from "./ollama.ts";
 import { log, type AgentEvent, type ToolKind } from "./protocol.ts";
+import { checkRules, type Rules } from "./rules.ts";
 import { VAULT_TOOLS, vaultServer } from "./tools.ts";
 
 const BASE_ENV = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marq/0.1" };
@@ -110,6 +111,33 @@ function sandbox(mode?: string | null) {
   return { sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: mode === "on", failIfUnavailable: true } };
 }
 
+/**
+ * A PreToolUse hook for the environment note's `ask` and `deny`. It runs whatever the permission mode,
+ * so even Auto, where a classifier decides, stops at a command the project wants to be asked about.
+ */
+function ruleHooks(rules?: Rules) {
+  if (!rules || (!rules.ask.length && !rules.deny.length)) return {};
+  return {
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            async (input: { hook_event_name: string; tool_input?: unknown }) => {
+              if (input.hook_event_name !== "PreToolUse") return {};
+              const command = (input.tool_input as { command?: unknown } | undefined)?.command;
+              const v = typeof command === "string" ? checkRules(command, rules) : null;
+              return v
+                ? { hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: v.decision, permissionDecisionReason: v.reason } }
+                : {};
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const PERMISSION_MODES = new Set(["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"]);
 
@@ -146,6 +174,7 @@ class ClaudeSession implements AgentSession {
         settingSources: ["user", "project", "local"],
         plugins: [{ type: "local", path: PLUGIN }],
         ...sandbox(c.sandbox),
+        ...ruleHooks(c.rules),
         pathToClaudeCodeExecutable: c.executable,
         ...backend(c.model, c.env),
         ...(c.effort && EFFORTS.has(c.effort) ? { effort: c.effort as "low" | "medium" | "high" | "xhigh" | "max" } : {}),

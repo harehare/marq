@@ -219,6 +219,7 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         "additionalDirectories": dirs,
         "sandbox": meta.sandbox,
         "env": session_env(&meta.id, environment.as_ref()),
+        "rules": environment.as_ref().map(|e| json!({"ask": e.ask, "deny": e.deny})),
     })
 }
 
