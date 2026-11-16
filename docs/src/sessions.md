@@ -73,11 +73,83 @@ When the project is inside a git repository, each session gets its own worktree 
 - **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).
 - **Mark as done** moves a session out of **Needs review** and removes its worktrees (the branches stay). A worktree with uncommitted or untracked files is kept, and so are those of a session that is still running. A created PR shows a badge in the sidebar.
 
+## Running side by side
+
+A worktree separates the code, not the machine. Tasks that run at the same time still share ports, databases and anything else outside git. To keep them from colliding, every session's agent gets these environment variables:
+
+- `MARQ_SESSION_ID`: the session's short id, for naming databases, containers and temp directories.
+- `MARQ_PORT_1` to `MARQ_PORT_4`: four consecutive ports reserved for the session, taken from 20000–29999.
+
+The values come from the session's id, so a resumed session gets the same ones and finds its own dev server again. The agent is told to use them instead of fixed ports and to check before repeating a command that was cut off before it reported its result (a migration, a deploy). Your project has to read them to benefit: `PORT=${MARQ_PORT_1:-3000}` in a `.env`, `mise.toml` or script is enough.
+
+### Environment notes
+
+To say more about how a project should run, write an environment note. Its text goes into the system prompt of every session on the project, and its frontmatter names ports and sets variables:
+
+```markdown
+---
+type: environment
+ports: [web, api]          # MARQ_PORT_WEB and MARQ_PORT_API (the first two of the four ports)
+vars:
+  DATABASE_URL: "postgres://localhost/app_{id}"   # {id} is the session's short id
+---
+## Rules
+- Start the dev server on $MARQ_PORT_WEB.
+- Never deploy without asking. A migration runs on the shared database: check its state before you repeat one.
+```
+
+Create one from the command palette: **New environment note** makes `environments/<project>.md` in the vault, and **Create .marq/environment.md** makes the repository's own file and opens it in VS Code. Both are for the project of your last task and start with the fields commented out. A vault note's folder does not matter; only `type: environment` does.
+
+There are two places for it:
+
+- **`.marq/environment.md` in the repository** is shared with everyone who clones it, and wins when both exist.
+- **A note with `type: environment` in the vault**, with `project:` set to the project (or empty for every project).
+
+Up to four names are used. `vars:` from a vault note are set in the agent's environment. A repository's `vars:` are not, and its `resources:` commands are not run, until you trust them: a file you cloned could otherwise set `PATH`, `NODE_OPTIONS` or `ANTHROPIC_BASE_URL` for the agent's process. **New task** lists them when you pick such a project, with **Trust and apply**. Until then the agent only reads them as text and sets them in the commands that need them, under the usual permissions. The choice is kept in `~/.marq/trusted-environments.json` for that project and those exact variables and commands, so changing one asks again; editing the rest of the file does not. Tasks that start without the dialog (schedules, queued work) use what you trusted earlier. Naming ports is always safe, so it works from either place.
+
+### Stopping commands: `ask` and `deny`
+
+A rule in the note's text is only a request. `ask` and `deny` are enforced:
+
+```yaml
+ask: ["wrangler deploy", "db:migrate"]     # waits for your approval, even in Auto
+deny: ["rm -rf", "docker compose down"]    # refused; the agent is told to ask you to run it
+```
+
+- A Bash command that **contains** a string is stopped, so `wrangler deploy` also catches `pnpm exec wrangler deploy --env prod` and a command in the middle of `a && b`. Runs of spaces count as one. `deny` wins over `ask`.
+- `ask` shows the usual approval in the session, in every permission mode, including Auto, where a classifier would otherwise decide.
+- It is a safety net against slips, not a lock. A command built at run time (in a variable, in `sh -c "…"` or in a script that runs it) is not seen. Use the [sandbox](workflows.md) to cut off what must not be reached.
+- The rules are enforced for **Claude** sessions. Other agents only read them as text in their prompt.
+- They only restrict, so a repository's `ask` and `deny` apply without being trusted. At most 50 of each are used.
+
+### Resources a worktree cannot isolate
+
+A database, a bucket prefix or a scratch directory is shared by every task, whatever its worktree. List them under `resources:` and Marq makes one for each session and removes it afterwards:
+
+```yaml
+resources:
+  db:
+    create: createdb app_{id}                  # run before the agent starts
+    drop: dropdb --if-exists app_{id}          # run when the session is done or deleted
+    env:
+      DATABASE_URL: postgres://localhost/app_{id}   # set for the agent once it exists
+```
+
+- **Create** runs in the session's directory, with `MARQ_SESSION_ID` and the `MARQ_PORT_*` variables, before the agent starts. If it fails (or takes more than two minutes) the session does not start and shows the output; **Resume** tries again. The agent is told these resources exist and not to create or drop them.
+- **Drop** runs when you mark the session done or delete it, and for the runs you did not keep in a comparison. If it fails, the error is shown, the resource stays on record, and marking the session done again retries it. Deleting the session still goes ahead; the message gives the command to run by hand.
+- **Both commands must contain `{id}`** (the session's short id), so that one session cannot create or drop another's resource, or one that everyone shares. A resource whose commands lack it is left out, and the agent is told so. Write both so that running them twice is harmless: a create that was cut off (the app stopped, the task was cancelled) is run again, and its drop runs even though nobody knows whether it finished.
+- **What was made** is kept in `.marq/resources/<session id>.json`, with the drop command as it was when the resource was made, so editing the note later does not change what is dropped. A resource that is `creating` or `failed` there is one whose state is unknown.
+- **Trust**: Marq runs these commands itself, outside the agent's permissions. A vault note is yours and is run as it is. A repository's file is only run after you trust it in **New task**, which lists the commands; changing one asks again. Until then nothing is run and the agent only reads about them.
+
+This covers what can be made per session. A database or service that must stay shared (staging, a third-party API) cannot be, so nothing here isolates it; say in the note's rules what the agent must not touch.
+
+Two sessions can occasionally draw the same block, and another program may hold a port; Marq does not check. Nothing is isolated beyond that: a migration or deploy still hits the shared database or target.
+
 ## Compare agents and models
 
 In **New task**, choose **Compare with another agent or model** under Run to add up to three more runs. Each run is a Claude model, or another agent such as Codex or Gemini CLI, which runs on its own model. Marq saves one request note and starts one session per run, each in its own worktree, so the runs cannot overwrite each other. This needs a git repository and **Work in a new worktree**. The sandbox is Claude only, so it is left off when a comparison includes another agent.
 
-A **Compare** tab opens with one column per run: the model or agent, status, branch and changed files. Open a file to see its diff. When every run has finished, **Keep this one** removes the worktrees of the other runs (their branches and session logs are kept) and opens the one you kept, where you commit and create a PR as usual. For runs you started earlier, right-click one of them in the sidebar and choose **Compare runs**.
+A **Compare** tab opens with one column per run: the model or agent, status, branch and changed files. Open a file to see its diff. When every run has finished, **Keep this one** removes the worktrees of the other runs and drops the [resources](#resources-a-worktree-cannot-isolate) made for them (their branches and session logs are kept) and opens the one you kept, where you commit and create a PR as usual. For runs you started earlier, right-click one of them in the sidebar and choose **Compare runs**.
 
 ## Checks, phases and the sandbox
 

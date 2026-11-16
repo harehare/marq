@@ -4,6 +4,7 @@ mod boards;
 mod commands;
 mod config;
 mod crew;
+mod environment;
 mod error;
 mod git;
 mod inbox;
@@ -15,6 +16,7 @@ mod navigation;
 mod organize;
 mod refs;
 mod relay;
+mod resources;
 mod scratch;
 mod session;
 mod shell;
@@ -746,6 +748,7 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
         if let Some(path) = session::set_review(Path::new(&vault), &session_id, &state, None)? {
             let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
         }
+        let mut release_failures = vec![];
         if state == "done" {
             inbox::resolve_session(&app, &session_id);
             // The agent process outlives its turns, so an idle session is stopped first: it would otherwise keep
@@ -756,10 +759,15 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
                     let _ = runner.stop(&app, &session_id);
                 }
                 remove_clean_worktrees(Path::new(&vault), &session_id);
+                release_failures = sidecar::release_resources(&app, Path::new(&vault), &session_id);
             }
         }
         let _ = app.emit("sessions://changed", &session_id);
-        Ok(())
+        if release_failures.is_empty() {
+            Ok(())
+        } else {
+            Err(error::Error::Other(format!("the session is done, but its resources were not dropped: {}", release_failures.join("; "))))
+        }
     })
     .await
 }
@@ -798,6 +806,19 @@ async fn session_rename_branch(app: AppHandle, vault: String, session_id: String
 #[tauri::command]
 async fn session_remove_worktree(vault: String, session_id: String, repo: Option<String>) -> Result<()> {
     blocking(move || git::remove(&worktree_of(&vault, &session_id, repo.as_deref())?)).await
+}
+
+/// Drops what an environment note's `resources:` made for the session. Returns what could not be dropped.
+/// Not part of removing a worktree, which can be done by hand while the session goes on.
+#[tauri::command]
+async fn session_release_resources(app: AppHandle, vault: String, session_id: String) -> Result<Vec<String>> {
+    blocking(move || {
+        if app.state::<Runner>().is_alive(&session_id) {
+            return Err(error::Error::Other("the session is still running".into()));
+        }
+        Ok(sidecar::release_resources(&app, Path::new(&vault), &session_id))
+    })
+    .await
 }
 
 /// Opens a path in Finder or VS Code, or reveals a file in Finder.
@@ -1263,6 +1284,32 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
     Ok(serde_json::Value::Array(list))
 }
 
+/// Creates the vault's environment note for a project (empty: for every project), to open and fill in.
+#[tauri::command]
+async fn create_environment_note(app: AppHandle, vault: String, project: String) -> Result<String> {
+    let p = blocking(move || environment::ensure_note(Path::new(&vault), &project)).await?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// Creates `.marq/environment.md` in a project, to be committed with its code.
+#[tauri::command]
+async fn create_environment_file(project: String) -> Result<String> {
+    Ok(blocking(move || environment::ensure_repo_file(&project)).await?.to_string_lossy().into_owned())
+}
+
+/// The environment note for a project, for New task to say what it sets and whether it is trusted.
+#[tauri::command]
+async fn environment_status(vault: String, project: String) -> Result<Option<environment::Status>> {
+    blocking(move || Ok(environment::status(Path::new(&vault), &project))).await
+}
+
+/// Trusts the variables in a repository's environment file as they are now.
+#[tauri::command]
+async fn trust_environment(project: String) -> Result<()> {
+    blocking(move || environment::trust(&project)).await
+}
+
 /// The agents a task can run on, with whether each is installed.
 #[tauri::command]
 async fn list_agents() -> Result<Vec<agents::AgentInfo>> {
@@ -1330,11 +1377,17 @@ fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktre
             }
         }
     }
+    // What was made for the session goes with it. A drop that fails keeps its entry in .marq/resources.
+    let release_failures = sidecar::release_resources(app, v, session_id);
     progress(app, "Moving files to the Trash…");
     if let Some(path) = session::delete(v, session_id)? {
         let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
     }
-    Ok(())
+    if release_failures.is_empty() {
+        Ok(())
+    } else {
+        Err(error::Error::Other(format!("the session is deleted, but its resources were not dropped: {}", release_failures.join("; "))))
+    }
 }
 
 /// Sets a request's `status` (todo, running, review, done, dropped).
@@ -1753,6 +1806,10 @@ pub fn run() {
             answer_approval,
             list_approvals,
             list_agents,
+            environment_status,
+            create_environment_note,
+            create_environment_file,
+            trust_environment,
             list_commands,
             session_events,
             list_sessions,
@@ -1769,6 +1826,7 @@ pub fn run() {
             session_push_cwd,
             set_session_review,
             session_remove_worktree,
+            session_release_resources,
             session_rename_branch,
             delete_session,
             delete_note,

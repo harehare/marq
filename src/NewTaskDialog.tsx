@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { ChevronRight, FolderGit2, FolderPlus, FolderSearch, GitCompare, Layers, Loader2, Save, Sparkles, Users, X } from "lucide-react";
-import { api, type AgentInfo, type DirSpec, type TaskChecks, type Workspace } from "./api";
+import { api, type AgentInfo, type DirSpec, type EnvironmentStatus, type TaskChecks, type Workspace } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
 import { usePastes } from "./pastes";
 import { CodexModelInput, EffortSelect, ModelSelect, effortsOf, useAgentModels } from "./ModelSelect";
@@ -119,6 +119,15 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
       if (last) pickWorkspace(last, list);
     }, () => {});
   }, [vault]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The project's environment note: a repository's variables are only set once the user trusts them.
+  const [envStatus, setEnvStatus] = useState<EnvironmentStatus | null>(null);
+  const loadEnv = () => {
+    const p = project.trim();
+    if (!p) return setEnvStatus(null);
+    api.environmentStatus(vault, p).then(setEnvStatus, () => setEnvStatus(null));
+  };
+  useEffect(loadEnv, [vault, project]); // eslint-disable-line react-hooks/exhaustive-deps
+  const trustEnv = () => api.trustEnvironment(project.trim()).then(loadEnv, (e) => setError(String(e)));
   const chosen = workspaces.find((w) => w.rel === wsRel);
   // Still exactly the workspace: the request refers to it, so later edits to the workspace apply.
   const asChosen = !!chosen && (chosen.project ?? project) === project && JSON.stringify(chosen.directories) === JSON.stringify(dirs);
@@ -527,6 +536,20 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             {/* Choices with a catch are spelled out; the rest is in the tooltips. */}
             {!team && !worktree && (
               <p className="task-warn small">Works directly in the project: tasks in the same project can get in each other's way.</p>
+            )}
+            {envStatus?.from_repo && (envStatus.vars.length > 0 || envStatus.resources.length > 0) && (
+              envStatus.trusted ? (
+                <p className="muted small">.marq/environment.md is trusted: its variables are set for the agent{envStatus.resources.length > 0 ? ` and its ${envStatus.resources.length} resource${envStatus.resources.length > 1 ? "s are" : " is"} made before the agent starts` : ""}.</p>
+              ) : (
+                <div className="task-warn small">
+                  <p>This repository's <code>.marq/environment.md</code> asks to set environment variables for the agent{envStatus.resources.length > 0 ? " and to run commands on your machine to make and drop resources" : ""}. Marq does so only if you trust the file; until then the agent just reads them as text and nothing is run.</p>
+                  <pre>{[
+                    ...envStatus.vars.map(([k, v]) => `${k}=${v}`),
+                    ...envStatus.resources.flatMap(([n, c, x]) => [`${n} create: ${c}`, `${n} drop: ${x}`]),
+                  ].join("\n")}</pre>
+                  <button onClick={trustEnv} title="Remembered for this project until these variables change">Trust and apply</button>
+                </div>
+              )
             )}
             {!team && mode === "default" && (
               <p className="task-warn small">Ask: edits and commands wait in the session until you approve them.</p>

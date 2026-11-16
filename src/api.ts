@@ -21,6 +21,9 @@ async function timed<T>(cmd: string, args?: Parameters<typeof rawInvoke>[1], opt
   }
 }
 
+/** A project's environment note: what it names and sets, and whether a repository's variables are trusted. */
+export type EnvironmentStatus = { source: string; from_repo: boolean; ports: string[]; vars: [string, string][]; resources: [string, string, string][]; trusted: boolean };
+
 export type SearchHit = { path: string; rel: string; title: string | null; lines: [number, string][]; more: number };
 /** A past session that matches a search: its best lines, and how many lines matched in all. */
 export type SessionHit = {
@@ -200,6 +203,10 @@ export const api = {
     invoke<{ session_id: string; title: string; content: string }>("new_task", { vault, task }),
   /** Agents a task can run on: Claude, and others that speak ACP. */
   listAgents: () => invoke<AgentInfo[]>("list_agents"),
+  environmentStatus: (vault: string, project: string) => invoke<EnvironmentStatus | null>("environment_status", { vault, project }),
+  createEnvironmentNote: (vault: string, project: string) => invoke<string>("create_environment_note", { vault, project }),
+  createEnvironmentFile: (project: string) => invoke<string>("create_environment_file", { project }),
+  trustEnvironment: (project: string) => invoke<void>("trust_environment", { project }),
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {
     title: string; prompt: string; project: string; permissionMode?: string; model?: string; effort?: string; agent?: string; carryChanges: boolean; worktree: boolean; autoTitle: boolean;
@@ -231,6 +238,8 @@ export const api = {
     invoke<string>("session_create_pr", { vault, sessionId, message, repo }),
   sessionRenameBranch: (vault: string, sessionId: string, branch: string, repo?: string) =>
     invoke<Worktree>("session_rename_branch", { vault, sessionId, branch, repo }),
+  /** What an environment note's resources made for the session is dropped; returns what could not be. */
+  sessionReleaseResources: (vault: string, sessionId: string) => invoke<string[]>("session_release_resources", { vault, sessionId }),
   sessionRemoveWorktree: (vault: string, sessionId: string, repo?: string) => invoke<void>("session_remove_worktree", { vault, sessionId, repo }),
   listWorkspaces: (vault: string) => invoke<Workspace[]>("list_workspaces", { vault }),
   /** Saves the directories as `workspaces/<title>.md`; returns its path. */
