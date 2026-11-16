@@ -748,7 +748,13 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
         }
         if state == "done" {
             inbox::resolve_session(&app, &session_id);
-            if !app.state::<Runner>().is_alive(&session_id) {
+            // The agent process outlives its turns, so an idle session is stopped first: it would otherwise keep
+            // the worktree as its working directory. One in the middle of a turn is left alone.
+            let runner = app.state::<Runner>();
+            if !runner.is_busy(&session_id) {
+                if runner.is_alive(&session_id) {
+                    let _ = runner.stop(&app, &session_id);
+                }
                 remove_clean_worktrees(Path::new(&vault), &session_id);
             }
         }
