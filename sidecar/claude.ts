@@ -115,7 +115,7 @@ function sandbox(mode?: string | null) {
  * A PreToolUse hook for the environment note's `ask` and `deny`. It runs whatever the permission mode,
  * so even Auto, where a classifier decides, stops at a command the project wants to be asked about.
  */
-function ruleHooks(rules?: Rules) {
+export function ruleHooks(rules?: Rules) {
   if (!rules || (!rules.ask.length && !rules.deny.length)) return {};
   return {
     hooks: {

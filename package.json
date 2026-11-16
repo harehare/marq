@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "postinstall": "pnpm --dir sidecar install",
-    "check": "tsc --noEmit && tsc -p sidecar && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets && cargo test --manifest-path src-tauri/Cargo.toml"
+    "check": "tsc --noEmit && tsc -p sidecar && pnpm --dir sidecar test && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets && cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",
