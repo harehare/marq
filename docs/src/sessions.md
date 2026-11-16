@@ -98,6 +98,8 @@ vars:
 - Never deploy without asking. A migration runs on the shared database: check its state before you repeat one.
 ```
 
+Create one from the command palette: **New environment note** makes `environments/<project>.md` in the vault, and **Create .marq/environment.md** makes the repository's own file and opens it in VS Code. Both are for the project of your last task and start with the fields commented out. A vault note's folder does not matter; only `type: environment` does.
+
 There are two places for it:
 
 - **`.marq/environment.md` in the repository** is shared with everyone who clones it, and wins when both exist.

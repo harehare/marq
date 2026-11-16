@@ -158,6 +158,50 @@ fn load_with(vault: &Path, project: &str, trust: &Path) -> Option<Environment> {
     general
 }
 
+const FIELDS: &str = "# ports: [web, api]          # MARQ_PORT_WEB and MARQ_PORT_API: names for the ports reserved for each session
+# vars:                        # set in the agent's environment ({id} is the session's short id)
+#   DATABASE_URL: \"postgres://localhost/app_{id}\"
+";
+
+const RULES: &str = "<!-- Everything below goes into the system prompt of each session on the project, so keep it short.
+     This comment is not sent. For example:
+
+     - Start the dev server on $MARQ_PORT_WEB, never on 3000.
+     - Never deploy without asking. A migration runs on the shared database: check its state before you repeat one.
+-->
+## Rules
+";
+
+/// A vault note for `project`, created with the fields commented out so it can be filled in.
+pub fn ensure_note(vault: &Path, project: &str) -> Result<PathBuf> {
+    let name: String = vault::expand_home(project)
+        .file_name()
+        .map(|n| n.to_string_lossy().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect())
+        .unwrap_or_default();
+    let name = if name.is_empty() { "default".to_string() } else { name };
+    let path = vault.join("environments").join(format!("{name}.md"));
+    if !path.exists() {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        let project_line = if project.trim().is_empty() { String::new() } else { format!("project: {}\n", project.trim()) };
+        std::fs::write(&path, format!("---\ntype: {KIND}\ntitle: \"{name} environment\"\n{project_line}{FIELDS}---\n{RULES}"))?;
+    }
+    Ok(path)
+}
+
+/// The project's own `.marq/environment.md`, created the same way, to be committed with the code.
+pub fn ensure_repo_file(project: &str) -> Result<PathBuf> {
+    let root = vault::expand_home(project);
+    if project.trim().is_empty() || !root.is_dir() {
+        return Err(crate::error::Error::Other(format!("not a directory: {project}")));
+    }
+    let path = root.join(FILE);
+    if !path.exists() {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(&path, format!("---\n{FIELDS}---\n{RULES}"))?;
+    }
+    Ok(path)
+}
+
 /// What New task shows about the environment of a project.
 #[derive(Debug, Serialize)]
 pub struct Status {
@@ -213,6 +257,34 @@ mod tests {
         assert_eq!(e.vars, [("DATABASE_URL".to_string(), "postgres://localhost/app_{id}".to_string()), ("PORT".to_string(), "8080".to_string())]);
         assert!(e.body.contains("Never deploy") && !e.body.contains("hidden"));
         assert_eq!(expand(&e.vars[0].1, "abc12345"), "postgres://localhost/app_abc12345");
+    }
+
+    #[test]
+    fn a_new_note_is_valid_and_empty_and_is_not_overwritten() {
+        let vault = tempfile::tempdir().unwrap();
+        let path = ensure_note(vault.path(), "~/dev/git/my app").unwrap();
+        assert!(path.ends_with("environments/myapp.md"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(vault::fm_get(&text, "type").as_deref(), Some(KIND));
+        assert_eq!(vault::fm_get(&text, "project").as_deref(), Some("~/dev/git/my app"));
+        let e = parse(&text, "n.md", true);
+        assert!(e.ports.is_empty() && e.vars.is_empty());
+        assert_eq!(e.body, "## Rules");
+        std::fs::write(&path, "mine").unwrap();
+        ensure_note(vault.path(), "~/dev/git/my app").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
+        assert!(ensure_note(vault.path(), "").unwrap().ends_with("environments/default.md"));
+    }
+
+    #[test]
+    fn a_new_repository_file_is_empty_and_needs_a_directory() {
+        let repo = tempfile::tempdir().unwrap();
+        let project = repo.path().to_string_lossy().to_string();
+        let path = ensure_repo_file(&project).unwrap();
+        assert!(path.ends_with(".marq/environment.md"));
+        let e = parse(&std::fs::read_to_string(&path).unwrap(), "f", false);
+        assert!(e.ports.is_empty() && e.vars.is_empty() && e.body == "## Rules");
+        assert!(ensure_repo_file("").is_err() && ensure_repo_file("/no/such/dir").is_err());
     }
 
     #[test]

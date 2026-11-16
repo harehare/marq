@@ -204,6 +204,8 @@ export const api = {
   /** Agents a task can run on: Claude, and others that speak ACP. */
   listAgents: () => invoke<AgentInfo[]>("list_agents"),
   environmentStatus: (vault: string, project: string) => invoke<EnvironmentStatus | null>("environment_status", { vault, project }),
+  createEnvironmentNote: (vault: string, project: string) => invoke<string>("create_environment_note", { vault, project }),
+  createEnvironmentFile: (project: string) => invoke<string>("create_environment_file", { project }),
   trustEnvironment: (project: string) => invoke<void>("trust_environment", { project }),
   /** Saves the task as a request note in the Inbox without running it; returns its path in the vault. */
   saveTask: (vault: string, task: {

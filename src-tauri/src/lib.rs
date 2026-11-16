@@ -1264,6 +1264,20 @@ async fn list_commands(app: AppHandle, vault: String, cwd: Option<String>, sessi
     Ok(serde_json::Value::Array(list))
 }
 
+/// Creates the vault's environment note for a project (empty: for every project), to open and fill in.
+#[tauri::command]
+async fn create_environment_note(app: AppHandle, vault: String, project: String) -> Result<String> {
+    let p = blocking(move || environment::ensure_note(Path::new(&vault), &project)).await?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// Creates `.marq/environment.md` in a project, to be committed with its code.
+#[tauri::command]
+async fn create_environment_file(project: String) -> Result<String> {
+    Ok(blocking(move || environment::ensure_repo_file(&project)).await?.to_string_lossy().into_owned())
+}
+
 /// The environment note for a project, for New task to say what it sets and whether it is trusted.
 #[tauri::command]
 async fn environment_status(vault: String, project: String) -> Result<Option<environment::Status>> {
@@ -1767,6 +1781,8 @@ pub fn run() {
             list_approvals,
             list_agents,
             environment_status,
+            create_environment_note,
+            create_environment_file,
             trust_environment,
             list_commands,
             session_events,

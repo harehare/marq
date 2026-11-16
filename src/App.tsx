@@ -5,7 +5,7 @@ import {
   Inbox, BookA, ClipboardList, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CheckCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
-  ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft,
+  ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft, Server,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -279,6 +279,7 @@ function fileIcon(f: FileEntry) {
   if (f.kind === "knowledge") return <Lightbulb size={13} />;
   if (f.kind === "spec") return <ClipboardList size={13} />;
   if (f.kind === "workspace") return <FolderGit2 size={13} />;
+  if (f.kind === "environment") return <Server size={13} />;
   if (f.kind === "schedule") return <Timer size={13} />;
   if (f.kind === "board") return <Columns3 size={13} />;
   if (f.kind === "query") return <Braces size={13} />;
@@ -1425,6 +1426,17 @@ export default function App() {
       run: () => void api.knowledgePromotion(vault!).then((p) => { refreshFiles(); openNote(p); }),
     },
     "workspace.new": { label: "New workspace (a project and other directories to pick for tasks)", run: () => setNaming({ kind: "workspace", initial: "" }) },
+    "environment.new": {
+      label: "New environment note (ports, variables and rules for running next to other sessions), for the last task's project",
+      run: () => void api.createEnvironmentNote(vault!, lastProject()).then((p) => { refreshFiles(); openNote(p); }),
+    },
+    "environment.repo": {
+      label: "Create .marq/environment.md in the last task's project (shared with the repository)",
+      run: () => void api.createEnvironmentFile(lastProject()).then(
+        (p) => api.openIn(p, "vscode").catch(() => api.openIn(p, "reveal")),
+        (e) => message(`${e}\n\nStart a task in the project first, so that Marq knows which one it is.`, { title: "Environment file", kind: "warning" }),
+      ),
+    },
     "spec.new": { label: "New spec (requirements, design, tasks and acceptance, broken down into a board)", run: () => setNaming({ kind: "spec", initial: "" }) },
     "instructions.open": { label: "Standing instructions: rules every session follows", run: () => void api.instructionsPath(vault!).then((p) => openNote(p)) },
     "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
