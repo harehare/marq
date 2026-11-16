@@ -24,9 +24,25 @@
 //! are shown to the agent as text instead, and the agent sets them itself where needed, in a command
 //! the usual permissions apply to. Ports are only named, so they are always safe to take from it.
 //!
-//! The user can trust a repository's variables (New task asks). That is remembered in
-//! `~/.marq/trusted-environments.json` as the project and the exact variables trusted, so a change to
-//! them asks again.
+//! `resources:` names what a worktree cannot isolate, such as a database, and how to make one for
+//! each session and remove it again (see `resources`):
+//!
+//! ```yaml
+//! resources:
+//!   db:
+//!     create: createdb app_{id}              # run before the agent starts
+//!     drop: dropdb --if-exists app_{id}      # run when the session is done or deleted
+//!     env:
+//!       DATABASE_URL: postgres://localhost/app_{id}
+//! ```
+//!
+//! Both commands must contain `{id}`, so that one session cannot create or drop another's (or the
+//! shared) resource, and should be safe to run twice. Marq runs them itself, so they need the same
+//! trust as variables.
+//!
+//! The user can trust a repository's variables and commands (New task asks). That is remembered in
+//! `~/.marq/trusted-environments.json` as the project and the exact variables and commands trusted, so a
+//! change to them asks again.
 
 use std::path::{Path, PathBuf};
 
@@ -42,6 +58,16 @@ pub const KIND: &str = "environment";
 /// A session reserves this many ports, so this many can be named.
 pub const MAX_PORTS: usize = 4;
 
+/// Something made for a session and removed after it, from `resources:`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resource {
+    pub name: String,
+    pub create: String,
+    pub drop: String,
+    /// Set in the agent's environment once the resource exists. Unexpanded: `{id}` is still in the values.
+    pub env: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Environment {
     /// Where it was read from, for the agent and the user to see.
@@ -50,7 +76,10 @@ pub struct Environment {
     pub ports: Vec<String>,
     /// Unexpanded: `{id}` is still in the values.
     pub vars: Vec<(String, String)>,
-    /// Whether `vars` may be set: a vault note is the user's own, a repository's file has to be trusted.
+    pub resources: Vec<Resource>,
+    /// Resources that were left out and why, so that the agent and the user are not left guessing.
+    pub invalid: Vec<String>,
+    /// Whether `vars` may be set and `resources` made: a vault note is the user's own, a repository's file has to be trusted.
     pub trusted: bool,
     /// From a repository's file rather than a vault note.
     pub from_repo: bool,
@@ -85,6 +114,45 @@ fn vars_of(fm: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn str_of(y: &yaml_rust2::Yaml) -> Option<String> {
+    use yaml_rust2::Yaml;
+    match y {
+        Yaml::String(s) => Some(s.clone()),
+        Yaml::Integer(n) => Some(n.to_string()),
+        Yaml::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+fn resource_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn resources_of(fm: &str) -> (Vec<Resource>, Vec<String>) {
+    use yaml_rust2::{Yaml, YamlLoader};
+    let Some(doc) = YamlLoader::load_from_str(fm).ok().and_then(|d| d.into_iter().next()) else { return Default::default() };
+    let Yaml::Hash(map) = &doc["resources"] else { return Default::default() };
+    let (mut ok, mut bad) = (vec![], vec![]);
+    for (k, v) in map {
+        let Some(name) = k.as_str().filter(|n| resource_name_ok(n)) else { continue };
+        let create = str_of(&v["create"]).unwrap_or_default();
+        let drop = str_of(&v["drop"]).unwrap_or_default();
+        if create.trim().is_empty() || drop.trim().is_empty() {
+            bad.push(format!("{name}: it needs both create and drop"));
+        } else if !create.contains("{id}") || !drop.contains("{id}") {
+            // Without the id a command would act on a resource every session shares.
+            bad.push(format!("{name}: create and drop must both contain {{id}}"));
+        } else {
+            let env = match &v["env"] {
+                Yaml::Hash(h) => h.iter().filter_map(|(k, v)| Some((k.as_str()?.to_string(), str_of(v)?))).filter(|(k, _)| var_name_ok(k)).collect(),
+                _ => vec![],
+            };
+            ok.push(Resource { name: name.to_string(), create, drop, env });
+        }
+    }
+    (ok, bad)
+}
+
 /// An environment note's text. A note without frontmatter is all body.
 pub fn parse(text: &str, source: &str, trusted: bool) -> Environment {
     let (fm, body) = vault::split_frontmatter(text);
@@ -95,7 +163,8 @@ pub fn parse(text: &str, source: &str, trusted: bool) -> Environment {
         }
     }
     let body = memory::clip(&memory::without_comments(body));
-    Environment { source: source.into(), ports, vars: fm.map(vars_of).unwrap_or_default(), trusted, from_repo: false, body }
+    let (resources, invalid) = fm.map(resources_of).unwrap_or_default();
+    Environment { source: source.into(), ports, vars: fm.map(vars_of).unwrap_or_default(), resources, invalid, trusted, from_repo: false, body }
 }
 
 /// Where the variables the user trusted are remembered.
@@ -103,9 +172,14 @@ fn trust_file() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".marq/trusted-environments.json")
 }
 
-/// The variables as one string, to tell whether they are the ones that were trusted.
-fn vars_key(vars: &[(String, String)]) -> String {
-    let mut lines: Vec<String> = vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
+/// The variables and commands as one string, to tell whether they are the ones that were trusted.
+fn trust_key(e: &Environment) -> String {
+    let mut lines: Vec<String> = e.vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    for r in &e.resources {
+        lines.push(format!("resource {} create: {}", r.name, r.create));
+        lines.push(format!("resource {} drop: {}", r.name, r.drop));
+        lines.extend(r.env.iter().map(|(k, v)| format!("resource {} env {k}={v}", r.name)));
+    }
     lines.sort();
     lines.join("\n")
 }
@@ -118,7 +192,7 @@ fn trusted_vars(file: &Path, project: &str) -> Option<String> {
 /// Remembers that the user trusts the variables in `project`'s environment file as they are now.
 pub fn trust_in(file: &Path, project: &str) -> Result<()> {
     let text = std::fs::read_to_string(vault::expand_home(project).join(FILE))?;
-    let key = vars_key(&parse(&text, FILE, false).vars);
+    let key = trust_key(&parse(&text, FILE, false));
     let mut map: serde_json::Value = std::fs::read_to_string(file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| serde_json::json!({}));
     map[knowledge::norm(project)] = serde_json::Value::String(key);
     if let Some(dir) = file.parent() {
@@ -141,7 +215,7 @@ fn load_with(vault: &Path, project: &str, trust: &Path) -> Option<Environment> {
     if let Ok(text) = std::fs::read_to_string(vault::expand_home(project).join(FILE)) {
         let mut e = parse(&text, &format!("{FILE} in the repository"), false);
         e.from_repo = true;
-        e.trusted = e.vars.is_empty() || trusted_vars(trust, project).is_some_and(|k| k == vars_key(&e.vars));
+        e.trusted = (e.vars.is_empty() && e.resources.is_empty()) || trusted_vars(trust, project).is_some_and(|k| k == trust_key(&e));
         return Some(e);
     }
     let p = knowledge::norm(project);
@@ -209,12 +283,15 @@ pub struct Status {
     pub from_repo: bool,
     pub ports: Vec<String>,
     pub vars: Vec<(String, String)>,
+    /// Name, create and drop of each resource.
+    pub resources: Vec<(String, String, String)>,
     pub trusted: bool,
 }
 
 pub fn status(vault: &Path, project: &str) -> Option<Status> {
     let e = load(vault, project)?;
-    Some(Status { source: e.source, from_repo: e.from_repo, ports: e.ports, vars: e.vars, trusted: e.trusted })
+    let resources = e.resources.into_iter().map(|r| (r.name, r.create, r.drop)).collect();
+    Some(Status { source: e.source, from_repo: e.from_repo, ports: e.ports, vars: e.vars, resources, trusted: e.trusted })
 }
 
 /// `{id}` replaced by the session's short id.
@@ -232,6 +309,20 @@ pub fn system_prompt(env: &Environment, short: &str) -> String {
     if !env.ports.is_empty() {
         let names: Vec<String> = env.ports.iter().map(|p| format!("${{MARQ_PORT_{p}}}")).collect();
         out.push_str(&format!("\nPorts reserved for you by name: {}.", names.join(", ")));
+    }
+    if !env.resources.is_empty() {
+        let names: Vec<&str> = env.resources.iter().map(|r| r.name.as_str()).collect();
+        out.push_str(&if env.trusted {
+            format!(
+                "\nMarq made these for this session before you started and removes them when it is done: {}. Use them, and do not create or drop them yourself.",
+                names.join(", ")
+            )
+        } else {
+            format!("\nThe file lists resources ({}) that Marq has not made: the user has not trusted its commands. Do not assume they exist.", names.join(", "))
+        });
+    }
+    if !env.invalid.is_empty() {
+        out.push_str(&format!("\nThese resources were left out: {}.", env.invalid.join("; ")));
     }
     if !env.trusted && !env.vars.is_empty() {
         let lines: Vec<String> = env.vars.iter().map(|(k, v)| format!("- {k}={}", expand(v, short))).collect();

@@ -105,7 +105,28 @@ There are two places for it:
 - **`.marq/environment.md` in the repository** is shared with everyone who clones it, and wins when both exist.
 - **A note with `type: environment` in the vault**, with `project:` set to the project (or empty for every project).
 
-Up to four names are used. `vars:` from a vault note are set in the agent's environment. A repository's `vars:` are not, until you trust them: a file you cloned could otherwise set `PATH`, `NODE_OPTIONS` or `ANTHROPIC_BASE_URL` for the agent's process. **New task** lists them when you pick such a project, with **Trust and apply**. Until then the agent only reads them as text and sets them in the commands that need them, under the usual permissions. The choice is kept in `~/.marq/trusted-environments.json` for that project and those exact variables, so changing one asks again; editing the rest of the file does not. Tasks that start without the dialog (schedules, queued work) use what you trusted earlier. Naming ports is always safe, so it works from either place.
+Up to four names are used. `vars:` from a vault note are set in the agent's environment. A repository's `vars:` are not, and its `resources:` commands are not run, until you trust them: a file you cloned could otherwise set `PATH`, `NODE_OPTIONS` or `ANTHROPIC_BASE_URL` for the agent's process. **New task** lists them when you pick such a project, with **Trust and apply**. Until then the agent only reads them as text and sets them in the commands that need them, under the usual permissions. The choice is kept in `~/.marq/trusted-environments.json` for that project and those exact variables and commands, so changing one asks again; editing the rest of the file does not. Tasks that start without the dialog (schedules, queued work) use what you trusted earlier. Naming ports is always safe, so it works from either place.
+
+### Resources a worktree cannot isolate
+
+A database, a bucket prefix or a scratch directory is shared by every task, whatever its worktree. List them under `resources:` and Marq makes one for each session and removes it afterwards:
+
+```yaml
+resources:
+  db:
+    create: createdb app_{id}                  # run before the agent starts
+    drop: dropdb --if-exists app_{id}          # run when the session is done or deleted
+    env:
+      DATABASE_URL: postgres://localhost/app_{id}   # set for the agent once it exists
+```
+
+- **Create** runs in the session's directory, with `MARQ_SESSION_ID` and the `MARQ_PORT_*` variables, before the agent starts. If it fails (or takes more than two minutes) the session does not start and shows the output; **Resume** tries again. The agent is told these resources exist and not to create or drop them.
+- **Drop** runs when you mark the session done or delete it. If it fails, the error is shown, the resource stays on record, and marking the session done again retries it. Deleting the session still goes ahead; the message gives the command to run by hand.
+- **Both commands must contain `{id}`** (the session's short id), so that one session cannot create or drop another's resource, or one that everyone shares. A resource whose commands lack it is left out, and the agent is told so. Write both so that running them twice is harmless: a create that was cut off (the app stopped, the task was cancelled) is run again, and its drop runs even though nobody knows whether it finished.
+- **What was made** is kept in `.marq/resources/<session id>.json`, with the drop command as it was when the resource was made, so editing the note later does not change what is dropped. A resource that is `creating` or `failed` there is one whose state is unknown.
+- **Trust**: Marq runs these commands itself, outside the agent's permissions. A vault note is yours and is run as it is. A repository's file is only run after you trust it in **New task**, which lists the commands; changing one asks again. Until then nothing is run and the agent only reads about them.
+
+This covers what can be made per session. A database or service that must stay shared (staging, a third-party API) cannot be, so nothing here isolates it; say in the note's rules what the agent must not touch.
 
 Two sessions can occasionally draw the same block, and another program may hold a port; Marq does not check. Nothing is isolated beyond that: a migration or deploy still hits the shared database or target.
 

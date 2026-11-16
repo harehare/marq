@@ -16,6 +16,7 @@ mod navigation;
 mod organize;
 mod refs;
 mod relay;
+mod resources;
 mod scratch;
 mod session;
 mod shell;
@@ -747,6 +748,7 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
         if let Some(path) = session::set_review(Path::new(&vault), &session_id, &state, None)? {
             let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
         }
+        let mut release_failures = vec![];
         if state == "done" {
             inbox::resolve_session(&app, &session_id);
             // The agent process outlives its turns, so an idle session is stopped first: it would otherwise keep
@@ -757,10 +759,15 @@ async fn set_session_review(app: AppHandle, vault: String, session_id: String, s
                     let _ = runner.stop(&app, &session_id);
                 }
                 remove_clean_worktrees(Path::new(&vault), &session_id);
+                release_failures = sidecar::release_resources(&app, Path::new(&vault), &session_id);
             }
         }
         let _ = app.emit("sessions://changed", &session_id);
-        Ok(())
+        if release_failures.is_empty() {
+            Ok(())
+        } else {
+            Err(error::Error::Other(format!("the session is done, but its resources were not dropped: {}", release_failures.join("; "))))
+        }
     })
     .await
 }
@@ -1357,11 +1364,17 @@ fn remove_session(app: &AppHandle, vault: &str, session_id: &str, remove_worktre
             }
         }
     }
+    // What was made for the session goes with it. A drop that fails keeps its entry in .marq/resources.
+    let release_failures = sidecar::release_resources(app, v, session_id);
     progress(app, "Moving files to the Trash…");
     if let Some(path) = session::delete(v, session_id)? {
         let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
     }
-    Ok(())
+    if release_failures.is_empty() {
+        Ok(())
+    } else {
+        Err(error::Error::Other(format!("the session is deleted, but its resources were not dropped: {}", release_failures.join("; "))))
+    }
 }
 
 /// Sets a request's `status` (todo, running, review, done, dropped).

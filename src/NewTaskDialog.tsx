@@ -537,13 +537,16 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             {!team && !worktree && (
               <p className="task-warn small">Works directly in the project: tasks in the same project can get in each other's way.</p>
             )}
-            {envStatus?.from_repo && envStatus.vars.length > 0 && (
+            {envStatus?.from_repo && (envStatus.vars.length > 0 || envStatus.resources.length > 0) && (
               envStatus.trusted ? (
-                <p className="muted small">{envStatus.vars.length} variable{envStatus.vars.length > 1 ? "s" : ""} from .marq/environment.md are set for the agent (trusted).</p>
+                <p className="muted small">.marq/environment.md is trusted: its variables are set for the agent{envStatus.resources.length > 0 ? ` and its ${envStatus.resources.length} resource${envStatus.resources.length > 1 ? "s are" : " is"} made before the agent starts` : ""}.</p>
               ) : (
                 <div className="task-warn small">
-                  <p>This repository's <code>.marq/environment.md</code> asks to set environment variables for the agent. Marq sets them only if you trust the file; until then the agent just reads them as text.</p>
-                  <pre>{envStatus.vars.map(([k, v]) => `${k}=${v}`).join("\n")}</pre>
+                  <p>This repository's <code>.marq/environment.md</code> asks to set environment variables for the agent{envStatus.resources.length > 0 ? " and to run commands on your machine to make and drop resources" : ""}. Marq does so only if you trust the file; until then the agent just reads them as text and nothing is run.</p>
+                  <pre>{[
+                    ...envStatus.vars.map(([k, v]) => `${k}=${v}`),
+                    ...envStatus.resources.flatMap(([n, c, x]) => [`${n} create: ${c}`, `${n} drop: ${x}`]),
+                  ].join("\n")}</pre>
                   <button onClick={trustEnv} title="Remembered for this project until these variables change">Trust and apply</button>
                 </div>
               )

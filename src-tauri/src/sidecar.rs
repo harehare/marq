@@ -128,7 +128,7 @@ const PORT_RANGE: (u16, u16) = (20000, 10000);
 /// - `MARQ_SESSION_ID`: the session's short id, for naming databases, containers or temp directories.
 /// - `MARQ_PORT_1`…`MARQ_PORT_4`: ports reserved for this session. Two sessions can still draw the
 ///   same block (rarely), and a port can be taken by another program: the agent is told to check.
-fn session_env(id: &str, env: Option<&Environment>) -> Value {
+pub(crate) fn session_env(id: &str, env: Option<&Environment>) -> Value {
     let short = &id[id.len().saturating_sub(8)..];
     // FNV-1a: stable across runs and Rust versions, unlike the std hasher.
     let hash = id.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
@@ -145,7 +145,7 @@ fn session_env(id: &str, env: Option<&Environment>) -> Value {
             out.insert(format!("MARQ_PORT_{name}"), json!((base + i as u64).to_string()));
         }
         if e.trusted {
-            for (k, v) in &e.vars {
+            for (k, v) in e.vars.iter().chain(e.resources.iter().flat_map(|r| &r.env)) {
                 out.insert(k.clone(), json!(environment::expand(v, short)));
             }
         }
@@ -160,6 +160,27 @@ for you in $MARQ_PORT_1 to $MARQ_PORT_4 (for example `PORT=$MARQ_PORT_1 npm run 
 the names of databases, containers and temp directories you create. If a reserved port is already in use, \
 take another free one rather than stopping the process that holds it, which may belong to another session. \
 A command that was cut off before it reported its result (a migration, a deploy) may have run: check before you repeat it.";
+
+/// Makes the resources the project's environment note lists for the session, if it is trusted.
+fn provision_resources(app: &AppHandle, vault: &Path, meta: &SessionMeta) -> Result<()> {
+    let Some(env) = environment::load(vault, meta.project()) else { return Ok(()) };
+    let progress = |s: &str| {
+        let _ = app.emit("task://progress", s);
+    };
+    crate::resources::provision(vault, &meta.id, &vault::expand_home(&meta.cwd), &env, &session_env(&meta.id, Some(&env)), &progress)
+}
+
+/// Drops what was made for the session. Returns what could not be dropped.
+pub fn release_resources(app: &AppHandle, vault: &Path, id: &str) -> Vec<String> {
+    if crate::resources::ledger(vault, id).is_empty() {
+        return vec![];
+    }
+    let env = session::meta(vault, id).ok().and_then(|m| environment::load(vault, m.project()));
+    let progress = |s: &str| {
+        let _ = app.emit("task://progress", s);
+    };
+    crate::resources::release(vault, id, &session_env(id, env.as_ref()), &progress)
+}
 
 /// The sidecar command that starts a session's process. Crew members also get the crew's
 /// system prompt, the crew tools and read access to the other members' directories.
@@ -255,6 +276,12 @@ impl Runner {
             // A crew member's model can change between turns.
             json!({"op": "send", "id": id, "text": prompt, "model": meta.model})
         } else {
+            // What a worktree cannot isolate (a database) is made first. A failure ends the session with its
+            // reason; resuming it tries again.
+            if let Err(e) = provision_resources(&app, &vault, &meta) {
+                finish(&app, &id, "error", Some(&e.to_string()));
+                return Err(e);
+            }
             start_cmd(&vault, &meta, &prompt, turn == Turn::Resume)
         };
         if let Err(e) = self.send(&app, cmd) {
