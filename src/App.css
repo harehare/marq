@@ -2391,3 +2391,12 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .sidebar.flyout[data-panel="recent"] .recent-dock > .resizer { display: none; }
 .sidebar.flyout[data-panel="recent"] .recent-dock > .section-title .chev { display: none; }
 .sidebar.flyout[data-panel="recent"] .recent-list { height: auto !important; flex: 1; }
+/* Suggested next steps under the last message of a turn. */
+.next-actions { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
+.next-action {
+  display: flex; align-items: flex-start; gap: 8px; text-align: left; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg-raised);
+}
+.next-action:hover { border-color: var(--accent); }
+.next-mark { flex: none; margin-top: 3px; color: var(--accent); }
+.next-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

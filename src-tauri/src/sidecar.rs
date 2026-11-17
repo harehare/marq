@@ -91,6 +91,14 @@ fn launch() -> Launch {
     Launch::Script(Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.ts"))
 }
 
+/// Asks for the suggested next steps that marq shows as buttons under the last message of a turn.
+const NEXT_NOTE: &str = "\n\nWhen you finish a piece of work, or need the user to choose how to go on, end your last \
+message with one code block whose info string is `next` and whose body is a one-line JSON array of 1 to 3 \
+suggested next steps, most useful first: [{\"label\":\"...\",\"prompt\":\"...\",\"reason\":\"...\"}]. \
+label is at most 30 characters, prompt is the full instruction you would receive if the user picked it (at most \
+300 characters), reason is at most 80 characters. marq shows them as buttons and sends the prompt on a click. Put \
+questions with a few answers there instead of asking in prose. Leave the block out when nothing sensible follows.";
+
 const SYSTEM_APPEND: &str = "You are running inside marq, the user's Markdown knowledge base (the vault). \
 The MCP server \"marq\" can search_notes, query_notes (mq queries) and read_note to look up the user's notes, \
 earlier sessions and their learnings for background; search_sessions finds past sessions by what was said or done in them. \
@@ -186,6 +194,7 @@ pub fn release_resources(app: &AppHandle, vault: &Path, id: &str) -> Vec<String>
 /// system prompt, the crew tools and read access to the other members' directories.
 fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Value {
     let mut system = SYSTEM_APPEND.to_string();
+    system.push_str(NEXT_NOTE);
     let mut dirs = vec![];
     system.push_str(&memory::system_prompt(vault, &meta.id));
     system.push_str(&knowledge::for_project(vault, meta.project()));

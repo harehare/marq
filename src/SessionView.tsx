@@ -3,12 +3,13 @@ import { isSendKey, sendHint, useSettings } from "./settings";
 import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowUp, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
+  ArrowUp, ArrowRight, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
   FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
 import { Md } from "./markdown/Md";
+import { splitNext, type NextAction } from "./nextActions";
 import { ChangesPanel } from "./review/ChangesPanel";
 import { OriginNotePanel } from "./review/OriginNotePanel";
 import { SessionDocsPanel } from "./review/SessionDocsPanel";
@@ -36,6 +37,7 @@ type Item =
   | { kind: "text"; text: string }
   | { kind: "tool"; name: string; toolKind: string; arg: string; result?: string }
   | { kind: "info"; text: string; error?: boolean }
+  | { kind: "next"; actions: NextAction[] }
   | { kind: "doc"; path: string; title: string; created: boolean }
   | { kind: "crew"; path: string; title: string }
   /** Markdown files the turn wrote or edited, shown when it ends. */
@@ -86,7 +88,9 @@ function toItems(events: SessionEvent[]): Item[] {
   for (const e of events) {
     if (e.type === "marq_user") items.push({ kind: "user", text: e.text });
     else if (e.type === "text") {
-      if (e.text.trim()) items.push({ kind: "text", text: e.text });
+      const { text, actions } = splitNext(e.text);
+      if (text.trim()) items.push({ kind: "text", text });
+      if (actions.length) items.push({ kind: "next", actions });
     } else if (e.type === "tool_call") {
       const file = toolArg(e.input);
       if (e.kind === "edit" && /\.(md|markdown)$/i.test(file) && !written.includes(file)) written.push(file);
@@ -276,6 +280,9 @@ function PermissionCard({ a }: { a: Approval }) {
 
 type ListProps = {
   vault: string;
+  /** Sends a suggested next step; its buttons show only while the turn is over and nothing came after. */
+  onNext: (prompt: string) => void;
+  idle: boolean;
   events: SessionEvent[];
   onOpenOrigin: (path: string, line: number) => void;
   onOpenSession: (id: string, title: string) => void;
@@ -285,9 +292,10 @@ type ListProps = {
 
 /** The conversation. Memoized so typing in the composer does not render every message again;
  * a new event renders the list, and Md/ToolRow skip the messages that did not change. */
-const MessageList = memo(function MessageList({ vault, events, onOpenOrigin, onOpenSession, onOpenCrew, onError }: ListProps) {
+const MessageList = memo(function MessageList({ vault, onNext, idle, events, onOpenOrigin, onOpenSession, onOpenCrew, onError }: ListProps) {
   const items = useMemo(() => toItems(events), [events]);
   const openNote = useCallback((path: string) => onOpenOrigin(path, 0), [onOpenOrigin]);
+  const lastNext = items.map((x) => x.kind).lastIndexOf("next");
   return (
     <>
     {items.map((it, i) => {
@@ -298,6 +306,18 @@ const MessageList = memo(function MessageList({ vault, events, onOpenOrigin, onO
           return <div key={i} className="msg assistant"><Md onOpenNote={openNote}>{it.text}</Md></div>;
         case "tool":
           return <ToolRow key={i} item={it} />;
+        case "next":
+          // Only the last suggestions of an idle session; earlier ones are history.
+          return idle && i === lastNext && items.slice(i + 1).every((x) => x.kind === "info" || x.kind === "files") ? (
+            <div key={i} className="next-actions">
+              {it.actions.map((a) => (
+                <button key={a.label} className="next-action" title={a.prompt} onClick={() => onNext(a.prompt)}>
+                  <ArrowRight size={13} className="next-mark" />
+                  <span className="next-text"><b>{a.label}</b>{a.reason && <span className="muted small">{a.reason}</span>}</span>
+                </button>
+              ))}
+            </div>
+          ) : null;
         case "info":
           return <div key={i} className={`info ${it.error ? "err" : ""}`}>{it.text}</div>;
         case "doc":
@@ -685,7 +705,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           onQuote={(text) => compose(`<excerpt source="session: ${title.replace(/"/g, "'")}">\n${text.trim()}\n</excerpt>\n\n`)}
           onSend={(text) => onSendExcerpt({ text, source: `session: ${title}`, from: { id: sessionId, title } })} />
         <div className="messages-inner">
-          <MessageList vault={vault} events={events} onOpenOrigin={onOpenOrigin} onOpenSession={onOpenSession}
+          <MessageList vault={vault} onNext={(p) => void sendText(p).catch((e) => setError(String(e)))} idle={!running} events={events} onOpenOrigin={onOpenOrigin} onOpenSession={onOpenSession}
             onOpenCrew={onOpenCrew} onError={setError} />
           {approvals.map((a) => <ApprovalCard key={a.request_id} a={a} />)}
           {running && approvals.length === 0 && (
