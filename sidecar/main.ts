@@ -1,6 +1,7 @@
 // marq sidecar: runs agent sessions and talks to the Tauri app over stdio.
 // Each line on stdin is a command from the app, each line on stdout is an event.
 // Agents plug in as backends (agent.ts); this file holds what is the same for all of them.
+import { statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import type { AgentBackend, AgentSession, ApprovalDecision, ApprovalRequest, SessionHost } from "./agent.ts";
 import { acp } from "./acp.ts";
@@ -23,6 +24,14 @@ async function reply(reqId: string, run: () => Promise<unknown>, ev = "reply", k
   } catch (e) {
     emit({ ev, reqId, error: message(e) });
   }
+}
+
+/**
+ * Throws when `cwd` is not a directory. Spawning an agent there fails with ENOENT, which reads as
+ * the agent's executable being missing or broken, so say what is wrong before it gets that far.
+ */
+function checkCwd(cwd: string) {
+  if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`the working directory does not exist: ${cwd}`);
 }
 
 // An idle session's process is closed after this long. The next message resumes it.
@@ -89,6 +98,7 @@ function start(c: Extract<Command, { op: "start" }>) {
   try {
     // A sandbox the agent cannot provide must not be dropped silently: the user asked for it.
     if (c.sandbox && c.agent && c.agent !== "claude") throw new Error(`the sandbox is only available for Claude sessions, not ${c.agent}`);
+    checkCwd(c.cwd);
     entry = { session: backendFor(c.agent).start({ ...c, crew: !!c.crew }, host), alwaysAllow: new Set() };
   } catch (e) {
     emit({ ev: "exit", id: c.id, status: "error", error: message(e) });
@@ -130,6 +140,7 @@ function stop(id: string) {
 function commands(c: Extract<Command, { op: "commands" }>) {
   const running = c.id ? active.get(c.id)?.session : undefined;
   if (running?.commands) return running.commands();
+  checkCwd(c.cwd);
   return backendFor(c.agent).commands({ cwd: c.cwd, executable: c.executable });
 }
 
