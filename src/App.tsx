@@ -2012,7 +2012,8 @@ export default function App() {
       {sidebarOpen && !railOn && <Resizer axis="x" sign={1} pane={sidebar}
         preview={(v) => sidebarRef.current && (sidebarRef.current.style.width = `${v}px`)} />}
       <main>
-        {pinnedRow ? (
+        {/* With no tabs, the bar has nothing to hold (unless it carries the show-sidebar button), so it is left out. */}
+        {tabs.length === 0 && !showSidebar ? null : pinnedRow ? (
           <>
             {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
               {pinned.map(tabEl)}
