@@ -245,6 +245,9 @@ export const api = {
   /** Saves the directories as `workspaces/<title>.md`; returns its path. */
   createWorkspace: (vault: string, title: string, project: string, directories: DirSpec[]) =>
     invoke<string>("create_workspace", { vault, title, project, directories }),
+  /** Overwrites a workspace note's project and directories; the rest of the note stays. */
+  updateWorkspace: (path: string, project: string, directories: DirSpec[]) =>
+    invoke<void>("update_workspace", { path, project, directories }),
   openIn: (path: string, app: "finder" | "vscode" | "reveal") => invoke<void>("open_in", { path, app }),
   deleteSession: (vault: string, sessionId: string, removeWorktree: boolean, deleteBranch: boolean) =>
     invoke<void>("delete_session", { vault, sessionId, removeWorktree, deleteBranch }),

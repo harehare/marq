@@ -932,6 +932,14 @@ fn create_workspace(app: AppHandle, vault: String, title: String, project: Strin
     Ok(p.to_string_lossy().into_owned())
 }
 
+/// Overwrites a workspace note's project and directories.
+#[tauri::command]
+fn update_workspace(app: AppHandle, path: String, project: String, directories: Vec<workspace::DirSpec>) -> Result<()> {
+    workspace::update(Path::new(&path), &project, &directories)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
+    Ok(())
+}
+
 /// Writes a new spec note from the template and returns its path.
 #[tauri::command]
 fn new_spec(app: AppHandle, vault: String, title: String) -> Result<String> {
@@ -1772,6 +1780,7 @@ pub fn run() {
             spec_to_board,
             list_workspaces,
             create_workspace,
+            update_workspace,
             wikilink_open,
             board_create,
             board_read,

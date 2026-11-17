@@ -136,14 +136,22 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     const dir = await open({ directory: true });
     if (typeof dir === "string") setDirs([...dirs, { path: dir.replace(/^\/Users\/[^/]+/, "~"), worktree: true }]);
   };
-  const saveWorkspace = async () => {
-    if (!savingAs?.trim()) return;
+  // A name that is already a workspace's: saving overwrites that one instead of adding a second.
+  const sameName = savingAs?.trim() ? workspaces.find((w) => w.title.toLowerCase() === savingAs.trim().toLowerCase()) : undefined;
+  /** Saves the project and directories: over `target` when given, else as a new workspace. */
+  const saveWorkspace = async (target = sameName) => {
+    if (!target && !savingAs?.trim()) return;
     try {
-      const path = await api.createWorkspace(vault, savingAs.trim(), project, dirs.filter((d) => d.path.trim()));
+      // Without the empty rows, in the dialog too, so it reads as the saved workspace afterwards.
+      const kept = dirs.filter((d) => d.path.trim());
+      const path = target
+        ? (await api.updateWorkspace(target.path, project, kept), target.path)
+        : await api.createWorkspace(vault, savingAs!.trim(), project, kept);
       const list = await api.listWorkspaces(vault);
       setWorkspaces(list);
-      const made = list.find((w) => w.path === path);
-      if (made) setWsRel(made.rel);
+      const saved = list.find((w) => w.path === path);
+      if (saved) setWsRel(saved.rel);
+      setDirs(kept);
       setSavingAs(null);
     } catch (e) {
       setError(String(e));
@@ -409,12 +417,19 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                   <button className="link" onClick={addDir} title="Let the agent read and edit another directory too"><FolderPlus size={13} /> Add a directory</button>
                   <button className="link" onClick={() => setSavingAs("")} disabled={!project.trim() && !dirs.length}
                     title="Save the project and these directories as a workspace note, to pick them again"><Save size={13} /> Save as workspace</button>
+                  {chosen && !asChosen && (
+                    <button className="link" onClick={() => saveWorkspace(chosen)}
+                      title={`Overwrite the workspace "${chosen.title}" with this project and these directories. Requests that refer to it use them from then on.`}>
+                      <Save size={13} /> Update “{chosen.title}”</button>
+                  )}
                 </div>
               ) : (
                 <div className="project-row">
                   <input autoFocus value={savingAs} onChange={(e) => setSavingAs(e.target.value)} placeholder="Workspace name"
                     onKeyDown={(e) => { if (e.key === "Enter") saveWorkspace(); if (e.key === "Escape") { e.stopPropagation(); setSavingAs(null); } }} />
-                  <button className="primary" onClick={saveWorkspace} disabled={!savingAs.trim()}>Save</button>
+                  <button className="primary" onClick={() => saveWorkspace()} disabled={!savingAs.trim()}
+                    title={sameName ? `A workspace named "${sameName.title}" exists: this overwrites its project and directories` : undefined}>
+                    {sameName ? "Overwrite" : "Save"}</button>
                 </div>
               )}
             </Section>

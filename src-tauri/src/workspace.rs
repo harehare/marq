@@ -153,6 +153,35 @@ pub fn create(vault: &Path, title: &str, project: &str, dirs: &[DirSpec], notes:
     Ok(path)
 }
 
+/// Overwrites a workspace note's project and directories. Its id, title, other keys and body stay
+/// as written.
+pub fn update(path: &Path, project: &str, dirs: &[DirSpec]) -> Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    if vault::fm_get(&text, "type").as_deref() != Some("workspace") {
+        return Err(Error::Other(format!("{} is not a workspace note", path.display())));
+    }
+    let text = vault::fm_set(&text, "project", &serde_json::to_string(project.trim()).unwrap());
+    let (Some(fm), body) = vault::split_frontmatter(&text) else { return Ok(()) };
+    let block = if dirs.is_empty() { "directories: []\n".to_string() } else { render_dirs(dirs) };
+    // The old block: the `directories:` line and the list under it.
+    let (mut lines, mut in_block, mut placed) = (String::new(), false, false);
+    for l in fm.lines() {
+        if l.starts_with("directories:") {
+            (in_block, placed) = (true, true);
+            lines.push_str(&block);
+        } else if !(in_block && (l.trim().is_empty() || l.starts_with([' ', '\t', '-']))) {
+            in_block = false;
+            lines.push_str(l);
+            lines.push('\n');
+        }
+    }
+    if !placed {
+        lines.push_str(&block);
+    }
+    std::fs::write(path, format!("---\n{lines}---\n{body}"))?;
+    Ok(())
+}
+
 /// What a request runs on: its project (else the workspace's), the other directories (its own,
 /// else the workspace's), and the workspace's notes for the agent.
 pub struct Resolved {
@@ -287,6 +316,27 @@ mod tests {
         let r = resolve(&dir, "---\nworkspace: mq + docs\nproject: ~/x\ndirectories:\n  - ~/y\n---\n").unwrap();
         assert_eq!((r.project.as_deref(), r.dirs[0].path.as_str()), (Some("~/x"), "~/y"));
         assert!(resolve(&dir, "---\nworkspace: nope\n---\n").is_err());
+
+        // Overwriting keeps the note's id and body, and replaces the project and the list.
+        let before = std::fs::read_to_string(&ws).unwrap();
+        let new = [DirSpec { path: "~/dev/site".into(), worktree: false }, DirSpec { path: "~/dev/lib".into(), worktree: true }];
+        update(&ws, "~/dev/mq2", &new).unwrap();
+        let after = std::fs::read_to_string(&ws).unwrap();
+        let w = parse(&after, &ws, &dir).unwrap();
+        assert_eq!((w.title.as_str(), w.project.as_deref(), w.notes.as_str()), ("mq + docs", Some("~/dev/mq2"), "docs live here"));
+        assert_eq!(w.directories, new);
+        assert_eq!(vault::fm_get(&after, "id"), vault::fm_get(&before, "id"));
+        assert!(!after.contains("~/dev/docs"));
+        // To none, and back from the empty form.
+        update(&ws, "", &[]).unwrap();
+        let w = parse(&std::fs::read_to_string(&ws).unwrap(), &ws, &dir).unwrap();
+        assert_eq!((w.project, w.directories.len()), (None, 0));
+        update(&ws, "~/dev/mq", &new[..1]).unwrap();
+        assert_eq!(parse(&std::fs::read_to_string(&ws).unwrap(), &ws, &dir).unwrap().directories, new[..1]);
+        // Only workspace notes.
+        let other = dir.join("note.md");
+        std::fs::write(&other, "---\ntype: request\n---\n").unwrap();
+        assert!(update(&other, "~/x", &[]).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

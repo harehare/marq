@@ -59,7 +59,7 @@ directories:
 mq-docs is the documentation site; update it when a feature changes.
 ```
 
-Choose it under **Workspace** in the New task dialog. A request that uses a workspace unchanged records `workspace: workspaces/mq-docs.md`, so later edits to the workspace apply to it. If you change the directories in the dialog, the request lists them itself instead. The workspace's body goes to the agent as context. A request's own `project:` and `directories:` take precedence over the workspace's.
+Choose it under **Workspace** in the New task dialog. A request that uses a workspace unchanged records `workspace: workspaces/mq-docs.md`, so later edits to the workspace apply to it. If you change the directories in the dialog, the request lists them itself instead. To keep the change, choose **Update "name"** to overwrite the workspace, or **Save as workspace** with the name of an existing workspace. Overwriting replaces the note's project and directories, and keeps its text. The workspace's body goes to the agent as context. A request's own `project:` and `directories:` take precedence over the workspace's.
 
 Schedules (`workspace:` or `directories:`) and [crews](crews-and-boards.md#workspaces) take a workspace too.
 
