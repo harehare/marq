@@ -571,7 +571,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
         </div>
       )}
       <div className={`note-body mode-${mode}`}>
-        <div className="split" ref={splitRef}>
+        <div className="note-split" ref={splitRef}>
         {mode !== "preview" && (
           <div className="editor-wrap" style={mode === "split" ? { flex: `0 0 ${split.size / 10}%` } : undefined}>
             <CodeMirror
