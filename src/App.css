@@ -2411,3 +2411,8 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .steps-list li svg { flex: none; margin-top: 2px; }
 .steps-list li.in_progress { color: var(--fg-strong); }
 .steps-list li.completed span { text-decoration: line-through; }
+/* Earlier prompts in New task, under an empty box. */
+.task-recent { display: flex; flex-direction: column; gap: 2px; }
+.task-recent > .muted { display: inline-flex; align-items: center; gap: 4px; padding: 0 2px 2px; }
+.task-recent-item { display: flex; min-width: 0; text-align: left; padding: 4px 8px; border: 1px solid transparent; background: transparent; color: var(--fg); font-size: 12.5px; }
+.task-recent-item:hover { background: var(--bg-hover); border-color: var(--border); }

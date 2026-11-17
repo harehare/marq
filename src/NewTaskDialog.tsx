@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { ChevronRight, FolderGit2, FolderPlus, FolderSearch, GitCompare, Layers, Loader2, Save, Sparkles, Users, X } from "lucide-react";
+import { ChevronRight, FolderGit2, History, FolderPlus, FolderSearch, GitCompare, Layers, Loader2, Save, Sparkles, Users, X } from "lucide-react";
 import { api, type AgentInfo, type DirSpec, type EnvironmentStatus, type TaskChecks, type Workspace } from "./api";
 import { SlashTextarea } from "./SlashTextarea";
 import { usePastes } from "./pastes";
 import { CodexModelInput, EffortSelect, ModelSelect, effortsOf, useAgentModels } from "./ModelSelect";
 import { QueryContext } from "./queryContext";
+import { loadTaskHistory, saveTaskPrompt } from "./taskHistory";
 
 type Props = {
   vault: string;
@@ -72,6 +73,9 @@ function stored(key: string, fallback: string) {
 export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSaved, onStartedCompare, initialPrompt = "", context }: Props) {
   const [prompt, setPrompt] = useState(initialPrompt || context?.prompt || "");
   const pastes = usePastes();
+  // The latest few, shown under an empty box; ↑ / ↓ in the box walks through all of them.
+  const [recent] = useState(() => loadTaskHistory().reverse());
+  const recall = useRef<number | null>(null);
   const [title, setTitle] = useState("");
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState(() => stored(PROJECT_KEY, ""));
@@ -225,6 +229,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
 
   const start = async () => {
     if (!prompt.trim()) return;
+    saveTaskPrompt(prompt);
     setBusy(true);
     setStage("Saving the request…");
     try {
@@ -291,6 +296,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   /** Saves the request, and with `queue` puts it in the inbox so it starts when there is room. */
   const save = async (queue = false) => {
     if (!prompt.trim()) return;
+    saveTaskPrompt(prompt);
     setBusy(true);
     setStage(queue ? "Queueing the request…" : "Saving the request…");
     try {
@@ -351,8 +357,28 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               placeholder={context ? "What should the agent do with these results?  Type / for skills and commands" : "Describe the task…  Type / for skills and commands"}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") start();
+                // From an empty box (or one still showing a recalled prompt), so the arrows keep moving the caret otherwise.
+                const at = recall.current;
+                const untouched = at === null ? !prompt : prompt === recent[at];
+                if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.nativeEvent.isComposing && untouched && recent.length) {
+                  const next = e.key === "ArrowUp" ? Math.min(recent.length - 1, (at ?? -1) + 1) : (at ?? 0) - 1;
+                  if (e.key === "ArrowDown" && at === null) return;
+                  e.preventDefault();
+                  recall.current = next < 0 ? null : next;
+                  setPrompt(next < 0 ? "" : recent[next]);
+                }
               }}
             />
+            {!prompt.trim() && !context && recent.length > 0 && (
+              <div className="task-recent">
+                <span className="muted small"><History size={11} /> Recent · ↑ to step through</span>
+                {recent.slice(0, 4).map((t) => (
+                  <button key={t} className="task-recent-item" title={t} onClick={() => { setPrompt(t); promptRef.current?.focus(); }}>
+                    <span className="ellipsis">{t.replace(/\s+/g, " ")}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {context && (
               <div className="query-context">
                 <p className="muted small">
