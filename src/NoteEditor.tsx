@@ -1,6 +1,9 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { EditorView, ReactCodeMirrorRef, type ViewUpdate } from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
+import { LanguageDescription, LanguageSupport } from "@codemirror/language";
+import { languages } from "@codemirror/language-data";
+import { mq } from "./mqLang";
 import { listen } from "@tauri-apps/api/event";
 import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X, KanbanSquare, MessageSquare } from "lucide-react";
 import { parseFrontmatter } from "./markdown/segments";
@@ -22,7 +25,12 @@ import { composing, FIND_EVENT } from "./keys";
 const wikiCompletions = EditorState.languageData.of(() => [{ autocomplete: wikiCompletion }]);
 
 // Built once: the editor reconfigures itself, parsing the whole note again, whenever these change identity.
-const EXTENSIONS = [markdown(), editorHighlight, EditorView.lineWrapping, wikiCompletions];
+// ```mq blocks in Markdown get mq's colors; the other fenced languages load on demand.
+const mqSupport = new LanguageSupport(mq);
+const mqDescription = LanguageDescription.of({ name: "mq", alias: ["mq"], extensions: ["mq"], support: mqSupport });
+const MARKDOWN = markdown({ codeLanguages: [mqDescription, ...languages] });
+const EXTENSIONS = [MARKDOWN, editorHighlight, EditorView.lineWrapping, wikiCompletions];
+const PLAIN_EXTENSIONS = [editorHighlight, EditorView.lineWrapping];
 // `[editor] vim`: Vim keys with a mode line. `marq-vim` lets the app leave ⌃-keys to Vim while it is focused.
 const VIM_EXTENSIONS = [vim({ status: true }), EditorView.editorAttributes.of({ class: "marq-vim" }), ...EXTENSIONS];
 /** Dispatched by `:w`; `detail` is the CodeMirror view that ran it. */
@@ -78,10 +86,35 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   // The preview follows the text at a lower priority, so typing in the editor never waits for it.
   const previewText = useDeferredValue(text);
   const [dirty, setDirty] = useState(false);
-  const [mode, setMode] = useState<Mode>(() => {
+  // Anything but a vault Markdown note is plain text in the editor: no preview, no frontmatter, no panels.
+  const external = !path.startsWith(`${vault}/`);
+  const plain = external || !/\.md$/i.test(path);
+  const [chosenMode, setMode] = useState<Mode>(() => {
     const m = initialMode();
     return fresh && m === "preview" ? "edit" : m;
   });
+  const mode: Mode = plain ? "edit" : chosenMode;
+  // The language of a code file loads on demand, by its file name.
+  const [lang, setLang] = useState<{ path: string; ext: LanguageSupport } | null>(null);
+  useEffect(() => {
+    if (!plain) return;
+    const desc = LanguageDescription.matchFilename([mqDescription, ...languages], path.split("/").pop() ?? "");
+    let alive = true;
+    desc?.load().then((ext) => alive && setLang({ path, ext }), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [plain, path]);
+  const vimPlain = useSettings().editor?.vim === true;
+  const plainExtensions = useMemo(() => {
+    const base = lang?.path === path ? [lang.ext, ...PLAIN_EXTENSIONS] : PLAIN_EXTENSIONS;
+    return vimPlain ? [...VIM_EXTENSIONS.slice(0, 2), ...base] : base;
+  }, [lang, path, vimPlain]);
+  const readText = useCallback(() => (external ? api.readFile(path) : api.readNote(vault, path)), [external, vault, path]);
+  const writeText = useCallback(
+    (content: string) => (external ? api.writeFile(path, content) : api.writeNote(vault, path, content)),
+    [external, vault, path],
+  );
   const [showLinks, setShowLinks] = useState(true);
   const [copied, setCopied] = useState(false);
   // ⌥-click copies the file as it is, frontmatter included.
@@ -135,7 +168,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     setDirty(false);
   }, []);
 
-  const load = useCallback(async () => loaded(await api.readNote(vault, path)), [vault, path, loaded]);
+  const load = useCallback(async () => loaded(await readText()), [readText, loaded]);
 
   useEffect(() => {
     load().catch((e) => setError(String(e)));
@@ -144,14 +177,14 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   /** Picks up a change made on disk, unless there are unsaved edits. */
   const reconcile = useCallback(async () => {
     if (saved.current === null) return;
-    const disk = await api.readNote(vault, path).catch(() => null);
+    const disk = await readText().catch(() => null);
     if (disk === null || disk === saved.current) return;
     if (dirtyRef.current) {
       conflict.current = true;
       setConflicted(true);
       setError("This note was changed on disk. Autosave is paused; saving (⌘S) will overwrite it.");
     } else loaded(disk);
-  }, [vault, path, loaded, setError]);
+  }, [readText, loaded, setError]);
 
   // When marq writes a result back into this note.
   useEffect(() => {
@@ -173,6 +206,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   }, [active, reconcile]);
 
   const refreshLinks = useCallback(async (content: string) => {
+    if (plain) return;
     const found = await api.noteAnchors(content);
     const all = await api.listSessions(vault);
     const id = content.match(/^id:\s*(\S+)/m)?.[1];
@@ -184,7 +218,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     const ids = fm.get("type") === "doc" ? (fm.get("sessions") ?? "").replace(/^\[|\]$/g, "").split(",").map((x) => x.trim()).filter(Boolean) : [];
     const by = [...new Set(ids)].reverse().flatMap((sid) => all.filter((x) => x.id === sid));
     setWriters((prev) => (JSON.stringify(prev) === JSON.stringify(by) ? prev : by));
-  }, [vault, setSessions, setWriters]);
+  }, [vault, plain, setSessions, setWriters]);
 
   // Hidden tabs catch up when they are shown again, rather than on every change.
   useEffect(() => {
@@ -240,14 +274,14 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   const save = useCallback(async () => {
     const content = textRef.current;
     if (content === null) return;
-    await api.writeNote(vault, path, content);
+    await writeText(content);
     saved.current = content;
     conflict.current = false;
     setConflicted(false);
     // Typing during the write leaves the newer text unsaved.
     if (textRef.current === content) setDirty(false);
     setError(null);
-  }, [vault, path, setError]);
+  }, [writeText, setError]);
   // `:w` in Vim mode saves this note.
   useEffect(() => {
     const on = (e: Event) => {
@@ -282,9 +316,9 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   }, [autosave, save]);
   useEffect(() => () => {
     if (getSettings().editor?.autosave !== false && dirtyRef.current && !conflict.current && textRef.current !== null) {
-      api.writeNote(vault, path, textRef.current).catch((e) => console.error(e));
+      writeText(textRef.current).catch((e) => console.error(e));
     }
-  }, [vault, path]);
+  }, [writeText]);
 
   const cursorLine = () => {
     const view = ref.current?.view;
@@ -413,7 +447,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
 
   // The Ask dialog: a section (line) or a selection, with run options shown for ⌥.
   const [ask, setAsk] = useState<{ line: number; options: boolean; excerpt?: AskOptions["excerpt"] } | null>(null);
-  const askAt = (line: number, withOptions = false) => setAsk({ line, options: withOptions });
+  const askAt = (line: number, withOptions = false) => !plain && setAsk({ line, options: withOptions });
   const runAsk = async (line: number, options: AskOptions) => {
     if (dirty) await save();
     const started = await api.runFromNote(vault, path, line, options);
@@ -454,7 +488,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     api.writeConfig({ "appearance.content_width": next === "wide" ? null : next }).catch((e) => setError(String(e)));
   };
 
-  const crumbs = parents ? rel.split("/").slice(-1) : rel.split("/");
+  const crumbs = parents ? rel.split("/").slice(-1) : external ? path.split("/").filter(Boolean).slice(-3) : rel.split("/");
 
   return (
     <div className="note">
@@ -472,21 +506,21 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
             : <span key={i} className="crumb">{c}</span>))}
           {dirty && <span className="dirty" title={autosave && !conflicted ? "Saving soon" : "Unsaved changes"} />}
         </span>
-        <div className="segmented">
+        {!plain && <div className="segmented">
           <button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")} title="Edit (⌘E toggles; ⌘-click in the preview edits there)"><PenLine size={14} /></button>
           <button className={mode === "split" ? "on" : ""} onClick={() => setMode("split")} title="Split"><Columns2 size={14} /></button>
           <button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")} title="Preview"><Eye size={14} /></button>
-        </div>
+        </div>}
         <button className="icon" onClick={save} disabled={!dirty} title="Save (⌘S)"><Save size={14} /></button>
         {mode !== "preview" && (
           <button className="icon" onClick={sendEditorSelection} disabled={!hasSelection} title="Send the selection to a session (⌘⇧↵)">
             <Send size={14} />
           </button>
         )}
-        <button className="icon" onClick={(e) => copy(e.altKey)}
+        {!plain && <button className="icon" onClick={(e) => copy(e.altKey)}
           title="Copy as Markdown, without the frontmatter (⌥-click: the file as it is)">
           {copied ? <Check size={14} /> : <Copy size={14} />}
-        </button>
+        </button>}
         <button className="icon" onClick={nextWidth}
           title={`Width: ${CONTENT_WIDTHS.find((w) => w.value === width)?.label} (click to change; also in Settings)`}>
           <MoveHorizontal size={14} />
@@ -497,15 +531,15 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
             <MessageSquare size={14} /> Session
           </button>
         )}
-        <button className={`icon ${showLinks ? "on" : ""}`} onClick={() => setShowLinks(!showLinks)} title="Sessions and links panel">
+        {!plain && <button className={`icon ${showLinks ? "on" : ""}`} onClick={() => setShowLinks(!showLinks)} title="Sessions and links panel">
           <PanelRight size={14} />
-        </button>
+        </button>}
         {flow.spec && (
           <button onClick={breakDown} title="Put the open items under ## Tasks on this spec's board, as cards linked to the spec">
             <KanbanSquare size={14} /> Break down
           </button>
         )}
-        <button
+        {!plain && <button
           className="primary"
           onClick={(e) => askAt(mode === "preview" ? 0 : cursorLine(), e.altKey)}
           title={flow.phase
@@ -513,7 +547,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
             : "Whole note for a request, otherwise the section at the cursor (⌘↵)"}
         >
           <Sparkles size={14} /> {flow.phase ? `Start ${flow.phase}` : "Ask"}
-        </button>
+        </button>}
       </div>
       {find !== null && (
         <div className="find-bar">
@@ -547,7 +581,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
               className="editor"
               theme={editorTheme}
               basicSetup={BASIC_SETUP}
-              extensions={vimOn ? VIM_EXTENSIONS : EXTENSIONS}
+              extensions={plain ? plainExtensions : vimOn ? VIM_EXTENSIONS : EXTENSIONS}
               onUpdate={onEditorUpdate}
               onChange={onEditorChange}
               onKeyDown={(e) => {
@@ -582,8 +616,8 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
           </div>
         )}
         </div>
-        {showLinks && <Resizer axis="x" sign={-1} pane={linksWidth} />}
-        {showLinks && (
+        {showLinks && !plain && <Resizer axis="x" sign={-1} pane={linksWidth} />}
+        {showLinks && !plain && (
           <aside className="links" style={{ width: linksWidth.size }}>
             {writers.length > 0 && <h4>Written by</h4>}
             {writers.map((s) => (

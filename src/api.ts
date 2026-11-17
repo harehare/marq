@@ -167,6 +167,9 @@ export const api = {
   listFiles: (vault: string) => invoke<FileEntry[]>("list_files", { vault }),
   readNote: (vault: string, path: string) => invoke<string>("read_note", { vault, path }),
   writeNote: (vault: string, path: string, content: string) => invoke<void>("write_note", { vault, path, content }),
+  /** Files outside the vault: read first, and only a file that was read can be written. */
+  readFile: (path: string) => invoke<string>("read_file", { path }),
+  writeFile: (path: string, content: string) => invoke<void>("write_file", { path, content }),
   createNote: (vault: string, rel: string, kind: string) => invoke<string>("create_note", { vault, rel, kind }),
   /** A new untitled note in notes/, or a scratch memo in scratch/; returns its path. */
   createUntitled: (vault: string, scratch: boolean) => invoke<string>("create_untitled", { vault, scratch }),

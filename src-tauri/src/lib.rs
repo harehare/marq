@@ -69,6 +69,38 @@ fn write_note(vault: String, path: String, content: String) -> Result<()> {
     Ok(std::fs::write(p, content)?)
 }
 
+/// Files outside the vault that this session has read. Only these can be written back, so a file
+/// is only changed after it was opened as a tab.
+fn opened_external() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    static OPENED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>> = std::sync::OnceLock::new();
+    OPENED.get_or_init(Default::default)
+}
+
+/// Reads a text file anywhere, for the editor's "open a file" outside the vault.
+#[tauri::command]
+fn read_file(path: String) -> Result<String> {
+    let p = Path::new(&path).canonicalize()?;
+    if !p.is_file() {
+        return Err(error::Error::Other(format!("not a file: {path}")));
+    }
+    let text = std::fs::read_to_string(&p).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidData => error::Error::Other(format!("not a text file: {path}")),
+        _ => e.into(),
+    })?;
+    opened_external().lock().unwrap().insert(p);
+    Ok(text)
+}
+
+/// Writes back a file `read_file` opened; nothing else outside the vault can be written.
+#[tauri::command]
+fn write_file(path: String, content: String) -> Result<()> {
+    let p = Path::new(&path).canonicalize()?;
+    if !opened_external().lock().unwrap().contains(&p) {
+        return Err(error::Error::Other(format!("not opened in this session: {path}")));
+    }
+    Ok(std::fs::write(p, content)?)
+}
+
 #[tauri::command]
 fn create_note(vault: String, rel: String, kind: String) -> Result<String> {
     let v = Path::new(&vault);
@@ -78,6 +110,11 @@ fn create_note(vault: String, rel: String, kind: String) -> Result<String> {
     }
     std::fs::create_dir_all(p.parent().unwrap())?;
     let p = vault::resolve(v, &rel)?;
+    // Only Markdown notes get frontmatter; any other file starts empty.
+    if p.extension().is_some_and(|x| x != "md") {
+        std::fs::write(&p, "")?;
+        return Ok(p.to_string_lossy().into_owned());
+    }
     let title = p.file_stem().unwrap_or_default().to_string_lossy().into_owned();
     let now = vault::now();
     if kind == "crew" {
@@ -1804,6 +1841,8 @@ pub fn run() {
             list_files,
             read_note,
             write_note,
+            read_file,
+            write_file,
             create_note,
             note_anchors,
             pin_mq_output,

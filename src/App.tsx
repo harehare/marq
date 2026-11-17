@@ -854,7 +854,8 @@ export default function App() {
     if (!vault || pruneTabs.current !== vault || filesVault !== vault) return;
     pruneTabs.current = null;
     const exists = new Set(files.map((f) => f.path));
-    const keep = tabs.filter((t) => !((t.kind === "note" || t.kind === "board") && !exists.has(t.path)));
+    // Files outside the vault are not in the list; opening them again reports a missing file.
+    const keep = tabs.filter((t) => !((t.kind === "note" || t.kind === "board") && t.path.startsWith(`${vault}/`) && !exists.has(t.path)));
     if (keep.length === tabs.length) return;
     setTabs(keep);
     if (!keep.some((t) => t.key === active)) setActive(keep[keep.length - 1]?.key ?? null);
@@ -997,6 +998,11 @@ export default function App() {
   const openBoard = (path: string) =>
     openTab({ key: `board:${path}`, kind: "board", path, title: path.split("/").pop()!.replace(/\.md$/, "") });
   /** Boards open as boards; everything else as a note. */
+  /** Any text file, from a dialog: one outside the vault is edited in place. */
+  const openAnyFile = async () => {
+    const picked = await open({ multiple: false, directory: false });
+    if (typeof picked === "string") openNote(picked);
+  };
   const openFile = (path: string) => (files.find((f) => f.path === path)?.kind === "board" ? openBoard(path) : openNote(path));
 
   const openTerminal = (cwd: string, title?: string, command?: string) => {
@@ -1132,7 +1138,7 @@ export default function App() {
       return;
     }
     const slug = name.replace(/\.md$/, "").replace(/[\s/]+/g, "-");
-    const rel = kind === "crew" ? `crews/${slug}.md` : name.endsWith(".md") ? name : `${name}.md`;
+    const rel = kind === "crew" ? `crews/${slug}.md` : /\.(md|mq|txt|json|ya?ml|toml|csv|html|css|[jt]sx?|py|rs|go|sh|sql|xml)$/i.test(name) ? name : `${name}.md`;
     await create(rel.replace(/^\/+/, ""), kind);
   };
 
@@ -1441,6 +1447,7 @@ export default function App() {
     "instructions.open": { label: "Standing instructions: rules every session follows", run: () => void api.instructionsPath(vault!).then((p) => openNote(p)) },
     "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
     "task.new": { label: "New task", run: () => setShowNewTask(true) },
+    "file.openAny": { label: "Open any text file… (also outside the vault)", run: () => void openAnyFile() },
     "note.new": { label: "New note", run: () => setNaming({ kind: "note", initial: "notes/" }) },
     "note.quick": { label: "Quick note (untitled, in notes/)", run: () => void createUntitled(false) },
     "scratch.new": { label: "Scratch memo (temporary, in scratch/)", run: () => void createUntitled(true) },

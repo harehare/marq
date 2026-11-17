@@ -34,5 +34,14 @@ export const editorHighlight = syntaxHighlighting(
     { tag: [t.meta, t.comment], color: "var(--muted)" },
     { tag: t.quote, color: "var(--muted)", fontStyle: "italic" },
     { tag: t.list, color: "var(--accent)" },
+    // Code: mq and the other languages in code files and fenced blocks.
+    { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.moduleKeyword], color: "var(--accent)", fontWeight: "600" },
+    { tag: [t.string, t.special(t.string), t.regexp], color: "var(--ok)" },
+    { tag: [t.number, t.bool, t.atom, t.null], color: "var(--info)" },
+    { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--info)" },
+    { tag: [t.tagName, t.typeName, t.className], color: "var(--run)" },
+    { tag: [t.propertyName, t.attributeName], color: "var(--run)" },
+    { tag: t.special(t.variableName), color: "var(--err)" },
+    { tag: [t.operator, t.punctuation], color: "var(--muted)" },
   ]),
 );

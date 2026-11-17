@@ -101,10 +101,47 @@ fn each_scanned(vault: &Path, mut f: impl FnMut(&Scanned)) {
     }
 }
 
-/// Lists Markdown files under `vault`, skipping dot directories (`.marq`, `.raw`, `.git`).
+/// Extensions of non-Markdown text files the sidebar lists, so they can be opened in the editor.
+const TEXT_EXTENSIONS: &[&str] = &[
+    "mq", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx", "jsx", "py", "rs", "go", "sh", "sql", "xml",
+];
+
+/// Non-Markdown text files: no frontmatter is read, so they have only a path and a time.
+fn other_files(vault: &Path) -> Vec<FileEntry> {
+    walkdir::WalkDir::new(vault)
+        .into_iter()
+        .filter_entry(|e| {
+            let n = e.file_name().to_string_lossy();
+            e.depth() == 0 || !(n.starts_with('.') || n == "node_modules" || n == "target")
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().is_file()
+                && e.path().extension().and_then(|x| x.to_str()).is_some_and(|x| TEXT_EXTENSIONS.contains(&x.to_lowercase().as_str()))
+        })
+        .map(|e| {
+            let modified = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok());
+            FileEntry {
+                path: e.path().to_string_lossy().into_owned(),
+                rel: e.path().strip_prefix(vault).unwrap_or(e.path()).to_slash(),
+                id: None,
+                title: None,
+                kind: Some("file".into()),
+                status: None,
+                tags: vec![],
+                aliases: vec![],
+                modified: modified.map_or(0, |d| d.as_millis() as u64),
+            }
+        })
+        .collect()
+}
+
+/// Lists Markdown files under `vault`, skipping dot directories (`.marq`, `.raw`, `.git`), and
+/// the text files beside them (kind `file`).
 pub fn list_files(vault: &Path) -> Vec<FileEntry> {
     let mut files = Vec::new();
     each_scanned(vault, |s| files.push(s.entry.clone()));
+    files.extend(other_files(vault));
     files.sort_by(|a, b| a.rel.cmp(&b.rel));
     files
 }
