@@ -49,6 +49,16 @@ export type AgentEvent =
   /** The end of a turn. `result` is the final reply, written back into the origin note. */
   | { type: "turn_end"; result: string; is_error: boolean; cost_usd?: number; duration_ms?: number; num_turns?: number };
 
+export type PlanStep = { content: string; status: "pending" | "in_progress" | "completed" };
+
+/** An agent's plan as the events of a `TodoWrite` call, the form Claude reports its own todo list in, so the app reads one shape. */
+export function planEvents(id: string, steps: PlanStep[]): AgentEvent[] {
+  return [
+    { type: "tool_call", id, name: "TodoWrite", kind: "think", input: { todos: steps.map((s) => ({ content: s.content, status: s.status })) } },
+    { type: "tool_result", id, output: "" },
+  ];
+}
+
 export const emit = (ev: Record<string, unknown>) => process.stdout.write(JSON.stringify(ev) + "\n");
 export const log = (...a: unknown[]) => process.stderr.write(a.map(String).join(" ") + "\n");
 export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));

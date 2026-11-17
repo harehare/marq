@@ -3,12 +3,13 @@ import { isSendKey, sendHint, useSettings } from "./settings";
 import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowUp, ArrowRight, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
+  ArrowUp, ArrowRight, ListChecks, Circle, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
   FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
 import { Md } from "./markdown/Md";
+import { stepsOf } from "./progress";
 import { splitNext, type NextAction } from "./nextActions";
 import { ChangesPanel } from "./review/ChangesPanel";
 import { OriginNotePanel } from "./review/OriginNotePanel";
@@ -277,6 +278,35 @@ function PermissionCard({ a }: { a: Approval }) {
     </div>
   );
 }
+
+/** The agent's todo list: the step it is on, and all of them when opened. */
+const StepsBar = memo(function StepsBar({ events }: { events: SessionEvent[] }) {
+  const steps = useMemo(() => stepsOf(events), [events]);
+  const [open, setOpen] = useState(false);
+  if (!steps.length) return null;
+  const done = steps.filter((s) => s.status === "completed").length;
+  const now = steps.find((s) => s.status === "in_progress") ?? steps.find((s) => s.status === "pending");
+  return (
+    <div className="steps-bar">
+      <button className="steps-head" onClick={() => setOpen(!open)}>
+        <ListChecks size={13} />
+        <span className="steps-count">{done}/{steps.length}</span>
+        <span className="ellipsis">{done === steps.length ? "All steps done" : now?.text}</span>
+        <ChevronRight size={12} className={`chev ${open ? "open" : ""}`} />
+      </button>
+      {open && (
+        <ul className="steps-list">
+          {steps.map((s, i) => (
+            <li key={i} className={s.status}>
+              {s.status === "completed" ? <CircleCheck size={13} /> : s.status === "in_progress" ? <Loader2 size={13} className="spin" /> : <Circle size={13} />}
+              <span>{s.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+});
 
 type ListProps = {
   vault: string;
@@ -714,6 +744,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
         </div>
       </div>
       <div className="composer">
+        <StepsBar events={events} />
         {stopped && (
           <div className="resume-bar">
             <AlertCircle size={15} />

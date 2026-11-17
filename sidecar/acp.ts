@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
 import { mcpUrl } from "./mcp-http.ts";
 import { Connection, RpcError } from "./jsonrpc.ts";
-import { log, message, type ToolKind } from "./protocol.ts";
+import { log, message, planEvents, type ToolKind } from "./protocol.ts";
 
 const PROTOCOL_VERSION = 1;
 
@@ -244,8 +244,17 @@ class AcpSession implements AgentSession {
       case "tool_call_update":
         this.result(u as ToolCall);
         return;
+      case "plan": {
+        const entries = (u as { entries?: { content?: string; status?: string }[] }).entries ?? [];
+        if (!entries.length) return;
+        this.flush();
+        const steps = entries.map((e) => ({ content: String(e.content ?? ""), status: e.status === "completed" ? "completed" as const : e.status === "in_progress" ? "in_progress" as const : "pending" as const }));
+        for (const e of planEvents(`plan-${++this.plans}`, steps)) this.host.event(e);
+        return;
+      }
     }
   }
+  private plans = 0;
 
   /** The tool's result, once it has completed or failed. */
   private result(t: ToolCall) {

@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
 import { Connection, RpcError } from "./jsonrpc.ts";
 import { mcpUrl } from "./mcp-http.ts";
-import { log, message, type ModelOption, type ToolKind } from "./protocol.ts";
+import { log, message, planEvents, type ModelOption, type ToolKind } from "./protocol.ts";
 
 // The parts of the app-server's messages marq reads. Everything else is passed over.
 type FileChange = { path: string; kind?: { type?: string }; diff?: string };
@@ -220,8 +220,15 @@ class CodexSession implements AgentSession {
         return this.completed(p.item);
       case "turn/completed":
         return this.turnDone?.(p.turn);
+      case "turn/plan/updated": {
+        const steps = Array.isArray(p.plan) ? p.plan : [];
+        const status = (s: string) => (s === "completed" ? "completed" : s === "inProgress" ? "in_progress" : "pending");
+        if (steps.length) for (const e of planEvents(`plan-${++this.plans}`, steps.map((x: any) => ({ content: String(x.step ?? ""), status: status(x.status) })))) this.host.event(e);
+        return;
+      }
     }
   }
+  private plans = 0;
 
   private started(i: Item) {
     const t = toolCall(i);
