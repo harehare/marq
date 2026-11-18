@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { ChevronRight, FolderGit2, History, FolderPlus, FolderSearch, GitCompare, Layers, Loader2, Save, Sparkles, Users, X } from "lucide-react";
+import { ChevronRight, FolderGit2, History, FolderPlus, GitCompare, Layers, Loader2, Save, Sparkles, Users, X } from "lucide-react";
 import { api, type AgentInfo, type DirSpec, type EnvironmentStatus, type TaskChecks, type Workspace } from "./api";
+import { ProjectPicker } from "./ProjectPicker";
 import { SlashTextarea } from "./SlashTextarea";
 import { usePastes } from "./pastes";
 import { CodexModelInput, EffortSelect, ModelSelect, effortsOf, useAgentModels } from "./ModelSelect";
@@ -421,10 +422,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               )}
               <div className="project-row">
                 <FolderGit2 size={14} className="muted" />
-                <input list="marq-projects" value={project} onChange={(e) => setProject(e.target.value)} {...pathInput()}
-                  placeholder="Project (empty: the vault)" title={project || "Where the agent runs"} />
-                <datalist id="marq-projects">{projects.map((p) => <option key={p} value={p} />)}</datalist>
-                <button className="icon" onClick={browse} title="Browse for the project"><FolderSearch size={14} /></button>
+                <ProjectPicker value={project} onChange={setProject} recent={projects} onBrowse={browse} pathProps={pathInput()} />
               </div>
               {dirs.map((d, i) => (
                 <div className="project-row dir-row" key={i}>
