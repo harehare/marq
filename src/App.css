@@ -2431,3 +2431,13 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .comment-card .small-btn { flex: none; display: inline-flex; align-items: center; gap: 4px; }
 .comment-card .icon { flex: none; padding: 2px; }
 mark.mention { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-radius: 4px; padding: 0 3px; }
+
+.project-picker { position: relative; flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.project-picker > input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; }
+.project-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.25); padding: 4px; }
+.project-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; background: none; color: inherit; text-align: left; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.project-item.active, .project-item:hover { background: var(--bg-hover); }
+.project-item.on .project-name { font-weight: 600; }
+.project-name { white-space: nowrap; }
+.project-parent { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; opacity: .55; font-size: 11px; }
+.project-empty { padding: 6px 8px; }
