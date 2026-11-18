@@ -31,6 +31,7 @@ export function parseFrontmatter(text: string): Frontmatter {
 const RESULT_OPEN = /^<!-- (?:marq|claude):result session="([^"]+)" -->$/;
 const RESULT_CLOSE = /^<!-- \/(?:marq|claude):result -->$/;
 const ANCHOR = /^<!-- (?:marq|claude):anchor id="([^"]+)" -->$/;
+const COMMENT = /^<!-- comment( \(sent\))?: (.*) -->$/;
 const PIN_OPEN = "<!-- mq:output -->";
 const PIN_CLOSE = "<!-- /mq:output -->";
 
@@ -50,7 +51,7 @@ function nextFence(open: { ch: string; len: number } | null, l: string): { ch: s
 }
 
 /**
- * Anchor markers become `[](marq-anchor:<id>)` links on the same line, and pinned mq output becomes
+ * Anchor markers become `[](marq-anchor:<id>)` links and comments `[](marq-comment:<line>:<state>:<text>)` links on the same line, and pinned mq output becomes
  * blank lines (the mq block shows live output instead), so the line count never changes.
  */
 export function segments(text: string): Segment[] {
@@ -97,7 +98,10 @@ export function segments(text: string): Segment[] {
       continue;
     }
     const anchor = !fence && l.trim().match(ANCHOR);
-    buf.push(anchor ? `[](marq-anchor:${anchor[1]})` : l);
+    const comment = !fence && !anchor && l.trim().match(COMMENT);
+    // `(`, `)` and `'` stay out of the link target, which is the comment's text.
+    const enc = (t: string) => encodeURIComponent(t).replace(/[()'!*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+    buf.push(anchor ? `[](marq-anchor:${anchor[1]})` : comment ? `[](marq-comment:${i}:${comment[1] ? "sent" : "open"}:${enc(comment[2])})` : l);
   }
   if (result) buf.push(...result.lines);
   flush(lines.length);

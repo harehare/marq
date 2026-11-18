@@ -150,6 +150,22 @@ An anchor ties a session to part of a note. It sits directly under the heading o
 
 The anchor's scope is its section: from the heading up to the next heading of the same or a higher level. Linked sessions are found through each session's `origin`, so the marker never changes when you run again.
 
+### Comment
+
+```markdown
+Some text you are reviewing.
+
+<!-- comment: This is unclear. @marq make it shorter -->
+```
+
+A comment is one line under the text it is about. The preview shows it as a card. Add one by selecting text in the preview and choosing **Comment**, with the comment button on a heading, or with the comment button in the toolbar (edit and split views). You can also type the line yourself.
+
+- **`@marq` in a comment** starts an agent on it as soon as you add the comment. The agent gets the text above the comment and what the comment says.
+- Without `@marq` the comment just stays in the note. **Ask marq** on its card sends it later, and **Ask marq (n)** in the toolbar sends all the comments not sent yet to one session.
+- A comment that was sent reads `<!-- comment (sent): ... -->` and is shown dimmed. It is not sent again by **Ask marq (n)**, but **Sent** on its card asks again.
+
+Comments are left out of **Copy as Markdown**. Agents list them with `list_comments` (path, line, text, whether it was sent or mentions @marq, and the text it is under), for example to pick up the open `@marq` comments in a schedule.
+
 ### Result block
 
 ```markdown

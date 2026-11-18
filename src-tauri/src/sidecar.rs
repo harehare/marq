@@ -21,7 +21,7 @@ use crate::environment::{self, Environment};
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
-use crate::{boards, crew, knowledge, links, memory, mq, organize, relay, vault, workflow, workspace};
+use crate::{boards, comments, crew, knowledge, links, memory, mq, organize, relay, vault, workflow, workspace};
 
 /// How a turn reaches the agent.
 #[derive(Clone, Copy, PartialEq)]
@@ -692,6 +692,14 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             let rel = knowledge::write(vault, req)?;
             changed(app, &vault.join(&rel));
             Ok(json!({"path": rel, "status": "draft", "note": "The user reviews it before it counts as checked."}))
+        }
+        "list_comments" => {
+            let only = match p["note"].as_str().filter(|n| !n.is_empty()) {
+                Some(n) => Some(find_any(vault, n)?),
+                None => None,
+            };
+            let status = p["status"].as_str().unwrap_or("open");
+            Ok(json!(comments::list(vault, only.as_deref(), status, p["mention"].as_bool().unwrap_or(false))))
         }
         "note_links" => {
             let note = s("note");

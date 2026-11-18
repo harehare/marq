@@ -1,6 +1,7 @@
 mod agents;
 mod automation;
 mod boards;
+mod comments;
 mod commands;
 mod config;
 mod crew;
