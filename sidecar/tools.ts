@@ -127,6 +127,9 @@ export function vaultServer(sessionId: string, crew: boolean) {
       tool("write_knowledge", "Create or replace the knowledge note for a topic (knowledge/<topic>.md): the whole note as Markdown without frontmatter. sources: the session ids it draws on (added to the note's earlier ones, and no longer offered by list_learnings). The note is listed as a draft until the user reviews it. project: the directory it applies to, or leave it out for the whole vault.",
         { topic: z.string(), content: z.string(), sources: z.array(z.string()), tags: z.array(z.string()).optional(), project: z.string().optional() },
         async (a) => text(await rpc("write_knowledge", { ...a, session: sessionId }))),
+      tool("list_comments", "Comments the user left in their notes, written as <!-- comment: ... --> under the text they are about. Each has path, line, text, sent (an agent was already asked), mention (it mentions @marq) and about (the text it is under). status: open (not sent yet, the default), sent or all. mention: only comments that mention @marq. note limits it to one note (as for read_note). To act on one, read the note, do what it says, and leave the comment line as it is.",
+        { note: z.string().optional(), status: z.enum(["open", "sent", "all"]).optional(), mention: z.boolean().optional() },
+        async (a) => text(await rpc("list_comments", { ...a, session: sessionId }))),
       tool("note_links", "What links to a note (links_here), where it is mentioned without a link (mentions), what it links to, and the [[links]] in it that name no note yet. note is as for read_note.",
         { note: z.string() }, async (a) => text(await rpc("note_links", { ...a, session: sessionId }))),
       tool("write_doc",
@@ -183,7 +186,7 @@ export function vaultServer(sessionId: string, crew: boolean) {
 // move_note and trash_note change the user's notes, so they ask too.
 // Crew messages are pre-approved too: the crew's hop limit, not an approval card, keeps them in check.
 // crew_add_member asks, since every member is another session to pay for.
-export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
+export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "list_comments", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
   "list_boards", "read_board", "search_cards", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);
