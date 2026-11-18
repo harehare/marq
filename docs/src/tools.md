@@ -43,7 +43,8 @@ See [Inbox and follow-ups](inbox.md).
 | Tool | Approval | Description |
 | --- | --- | --- |
 | `list_boards()` | no | Boards in the vault |
-| `read_board(board?)` | no | A board's lists and cards |
+| `read_board(board?, labels?, owner?, done?)` | no | A board's lists and cards; the filters keep only matching cards |
+| `search_cards(labels?, owner?, done?)` | no | Cards across all boards by label, owner or done, each with its board and list |
 | `board_add_card(…)` | no | Add a card to a list |
 | `board_update_card(…)` | no | Move a card, change its owner or title, check it, or add a note |
 | `board_add_list(…)` | no | Add a list |

@@ -62,11 +62,22 @@ function startCrew(sessionId: string) {
 /** Kanban boards in the vault. `board` is a name, title or path; empty for the only board. */
 function boardTools(sessionId: string) {
   const board = z.string().optional().describe("Board name, title or path; omit when there is only one");
+  const cardFilter = {
+    labels: z.array(z.string()).optional().describe("Cards that have all of these labels (case-insensitive, # optional)"),
+    owner: z.string().optional().describe("Cards owned by this person (@ optional)"),
+    done: z.boolean().optional().describe("true: only done cards; false: only open ones"),
+  };
   return [
     tool("list_boards", "List the user's kanban boards (task management) with their lists and card counts.",
       {}, async () => text(await rpc("list_boards", { session: sessionId }))),
-    tool("read_board", "Read a kanban board: its lists in order, each with cards (id, title, done, owner, notes).",
-      { board }, async (a) => text(await rpc("read_board", { ...a, session: sessionId }))),
+    tool("read_board",
+      "Read a kanban board: its lists in order, each with cards (id, title, done, owner, labels, notes). " +
+        "Pass `labels`, `owner` or `done` to keep only the matching cards (all lists are still shown).",
+      { board, ...cardFilter }, async (a) => text(await rpc("read_board", { ...a, session: sessionId }))),
+    tool("search_cards",
+      "Find cards across all kanban boards by label (tag), owner or done. Every given filter must match; " +
+        "each hit has its board and list. With no filter it returns every card.",
+      cardFilter, async (a) => text(await rpc("search_cards", { ...a, session: sessionId }))),
     tool("board_add_card", "Add a card (task) to a board, in `list` (default: the first list). #words at the end of the title become labels.",
       { board, title: z.string(), list: z.string().optional(), owner: z.string().optional(), note: z.string().optional() },
       async (a) => text(await rpc("board_add_card", { ...a, session: sessionId }))),
@@ -174,5 +185,5 @@ export function vaultServer(sessionId: string, crew: boolean) {
 // crew_add_member asks, since every member is another session to pay for.
 export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
-  "list_boards", "read_board", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
+  "list_boards", "read_board", "search_cards", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);

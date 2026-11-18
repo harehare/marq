@@ -260,6 +260,62 @@ pub fn list(vault: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// What `read_board` and `search_cards` keep. Absent fields match every card.
+#[derive(Debug, Default)]
+pub struct Filter {
+    /// Cards with every one of these labels, case-insensitive, with or without the `#`.
+    pub labels: Vec<String>,
+    pub owner: Option<String>,
+    pub done: Option<bool>,
+}
+
+impl Filter {
+    pub fn from_params(p: &Value) -> Self {
+        let mut labels: Vec<String> = p["labels"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(String::from)).collect();
+        labels.extend(p["label"].as_str().map(String::from));
+        Filter {
+            labels: labels_of(labels),
+            owner: p["owner"].as_str().map(|o| o.trim().trim_start_matches('@').to_lowercase()).filter(|o| !o.is_empty()),
+            done: p["done"].as_bool(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty() && self.owner.is_none() && self.done.is_none()
+    }
+
+    fn matches(&self, c: &Card) -> bool {
+        self.labels.iter().all(|l| c.labels.iter().any(|x| x.eq_ignore_ascii_case(l)))
+            && self.owner.as_ref().is_none_or(|o| c.owner.as_ref().is_some_and(|x| x.to_lowercase() == *o))
+            && self.done.is_none_or(|d| c.done == d)
+    }
+}
+
+/// The board with only the cards that match; every list stays, so the columns keep their place.
+pub fn filtered(mut b: Board, f: &Filter) -> Board {
+    for l in &mut b.lists {
+        l.cards.retain(|c| f.matches(c));
+    }
+    b
+}
+
+/// The matching cards of every board, each with its board and list.
+pub fn search(vault: &Path, f: &Filter) -> Vec<Value> {
+    let mut out = vec![];
+    for file in vault::list_files(vault).into_iter().filter(|f| f.kind.as_deref() == Some("board")) {
+        let Ok(b) = read(Path::new(&file.path)) else { continue };
+        for l in b.lists {
+            for c in l.cards.into_iter().filter(|c| f.matches(c)) {
+                let mut v = json!(c);
+                v["board"] = json!(file.rel);
+                v["list"] = json!(l.name);
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
 /// A board by path, vault-relative path, title or file name; the only board when `board` is empty.
 pub fn find(vault: &Path, board: &str) -> Result<PathBuf> {
     let boards: Vec<_> = vault::list_files(vault).into_iter().filter(|f| f.kind.as_deref() == Some("board")).collect();
@@ -454,6 +510,22 @@ mod tests {
         let names: Vec<_> = read(&p).unwrap().lists.into_iter().map(|l| l.name).collect();
         assert_eq!(names, ["Backlog", "Review", "Shipped"]);
         assert!(create(v, "release", &[]).is_err());
+    }
+
+    #[test]
+    fn filters_cards_by_label_owner_and_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = &dir.path().canonicalize().unwrap();
+        let p = create(v, "work", &[]).unwrap();
+        add(&p, "Write docs #docs #Urgent", None, Some("me"), None).unwrap();
+        add(&p, "Fix bug #bug", Some("Doing"), None, None).unwrap();
+        let f = Filter::from_params(&json!({"labels": ["#urgent"], "label": "docs"}));
+        assert_eq!(filtered(read(&p).unwrap(), &f).lists.iter().map(|l| l.cards.len()).collect::<Vec<_>>(), [1, 0, 0]);
+        assert_eq!(search(v, &Filter::from_params(&json!({"owner": "@Me"}))).len(), 1);
+        let hits = search(v, &Filter::from_params(&json!({"label": "bug"})));
+        assert_eq!((hits[0]["list"].as_str(), hits[0]["board"].as_str(), hits[0]["id"].as_str()), (Some("Doing"), Some("boards/work.md"), Some("T2")));
+        assert_eq!(search(v, &Filter::from_params(&json!({"done": true}))).len(), 0);
+        assert_eq!(search(v, &Filter::default()).len(), 2);
     }
 
     #[test]

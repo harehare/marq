@@ -630,7 +630,8 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
     match method {
         "search_notes" => Ok(json!(search(vault, &s("text")))),
         "list_boards" => Ok(json!(boards::list(vault))),
-        "read_board" => Ok(json!(boards::read(&boards::find(vault, &s("board"))?)?)),
+        "read_board" => Ok(json!(boards::filtered(boards::read(&boards::find(vault, &s("board"))?)?, &boards::Filter::from_params(p)))),
+        "search_cards" => Ok(json!(boards::search(vault, &boards::Filter::from_params(p)))),
         "board_add_card" => {
             let path = boards::find(vault, &s("board"))?;
             let c = boards::add(&path, &s("title"), p["list"].as_str(), p["owner"].as_str(), p["note"].as_str())?;
