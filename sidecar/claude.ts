@@ -2,7 +2,7 @@
 import { fileURLToPath } from "node:url";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKMessage, SDKUserMessage, PermissionMode, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
+import type { AgentBackend, AgentSession, SessionHost, StartOptions, TurnOptions } from "./agent.ts";
 import { ollamaUrl } from "./ollama.ts";
 import { log, type AgentEvent, type ToolKind } from "./protocol.ts";
 import { checkRules, type Rules } from "./rules.ts";
@@ -146,9 +146,13 @@ class ClaudeSession implements AgentSession {
   private q: Query;
   private input = new InputQueue();
   private model?: string | null;
+  private mode?: string;
+  private effort = "";
 
   constructor(c: StartOptions, host: SessionHost) {
     this.model = c.model;
+    this.mode = c.permissionMode ?? "auto";
+    this.effort = c.effort ?? "";
     this.input.push(c.prompt);
     const mode = (c.permissionMode && PERMISSION_MODES.has(c.permissionMode) ? c.permissionMode : "auto") as PermissionMode;
     const q = (this.q = query({
@@ -186,7 +190,17 @@ class ClaudeSession implements AgentSession {
     })();
   }
 
-  send(text: string, model?: string | null) {
+  send(text: string, model?: string | null, opts?: TurnOptions) {
+    const mode = opts?.permissionMode;
+    if (mode && PERMISSION_MODES.has(mode) && mode !== this.mode) {
+      this.mode = mode;
+      void this.q.setPermissionMode(mode as PermissionMode).catch((e) => log("setPermissionMode failed:", e));
+    }
+    const effort = opts?.effort ?? "";
+    if (opts && effort !== this.effort && (!effort || EFFORTS.has(effort))) {
+      this.effort = effort;
+      void this.q.applyFlagSettings({ effortLevel: (effort || undefined) as "low" | "medium" | "high" | "xhigh" | "max" | undefined }).catch((e) => log("setEffort failed:", e));
+    }
     // A crew member switched models between turns. Ollama sessions keep theirs: its env is set at start.
     const next = model ?? null;
     if (model !== undefined && next !== (this.model ?? null) && !next?.startsWith("ollama:") && !this.model?.startsWith("ollama:")) {

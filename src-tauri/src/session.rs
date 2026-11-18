@@ -195,7 +195,7 @@ fn claude_tool_kind(name: &str) -> &'static str {
     }
 }
 
-/// The first `marq_meta` line, with the latest `marq_worktree`, `marq_model` and `marq_title` lines applied.
+/// The first `marq_meta` line, with the latest `marq_worktree`, `marq_model`, `marq_effort`, `marq_mode` and `marq_title` lines applied.
 fn meta_of(events: &[Value]) -> Option<SessionMeta> {
     let mut meta: SessionMeta =
         events.first().filter(|e| e["type"] == "marq_meta").and_then(|e| serde_json::from_value(e.clone()).ok())?;
@@ -211,6 +211,12 @@ fn meta_of(events: &[Value]) -> Option<SessionMeta> {
     }
     if let Some(m) = events.iter().rev().find(|e| e["type"] == "marq_model") {
         meta.model = m["model"].as_str().map(str::to_string);
+    }
+    if let Some(m) = events.iter().rev().find(|e| e["type"] == "marq_effort") {
+        meta.effort = m["effort"].as_str().map(str::to_string).filter(|e| !e.is_empty());
+    }
+    if let Some(m) = events.iter().rev().find(|e| e["type"] == "marq_mode") {
+        meta.permission_mode = m["mode"].as_str().map(str::to_string).filter(|e| !e.is_empty());
     }
     if let Some(t) = events.iter().rev().find_map(|e| (e["type"] == "marq_title").then(|| e["title"].as_str()).flatten()) {
         meta.title = t.to_string();
@@ -279,6 +285,9 @@ fn info_of(vault: &Path, events: &[Value]) -> Option<SessionInfo> {
     })
 }
 
+/// A session whose worktree data needs refreshing: its log path, worktree, log stamp and state stamp.
+type Stale = (PathBuf, git::Worktree, (SystemTime, u64), Option<(SystemTime, SystemTime)>);
+
 pub fn list(vault: &Path, origin: Option<&str>) -> Vec<SessionInfo> {
     let Ok(dir) = std::fs::read_dir(vault.join("sessions/.raw")) else {
         return vec![];
@@ -309,7 +318,7 @@ pub fn list(vault: &Path, origin: Option<&str>) -> Vec<SessionInfo> {
     }
 
     // Refresh stale worktree data, 8 sessions in parallel.
-    let stale: Vec<(PathBuf, git::Worktree, (SystemTime, u64), Option<(SystemTime, SystemTime)>)> = cache
+    let stale: Vec<Stale> = cache
         .iter()
         .filter(|(_, c)| origin.is_none_or(|o| o == c.info.meta.origin))
         .filter_map(|(path, c)| {

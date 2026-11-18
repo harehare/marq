@@ -4,7 +4,7 @@
 // answers approval requests and translates the thread's items into marq's events.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { AgentBackend, AgentSession, SessionHost, StartOptions } from "./agent.ts";
+import type { AgentBackend, AgentSession, SessionHost, StartOptions, TurnOptions } from "./agent.ts";
 import { Connection, RpcError } from "./jsonrpc.ts";
 import { mcpUrl } from "./mcp-http.ts";
 import { log, message, planEvents, type ModelOption, type ToolKind } from "./protocol.ts";
@@ -41,6 +41,13 @@ function policy(mode?: string): { approvalPolicy: string; sandbox: string } {
     default:
       return { approvalPolicy: "on-request", sandbox: "workspace-write" };
   }
+}
+
+/** The same policy as `policy`, in the shape a turn takes. */
+function turnPolicy(mode?: string) {
+  const { approvalPolicy, sandbox } = policy(mode);
+  const sandboxPolicy = sandbox === "danger-full-access" ? { type: "dangerFullAccess" } : sandbox === "read-only" ? { type: "readOnly" } : { type: "workspaceWrite" };
+  return { approvalPolicy, sandboxPolicy };
 }
 
 const text = (s: string) => [{ type: "text", text: s, text_elements: [] }];
@@ -190,6 +197,7 @@ class CodexSession implements AgentSession {
         input: text(prompt),
         model: this.model ?? undefined,
         effort: this.c.effort || undefined,
+        ...turnPolicy(this.c.permissionMode),
       });
       this.turnId = r.turn.id;
       const turn = await finished;
@@ -289,7 +297,9 @@ class CodexSession implements AgentSession {
     }
   }
 
-  send(prompt: string, model?: string | null) {
+  send(prompt: string, model?: string | null, opts?: TurnOptions) {
+    if (opts?.permissionMode) this.c.permissionMode = opts.permissionMode;
+    if (opts) this.c.effort = opts.effort;
     if (model) this.model = model;
     this.queue.push(prompt);
     void this.pump();
@@ -352,7 +362,7 @@ export const codex: AgentBackend = {
 
   commands: async () => [],
 
-  /** The app-server's own model list; the ones hidden from Codex's picker are left out. */
+  /** The app-server's own model list, including the models its picker hides. */
   async models(c) {
     const l = launch({ ...c, cwd: process.cwd(), tag: "codex" }, async () => ({}), () => {});
     try {
@@ -360,7 +370,7 @@ export const codex: AgentBackend = {
       const out: ModelOption[] = [];
       let cursor: string | null = null;
       do {
-        const r: { data: any[]; nextCursor: string | null } = await l.conn.request("model/list", { cursor, limit: 100 });
+        const r: { data: any[]; nextCursor: string | null } = await l.conn.request("model/list", { cursor, limit: 100, includeHidden: true });
         for (const m of r.data) {
           out.push({
             value: m.model,

@@ -261,7 +261,7 @@ pub fn run_schedule(app: &AppHandle, vault: &Path, path: &Path) -> Result<Option
     let title = vault::fm_get(&text, "title").unwrap_or_else(|| rel(vault, path));
     let get = |k: &str| vault::fm_get(&text, k).filter(|v| !v.is_empty());
     let prompt = vault::split_frontmatter(&text).1.trim().to_string();
-    let stamp = format!("{title} · {}", &now[..16].replace('T', " "));
+    let stamp = format!("{title} · {}", now[..16].replace('T', " "));
 
     // (title, prompt) of each session to start.
     let mut runs = vec![(stamp.clone(), prompt.clone())];

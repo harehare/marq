@@ -51,9 +51,12 @@ export interface SessionHost {
   approve(req: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalDecision>;
 }
 
+/** What the user can change between turns. Unset keeps the session's own. */
+export type TurnOptions = { permissionMode?: string; effort?: string | null };
+
 export interface AgentSession {
   /** Queues a user turn. `model` is the session's model for it; backends that can switch between turns do. */
-  send(text: string, model?: string | null): void;
+  send(text: string, model?: string | null, opts?: TurnOptions): void;
   interrupt(): Promise<void>;
   /** Ends the agent's process; `done` settles once it has. */
   close(): void;

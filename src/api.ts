@@ -84,6 +84,8 @@ export type SessionInfo = {
   pr_url: string | null;
   /** A Claude alias or `ollama:<name>`; empty for the default. */
   model?: string | null;
+  effort?: string | null;
+  permission_mode?: string | null;
   /** The agent backend; empty for Claude. */
   agent?: string | null;
   /** Set for crew members. */
@@ -195,6 +197,9 @@ export const api = {
     invoke<void>("forward_message", { vault, from, to, text, reply }),
   sendMessage: (vault: string, sessionId: string, text: string) =>
     invoke<void>("send_message", { vault, sessionId, text }),
+  /** An empty string is the default. Takes effect from the session's next turn. */
+  setSessionOptions: (vault: string, sessionId: string, o: { model?: string; effort?: string; permissionMode?: string }) =>
+    invoke<void>("set_session_options", { vault, sessionId, ...o }),
   stopSession: (sessionId: string) => invoke<boolean>("stop_session", { sessionId }),
   resumeSession: (vault: string, sessionId: string) => invoke<void>("resume_session", { vault, sessionId }),
   sessionEvents: (vault: string, sessionId: string) => invoke<SessionEvent[]>("session_events", { vault, sessionId }),

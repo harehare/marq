@@ -19,7 +19,7 @@ export type Command =
       /** Bash commands to deny, or to ask the user about, whatever the permission mode. Only the Claude backend enforces them. */
       rules?: { ask: string[]; deny: string[] };
     }
-  | { op: "send"; id: string; text: string; model?: string | null }
+  | { op: "send"; id: string; text: string; model?: string | null; permissionMode?: string; effort?: string | null }
   | { op: "interrupt"; id: string }
   | { op: "stop"; id: string }
   | { op: "approval"; requestId: string; allow: boolean; always?: boolean; message?: string; answers?: Record<string, string> }

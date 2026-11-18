@@ -177,10 +177,10 @@ pub fn fetch_origin(repo_dir: &Path) -> bool {
 
 /// The repository's default branch: where `origin/HEAD` points, else `main` or `master`.
 fn default_branch(repo: &Repository) -> Option<String> {
-    if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
-        if let Some(t) = r.symbolic_target().ok().flatten().and_then(|t| t.strip_prefix("refs/remotes/origin/")) {
-            return Some(t.to_string());
-        }
+    if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD")
+        && let Some(t) = r.symbolic_target().ok().flatten().and_then(|t| t.strip_prefix("refs/remotes/origin/"))
+    {
+        return Some(t.to_string());
     }
     ["main", "master"]
         .into_iter()

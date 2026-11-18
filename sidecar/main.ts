@@ -125,7 +125,7 @@ function send(c: Extract<Command, { op: "send" }>) {
     return;
   }
   clearTimeout(entry.idle);
-  entry.session.send(c.text, c.model);
+  entry.session.send(c.text, c.model, { permissionMode: c.permissionMode, effort: c.effort });
 }
 
 function stop(id: string) {

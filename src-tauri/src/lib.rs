@@ -1037,6 +1037,7 @@ fn instructions_path(app: AppHandle, vault: String) -> Result<String> {
 
 /// Saves a query as `queries/<name>.md`: a note whose mq block runs in the preview too. Overwrites.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn save_query(
     app: AppHandle, vault: String, name: String, query: String, glob: String, aggregate: bool, agent: Option<String>, agent_each: Option<bool>,
 ) -> Result<String> {
@@ -1248,6 +1249,32 @@ async fn send_message(app: AppHandle, vault: String, session_id: String, text: S
         let v = PathBuf::from(&vault);
         let meta = session::meta(&v, &session_id)?;
         app.state::<Runner>().start(app.clone(), v, meta, text, Turn::Resume)
+    })
+    .await
+}
+
+/// Changes a session's model, permission mode or effort from its next turn on. An empty string is the default.
+#[tauri::command]
+async fn set_session_options(
+    vault: String, session_id: String, model: Option<String>, effort: Option<String>, permission_mode: Option<String>,
+) -> Result<()> {
+    blocking(move || {
+        let raw = session::raw_path(Path::new(&vault), &session_id);
+        let current = session::meta(Path::new(&vault), &session_id)?;
+        let same = |new: &Option<String>, old: &Option<String>| new.as_deref().unwrap_or("") == old.as_deref().unwrap_or("");
+        if let Some(m) = model.filter(|m| !same(&Some(m.clone()), &current.model)) {
+            session::append(&raw, &serde_json::json!({"type": "marq_model", "model": (!m.is_empty()).then_some(m)}))?;
+        }
+        if let Some(e) = effort.filter(|e| !same(&Some(e.clone()), &current.effort)) {
+            session::append(&raw, &serde_json::json!({"type": "marq_effort", "effort": e}))?;
+        }
+        if let Some(p) = permission_mode.filter(|p| !same(&Some(p.clone()), &current.permission_mode)) {
+            if !["", "auto", "default", "acceptEdits", "plan", "bypassPermissions"].contains(&p.as_str()) {
+                return Err(error::Error::Other(format!("unknown permission mode: {p}")));
+            }
+            session::append(&raw, &serde_json::json!({"type": "marq_mode", "mode": p}))?;
+        }
+        Ok(())
     })
     .await
 }
@@ -1849,6 +1876,7 @@ pub fn run() {
             mq_eval,
             run_from_note,
             send_message,
+            set_session_options,
             stop_session,
             resume_session,
             answer_approval,

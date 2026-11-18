@@ -20,6 +20,8 @@ import { usePastes } from "./pastes";
 import { useStickToBottom } from "./useStickToBottom";
 import { SelectionPopover } from "./SelectionPopover";
 import type { Excerpt } from "./SendToSessionDialog";
+import { effortsOf, useAgentModels } from "./ModelSelect";
+import { MODES } from "./NewTaskDialog";
 
 type Props = {
   vault: string;
@@ -755,6 +757,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           </div>
         )}
         <Resizer axis="y" sign={-1} pane={composerHeight} />
+        {info && <SessionOptions vault={vault} info={info} onChanged={loadInfo} onError={(e) => setError(e)} />}
         <div className="composer-box">
           <SlashTextarea
             ref={composerRef}
@@ -834,5 +837,44 @@ function CopyMeta({ value, alt, label, icon, title }: { value: string; alt?: str
     <button type="button" className="meta-item meta-copy" title={title} onClick={(e) => copy(e.altKey && alt ? alt : value)}>
       {copied ? <Check size={12} /> : icon} <span className="ellipsis">{copied ? "Copied" : label ?? value}</span>
     </button>
+  );
+}
+
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const CODEX_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
+
+/** Permission mode, model and effort for the session's next turn. Only Claude and Codex list models and take an effort. */
+function SessionOptions({ vault, info, onChanged, onError }: { vault: string; info: SessionInfo; onChanged: () => void; onError: (e: string) => void }) {
+  const agent = info.agent || "claude";
+  const known = agent === "claude" || agent === "codex";
+  const models = useAgentModels(agent);
+  const model = info.model ?? "";
+  const effort = info.effort ?? "";
+  const mode = info.permission_mode || "auto";
+  const efforts = effortsOf(models, model) ?? (agent === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS);
+  const set = (o: { model?: string; effort?: string; permissionMode?: string }) =>
+    api.setSessionOptions(vault, info.id, o).then(onChanged, (e) => onError(String(e)));
+  const list = (models ?? []).map((m) => ({ ...m, value: m.value === "default" ? "" : m.value }));
+  return (
+    <div className="session-options">
+      <select value={mode} onChange={(e) => set({ permissionMode: e.target.value })} title="Permission mode, from the next message">
+        {MODES.map((m) => <option key={m.value} value={m.value} title={m.hint}>{m.label}</option>)}
+        {!MODES.some((m) => m.value === mode) && <option value={mode}>{mode}</option>}
+      </select>
+      {known && (
+        <select value={model} onChange={(e) => set({ model: e.target.value })} title="Model, from the next message">
+          <option value="">Model (default)</option>
+          {list.filter((m) => m.value).map((m) => <option key={m.value} value={m.value} title={m.description}>{m.label}</option>)}
+          {model && !list.some((m) => m.value === model) && <option value={model}>{model.replace(/^ollama:/, "")}</option>}
+        </select>
+      )}
+      {known && (
+        <select value={effort} onChange={(e) => set({ effort: e.target.value })} title="Reasoning effort, from the next message">
+          <option value="">Effort (default)</option>
+          {efforts.map((l) => <option key={l} value={l}>{l}</option>)}
+          {effort && !efforts.includes(effort) && <option value={effort}>{effort}</option>}
+        </select>
+      )}
+    </div>
   );
 }

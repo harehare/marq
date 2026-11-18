@@ -2416,3 +2416,6 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .task-recent > .muted { display: inline-flex; align-items: center; gap: 4px; padding: 0 2px 2px; }
 .task-recent-item { display: flex; min-width: 0; text-align: left; padding: 4px 8px; border: 1px solid transparent; background: transparent; color: var(--fg); font-size: 12.5px; }
 .task-recent-item:hover { background: var(--bg-hover); border-color: var(--border); }
+
+.session-options { display: flex; gap: 6px; padding: 0 0 6px; flex-wrap: wrap; }
+.session-options select { font-size: 12px; padding: 2px 6px; max-width: 200px; color: var(--muted, inherit); }

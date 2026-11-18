@@ -280,10 +280,6 @@ impl Filter {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.labels.is_empty() && self.owner.is_none() && self.done.is_none()
-    }
-
     fn matches(&self, c: &Card) -> bool {
         self.labels.iter().all(|l| c.labels.iter().any(|x| x.eq_ignore_ascii_case(l)))
             && self.owner.as_ref().is_none_or(|o| c.owner.as_ref().is_some_and(|x| x.to_lowercase() == *o))

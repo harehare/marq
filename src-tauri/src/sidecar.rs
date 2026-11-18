@@ -283,8 +283,8 @@ impl Runner {
         // The log keeps the prompt as typed; the agent also gets the notes its [[links]] name.
         let prompt = crate::refs::attach(&vault, &prompt);
         let cmd = if was_alive {
-            // A crew member's model can change between turns.
-            json!({"op": "send", "id": id, "text": prompt, "model": meta.model})
+            // The model, mode and effort can change between turns.
+            json!({"op": "send", "id": id, "text": prompt, "model": meta.model, "permissionMode": meta.permission_mode, "effort": meta.effort})
         } else {
             // What a worktree cannot isolate (a database) is made first. A failure ends the session with its
             // reason; resuming it tries again.
@@ -912,7 +912,7 @@ pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since
         })
         .collect();
     // list() is newest first and the sort is stable, so ties stay in that order.
-    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    hits.sort_by_key(|a| std::cmp::Reverse(a.0));
     hits.into_iter().take(limit).map(|(_, v)| v).collect()
 }
 
