@@ -2,7 +2,7 @@ import { createContext, createElement, memo, ReactNode, useContext } from "react
 import ReactMarkdown, { Components, defaultUrlTransform } from "react-markdown";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import remarkGfm from "remark-gfm";
-import { Sparkles, Pencil, Anchor as AnchorIcon, Bot, Check } from "lucide-react";
+import { Sparkles, Pencil, Anchor as AnchorIcon, Bot, Check, MessageSquarePlus, MessageSquareText, X } from "lucide-react";
 import { SessionInfo } from "../api";
 import { MqBlock } from "./MqBlock";
 import { resolveLink } from "../links";
@@ -18,6 +18,11 @@ type Props = {
   /** `withOptions`: ⌥-click, to pick project, worktree and model first. */
   onRunAt: (line: number, withOptions?: boolean) => void;
   onEditAt: (line: number) => void;
+  /** Add a comment under the block at this line. */
+  onCommentAt?: (line: number) => void;
+  /** Ask the agent to act on the comment at this line. */
+  onRunComment?: (line: number) => void;
+  onDeleteComment?: (line: number) => void;
   onOpenSession: (id: string, title: string) => void;
   /** Opens a note or board a relative `.md` link points to. */
   onOpenFile?: (path: string) => void;
@@ -25,7 +30,7 @@ type Props = {
   onPinned?: (text: string) => void;
 };
 
-const urlTransform = (url: string) => (url.startsWith("marq-anchor:") || url.startsWith(WIKI_SCHEME) ? url : defaultUrlTransform(url));
+const urlTransform = (url: string) => (url.startsWith("marq-anchor:") || url.startsWith("marq-comment:") || url.startsWith(WIKI_SCHEME) ? url : defaultUrlTransform(url));
 
 function textOf(node: any): string {
   if (!node) return "";
@@ -100,7 +105,7 @@ const withLine = (tag: string) =>
 
 const heading = (tag: string) =>
   function Heading({ node, children }: any) {
-    const { onRunAt, onEditAt } = useContext(PreviewCtx);
+    const { onRunAt, onEditAt, onCommentAt } = useContext(PreviewCtx);
     const line = useLine(node);
     return (
       <div className="heading" data-line={line}>
@@ -109,6 +114,11 @@ const heading = (tag: string) =>
           <button className="icon accent" title="Ask about this section (⌥-click for options)" onClick={(e) => onRunAt(line, e.altKey)}>
             <Sparkles size={14} /> Ask
           </button>
+          {onCommentAt && (
+            <button className="icon" title="Comment on this section" onClick={() => onCommentAt(line)}>
+              <MessageSquarePlus size={13} />
+            </button>
+          )}
           <button className="icon" title="Edit here" onClick={() => onEditAt(line)}>
             <Pencil size={13} />
           </button>
@@ -157,9 +167,36 @@ function WikiLink({ target, children }: { target: string; children: ReactNode })
   );
 }
 
+/** A comment left in the note, with its @marq mention marked and a button to ask the agent. */
+function CommentCard({ line, sent, text }: { line: number; sent: boolean; text: string }) {
+  const { onRunComment, onDeleteComment } = useContext(PreviewCtx);
+  const parts = text.split(/((?:^|\s)@marq\b)/i);
+  return (
+    <span className={`comment-card ${sent ? "sent" : ""}`} data-line={line}>
+      <MessageSquareText size={13} className="comment-icon" />
+      <span className="comment-text">
+        {parts.map((p, i) => (i % 2 ? <mark key={i} className="mention">{p}</mark> : p))}
+      </span>
+      {onRunComment && (
+        <button className="small-btn" title={sent ? "Sent to an agent already; ask again" : "Ask an agent to do what this comment says"}
+          onClick={() => onRunComment(line)}>
+          {sent ? <Check size={11} /> : <Sparkles size={11} />} {sent ? "Sent" : "Ask marq"}
+        </button>
+      )}
+      {onDeleteComment && (
+        <button className="icon" title="Delete the comment" onClick={() => onDeleteComment(line)}><X size={12} /></button>
+      )}
+    </span>
+  );
+}
+
 function Link({ href, children }: any) {
   const { path, sessions, onOpenSession, onOpenFile } = useContext(PreviewCtx);
   if (href?.startsWith(WIKI_SCHEME)) return <WikiLink target={decodeURIComponent(href.slice(WIKI_SCHEME.length))}>{children}</WikiLink>;
+  if (href?.startsWith("marq-comment:")) {
+    const [line, state, ...rest] = href.slice("marq-comment:".length).split(":");
+    return <CommentCard line={Number(line)} sent={state === "sent"} text={decodeURIComponent(rest.join(":"))} />;
+  }
   if (href?.startsWith("marq-anchor:")) {
     const id = href.slice("marq-anchor:".length);
     const linked = sessions.filter((s) => s.origin === id);

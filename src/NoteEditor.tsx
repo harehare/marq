@@ -5,7 +5,7 @@ import { LanguageDescription, LanguageSupport } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { mq } from "./mqLang";
 import { listen } from "@tauri-apps/api/event";
-import { Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X, KanbanSquare, MessageSquare } from "lucide-react";
+import { MessageSquarePlus, Eye, Columns2, PenLine, Save, Sparkles, PanelRight, AlertCircle, Send, MoveHorizontal, Copy, Check, Search, ChevronUp, ChevronDown, X, KanbanSquare, MessageSquare } from "lucide-react";
 import { parseFrontmatter } from "./markdown/segments";
 import { api, SessionInfo } from "./api";
 import { Preview } from "./markdown/Preview";
@@ -13,6 +13,8 @@ import { editorHighlight, editorTheme } from "./editorTheme";
 import { Resizer, usePaneSize } from "./Resizer";
 import { CONTENT_WIDTHS, getSettings, setSettings, useSettings } from "./settings";
 import { AskDialog, AskOptions } from "./AskDialog";
+import { CommentDialog } from "./CommentDialog";
+import { addComment, ALL_COMMENTS_REQUEST, commentRequest, findComments, hasMention, markSent, removeComment, subjectOf } from "./comments";
 import { SelectionPopover } from "./SelectionPopover";
 import type { Excerpt } from "./SendToSessionDialog";
 import { EditorState } from "@codemirror/state";
@@ -47,7 +49,7 @@ const MARKER = /^<!-- \/?(?:(?:marq|claude):(?:anchor|result)|mq:output)\b[^>]*-
 /** The note as Markdown to paste elsewhere: no frontmatter and no marker comments. */
 function forCopy(text: string) {
   const body = text.startsWith("---\n") && text.indexOf("\n---", 3) > 0 ? text.slice(text.indexOf("\n---", 3) + 4) : text;
-  return body.split("\n").filter((l) => !MARKER.test(l.trim())).join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  return body.split("\n").filter((l) => !MARKER.test(l.trim()) && !/^<!-- comment( \(sent\))?: .* -->$/.test(l.trim())).join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
 type Props = {
@@ -456,6 +458,60 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     onOpenSession(started.session_id, first?.replace(/^[#\-*\s]+/, "").slice(0, 60) || "session");
   };
 
+  // Comments: written into the note under the text they are about; one with @marq goes to an agent at once.
+  const [commenting, setCommenting] = useState<{ line: number; about?: string } | null>(null);
+  const comments = useMemo(() => (plain || text === null ? [] : findComments(text)), [plain, text]);
+  const unsent = comments.filter((c) => !c.sent);
+  /** Saves `next` (with the comments at `lines` marked as sent), then starts a session on `lines` of it. */
+  const askAboutComments = async (current: string, lines: number[], excerpt: [number, number], instruction: string) => {
+    const all = current.split("\n");
+    const marked = markSent(current, lines);
+    await writeText(marked);
+    loaded(marked);
+    try {
+      const started = await api.runFromNote(vault, path, excerpt[0], {
+        intent: "do", instruction, excerpt: { text: all.slice(excerpt[0], excerpt[1] + 1).join("\n"), from: excerpt[0], to: excerpt[1] },
+      });
+      loaded(started.content);
+      const first = all[lines[0]].replace(/^<!-- comment( \(sent\))?: /, "").replace(/ -->$/, "");
+      onOpenSession(started.session_id, first.slice(0, 60) || "comment");
+    } catch (e) {
+      // Not sent after all: the comments are open again.
+      await writeText(current).catch(() => {});
+      loaded(current);
+      throw e;
+    }
+  };
+  const runComment = async (line: number) => {
+    if (dirty) await save();
+    const current = (await readText().catch(() => textRef.current)) ?? "";
+    const c = findComments(current).find((x) => x.line === line);
+    if (!c) return;
+    const lines = current.split("\n");
+    await askAboutComments(current, [line], subjectOf(lines, line), commentRequest(c.text));
+  };
+  const runAllComments = async () => {
+    if (dirty) await save();
+    const current = (await readText().catch(() => textRef.current)) ?? "";
+    const open = findComments(current).filter((c) => !c.sent);
+    if (!open.length) return;
+    const n = current.split("\n").length;
+    await askAboutComments(current, open.map((c) => c.line), [0, n - 1], ALL_COMMENTS_REQUEST);
+  };
+  const addNewComment = async (line: number, comment: string) => {
+    const base = (dirty ? textRef.current : await readText().catch(() => textRef.current)) ?? "";
+    const added = addComment(base, line, comment);
+    await writeText(added.text);
+    loaded(added.text);
+    if (hasMention(comment)) await runComment(added.line);
+  };
+  const deleteComment = async (line: number) => {
+    if (textRef.current === null) return;
+    const next = removeComment(textRef.current, line);
+    await writeText(next);
+    loaded(next);
+  };
+
   // Handlers that keep their identity, so the memoized preview renders again only when the text or sessions change.
   const onEditorChange = useCallback((v: string) => {
     setText(v);
@@ -464,13 +520,16 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   const onEditorUpdate = useCallback((u: ViewUpdate) => {
     if (u.selectionSet) setHasSelection(!u.state.selection.main.empty);
   }, []);
-  const latest = useRef({ askAt, setPendingJump, onOpenFile, onOpenSession, loaded });
+  const latest = useRef({ askAt, setPendingJump, onOpenFile, onOpenSession, loaded, setCommenting, runComment, deleteComment, setError });
   useLayoutEffect(() => {
-    latest.current = { askAt, setPendingJump, onOpenFile, onOpenSession, loaded };
+    latest.current = { askAt, setPendingJump, onOpenFile, onOpenSession, loaded, setCommenting, runComment, deleteComment, setError };
   });
   const previewHandlers = useMemo(() => ({
     onRunAt: (line: number, withOptions?: boolean) => latest.current.askAt(line, withOptions),
     onEditAt: (line: number) => latest.current.setPendingJump(line),
+    onCommentAt: (line: number) => latest.current.setCommenting({ line }),
+    onRunComment: (line: number) => latest.current.runComment(line).catch((e) => latest.current.setError(String(e))),
+    onDeleteComment: (line: number) => latest.current.deleteComment(line).catch((e) => latest.current.setError(String(e))),
     onOpenFile: (p: string) => latest.current.onOpenFile(p),
     onOpenSession: (id: string, title: string) => latest.current.onOpenSession(id, title),
     onPinned: (t: string) => latest.current.loaded(t),
@@ -537,6 +596,17 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
         {flow.spec && (
           <button onClick={breakDown} title="Put the open items under ## Tasks on this spec's board, as cards linked to the spec">
             <KanbanSquare size={14} /> Break down
+          </button>
+        )}
+        {!plain && mode !== "preview" && (
+          <button className="icon" onClick={() => setCommenting({ line: cursorLine() })} title="Comment on the text at the cursor; mention @marq to ask an agent at once">
+            <MessageSquarePlus size={14} />
+          </button>
+        )}
+        {unsent.length > 0 && (
+          <button onClick={() => runAllComments().catch((e) => setError(String(e)))}
+            title="Ask an agent to go through the comments in this note that were not sent yet">
+            <MessageSquarePlus size={14} /> Ask marq ({unsent.length})
           </button>
         )}
         {!plain && <button
@@ -608,6 +678,10 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
             <SelectionPopover container={previewRef}
               onSend={(text) => onSendExcerpt({ text, source: rel, lines: previewLines() })}
               toSession={writers[0] && { title: writers[0].title, onSend: (text) => onSendExcerpt({ text, source: rel, lines: previewLines(), target: writers[0].id }) }}
+              onComment={plain ? undefined : (text) => {
+                const l = previewLines();
+                setCommenting({ line: l ? l[1] - 1 : 0, about: text });
+              }}
               onAsk={(text) => {
                 const l = previewLines();
                 setAsk({ line: l?.[0] ?? 0, options: false, excerpt: l ? { text, from: l[0], to: l[1] } : undefined });
@@ -640,6 +714,10 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
           </aside>
         )}
       </div>
+      {commenting && (
+        <CommentDialog about={commenting.about} onClose={() => setCommenting(null)}
+          onAdd={(c) => addNewComment(commenting.line, c)} />
+      )}
       {ask && text !== null && (
         <AskDialog vault={vault} note={text} excerpt={ask.excerpt} showOptions={ask.options}
           onClose={() => setAsk(null)} onRun={(o) => runAsk(ask.line, o)} />

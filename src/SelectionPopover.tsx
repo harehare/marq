@@ -1,5 +1,5 @@
 import { RefObject, useEffect, useState } from "react";
-import { MessageSquare, Quote, Send, Sparkles } from "lucide-react";
+import { MessageSquare, MessageSquarePlus, Quote, Send, Sparkles } from "lucide-react";
 
 type Props = {
   /** Only selections inside this element count. */
@@ -9,12 +9,14 @@ type Props = {
   onAsk?: (text: string) => void;
   /** Quote the selection in the message box of the session being viewed. */
   onQuote?: (text: string) => void;
+  /** Leave a comment in the note about the selection. */
+  onComment?: (text: string) => void;
   /** Send the selection to one session in particular, such as the one that wrote the document. */
   toSession?: { title: string; onSend: (text: string) => void };
 };
 
 /** A small "Send to session" button that follows a text selection inside `container`. */
-export function SelectionPopover({ container, onSend, onAsk, onQuote, toSession }: Props) {
+export function SelectionPopover({ container, onSend, onAsk, onQuote, onComment, toSession }: Props) {
   const [at, setAt] = useState<{ x: number; y: number; text: string } | null>(null);
 
   useEffect(() => {
@@ -62,6 +64,11 @@ export function SelectionPopover({ container, onSend, onAsk, onQuote, toSession 
         </button>
       )}
       <button onClick={() => { onSend(at.text); setAt(null); }}><Send size={13} /> Send to session</button>
+      {onComment && (
+        <button title="Leave a comment in the note; mention @marq to ask an agent at once" onClick={() => { onComment(at.text); setAt(null); }}>
+          <MessageSquarePlus size={13} /> Comment
+        </button>
+      )}
     </div>
   );
 }
