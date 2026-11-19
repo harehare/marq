@@ -47,3 +47,6 @@ dist-ssr
 
 # dev.to article drafts
 /devto/
+
+# bun build leftovers
+.*.bun-build
