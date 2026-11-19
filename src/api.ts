@@ -84,6 +84,8 @@ export type SessionInfo = {
   /** `done` or `pr` once reviewed. */
   review: string | null;
   pr_url: string | null;
+  /** How full the context was at the end of the latest turn, 0 to 1, when the agent reports it. */
+  context?: number | null;
   /** A Claude alias or `ollama:<name>`; empty for the default. */
   model?: string | null;
   effort?: string | null;
@@ -238,6 +240,8 @@ export const api = {
   listCommands: (vault: string, opts: { cwd?: string; sessionId?: string }) =>
     invoke<SlashCommand[]>("list_commands", { vault, ...opts }),
   sessionCheckout: (vault: string, sessionId: string) => invoke<Worktree | null>("session_checkout", { vault, sessionId }),
+  /** The session's other directories that have no worktree, one checkout per git repository. */
+  sessionDirCheckouts: (vault: string, sessionId: string) => invoke<Worktree[]>("session_dir_checkouts", { vault, sessionId }),
   sessionChanges: (vault: string, sessionId: string, repo?: string) => invoke<Changes>("session_changes", { vault, sessionId, repo }),
   sessionFileDiff: (vault: string, sessionId: string, file: string, repo?: string, ignoreWhitespace?: boolean) =>
     invoke<string>("session_file_diff", { vault, sessionId, file, repo, ignoreWhitespace }),

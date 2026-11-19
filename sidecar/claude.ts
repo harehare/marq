@@ -72,11 +72,23 @@ function toolOutput(content: unknown): string {
   return "";
 }
 
-/** marq's events for one SDK message. Messages marq does not show (stream events, hooks, status…) yield none. */
-export function* toEvents(m: SDKMessage): Generator<AgentEvent> {
+/** What the main loop's latest request held, to say how full the context is when the turn ends. */
+export type ContextSeen = { tokens?: number; model?: string };
+
+/**
+ * marq's events for one SDK message. Messages marq does not show (stream events, hooks, status…) yield none.
+ * `seen` is kept between the messages of a session.
+ */
+export function* toEvents(m: SDKMessage, seen: ContextSeen = {}): Generator<AgentEvent> {
   if (m.type === "system" && m.subtype === "init") {
     yield { type: "init", agent: "claude", model: m.model };
   } else if (m.type === "assistant") {
+    const u = m.message.usage;
+    // Subagents have their own context.
+    if (u && !m.parent_tool_use_id) {
+      seen.tokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
+      seen.model = m.message.model;
+    }
     for (const c of m.message.content) {
       if (c.type === "text") yield { type: "text", text: c.text };
       else if (c.type === "thinking" && c.thinking) yield { type: "thinking", text: c.thinking };
@@ -87,6 +99,8 @@ export function* toEvents(m: SDKMessage): Generator<AgentEvent> {
       if (c.type === "tool_result") yield { type: "tool_result", id: c.tool_use_id, output: toolOutput(c.content), is_error: c.is_error };
     }
   } else if (m.type === "result") {
+    const used = Object.entries(m.modelUsage ?? {});
+    const window = (used.find(([k]) => k === seen.model) ?? used.find(([k]) => !!seen.model && (k.startsWith(seen.model) || seen.model.startsWith(k))))?.[1].contextWindow;
     yield {
       type: "turn_end",
       result: m.subtype === "success" ? m.result : "",
@@ -94,6 +108,7 @@ export function* toEvents(m: SDKMessage): Generator<AgentEvent> {
       cost_usd: m.total_cost_usd,
       duration_ms: m.duration_ms,
       num_turns: m.num_turns,
+      context: seen.tokens && window ? Math.min(1, seen.tokens / window) : undefined,
     };
   }
 }
@@ -186,7 +201,8 @@ class ClaudeSession implements AgentSession {
       },
     }));
     this.done = (async () => {
-      for await (const m of q) for (const e of toEvents(m)) host.event(e);
+      const seen: ContextSeen = {};
+      for await (const m of q) for (const e of toEvents(m, seen)) host.event(e);
     })();
   }
 

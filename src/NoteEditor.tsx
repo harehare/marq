@@ -43,6 +43,9 @@ const BASIC_SETUP = { lineNumbers: false, foldGutter: false, highlightActiveLine
 
 type Mode = "edit" | "split" | "preview";
 
+/** A session whose context is this full (0 to 1) gets no more comments: the next one starts a new session. */
+const COMMENT_SESSION_FULL = 0.5;
+
 // Marq's own marker comments (anchors, result blocks, pinned mq output); the text between them stays.
 const MARKER = /^<!-- \/?(?:(?:marq|claude):(?:anchor|result)|mq:output)\b[^>]*-->$/;
 
@@ -462,17 +465,34 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   const [commenting, setCommenting] = useState<{ line: number; about?: string } | null>(null);
   const comments = useMemo(() => (plain || text === null ? [] : findComments(text)), [plain, text]);
   const unsent = comments.filter((c) => !c.sent);
-  /** Saves `next` (with the comments at `lines` marked as sent), then starts a session on `lines` of it. */
-  const askAboutComments = async (current: string, lines: number[], excerpt: [number, number], instruction: string) => {
+  /** Saves `next` (with the comments at `lines` marked as sent), then asks a session about `lines` of it. */
+  const askAboutComments = async (current: string, lines: number[], excerpt: [number, number], instruction: string, fresh = false) => {
     const all = current.split("\n");
     const marked = markSent(current, lines);
     await writeText(marked);
     loaded(marked);
+    const about = all.slice(excerpt[0], excerpt[1] + 1).join("\n");
     try {
+      // Comments go on in one session rather than a new one each time: the session that wrote the
+      // document or the one this note's earlier comments started, whichever is newer. A session
+      // whose context is filling up is left alone, and so is any session when a new one is asked for.
+      const key = `marq.commentSession:${path}`;
+      const known = [writers[0]?.id, localStorage.getItem(key)];
+      const target = fresh ? undefined : (await api.listSessions(vault))
+        .filter((s) => known.includes(s.id))
+        .sort((a, b) => b.started.localeCompare(a.started))[0];
+      if (target && (target.context ?? 0) < COMMENT_SESSION_FULL) {
+        const range = `${excerpt[0] + 1}-${excerpt[1] + 1}`;
+        const sent = await api.sendMessage(vault, target.id,
+          `This is part of my note \`${rel}\` (lines ${range}).\n\n<note path="${rel}" lines="${range}">\n${about.trim()}\n</note>\n\nMy request: ${instruction}`,
+        ).then(() => true, () => false);
+        if (sent) return onOpenSession(target.id, target.title);
+      }
       const started = await api.runFromNote(vault, path, excerpt[0], {
-        intent: "do", instruction, excerpt: { text: all.slice(excerpt[0], excerpt[1] + 1).join("\n"), from: excerpt[0], to: excerpt[1] },
+        intent: "do", instruction, excerpt: { text: about, from: excerpt[0], to: excerpt[1] },
       });
       loaded(started.content);
+      localStorage.setItem(key, started.session_id);
       const first = all[lines[0]].replace(/^<!-- comment( \(sent\))?: /, "").replace(/ -->$/, "");
       onOpenSession(started.session_id, first.slice(0, 60) || "comment");
     } catch (e) {
@@ -482,21 +502,21 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
       throw e;
     }
   };
-  const runComment = async (line: number) => {
+  const runComment = async (line: number, fresh = false) => {
     if (dirty) await save();
     const current = (await readText().catch(() => textRef.current)) ?? "";
     const c = findComments(current).find((x) => x.line === line);
     if (!c) return;
     const lines = current.split("\n");
-    await askAboutComments(current, [line], subjectOf(lines, line), commentRequest(c.text));
+    await askAboutComments(current, [line], subjectOf(lines, line), commentRequest(c.text), fresh);
   };
-  const runAllComments = async () => {
+  const runAllComments = async (fresh = false) => {
     if (dirty) await save();
     const current = (await readText().catch(() => textRef.current)) ?? "";
     const open = findComments(current).filter((c) => !c.sent);
     if (!open.length) return;
     const n = current.split("\n").length;
-    await askAboutComments(current, open.map((c) => c.line), [0, n - 1], ALL_COMMENTS_REQUEST);
+    await askAboutComments(current, open.map((c) => c.line), [0, n - 1], ALL_COMMENTS_REQUEST, fresh);
   };
   const addNewComment = async (line: number, comment: string) => {
     const base = (dirty ? textRef.current : await readText().catch(() => textRef.current)) ?? "";
@@ -528,7 +548,7 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     onRunAt: (line: number, withOptions?: boolean) => latest.current.askAt(line, withOptions),
     onEditAt: (line: number) => latest.current.setPendingJump(line),
     onCommentAt: (line: number) => latest.current.setCommenting({ line }),
-    onRunComment: (line: number) => latest.current.runComment(line).catch((e) => latest.current.setError(String(e))),
+    onRunComment: (line: number, fresh?: boolean) => latest.current.runComment(line, fresh).catch((e) => latest.current.setError(String(e))),
     onDeleteComment: (line: number) => latest.current.deleteComment(line).catch((e) => latest.current.setError(String(e))),
     onOpenFile: (p: string) => latest.current.onOpenFile(p),
     onOpenSession: (id: string, title: string) => latest.current.onOpenSession(id, title),
@@ -604,8 +624,8 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
           </button>
         )}
         {unsent.length > 0 && (
-          <button onClick={() => runAllComments().catch((e) => setError(String(e)))}
-            title="Ask an agent to go through the comments in this note that were not sent yet">
+          <button onClick={(e) => runAllComments(e.altKey).catch((err) => setError(String(err)))}
+            title={"Ask an agent to go through the comments in this note that were not sent yet\n⌥-click: in a new session"}>
             <MessageSquarePlus size={14} /> Ask marq ({unsent.length})
           </button>
         )}

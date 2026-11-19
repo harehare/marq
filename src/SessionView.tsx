@@ -3,8 +3,8 @@ import { isSendKey, sendHint, useSettings } from "./settings";
 import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowUp, ArrowRight, ListChecks, Circle, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
-  FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
+  ArrowUp, ArrowRight, ChevronDown, ListChecks, Circle, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
+  Folder, FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
@@ -542,14 +542,26 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     setCheckout(null);
     if (hasMeta && !hasWorktree) api.sessionCheckout(vault, sessionId).then(setCheckout, () => {});
   }, [vault, sessionId, hasMeta, hasWorktree]);
-  // Worktrees of the workspace's other directories get a tab each in the Changes panel.
-  const dirTrees: Worktree[] = (meta?.dirs ?? []).flatMap((d: { worktree?: Worktree | null }) => (d.worktree ? [d.worktree] : []));
+  // The workspace's other directories get a tab each in the Changes panel: their worktrees, and
+  // the checkouts of those used as they are (uncommitted changes only).
+  const [dirCheckouts, setDirCheckouts] = useState<Worktree[]>([]);
+  const plainDirs = (meta?.dirs ?? []).filter((d: { worktree?: Worktree | null }) => !d.worktree).length;
+  useEffect(() => {
+    setDirCheckouts([]);
+    if (plainDirs > 0) api.sessionDirCheckouts(vault, sessionId).then(setDirCheckouts, () => {});
+  }, [vault, sessionId, plainDirs]);
+  const dirTrees: Worktree[] = [
+    ...(meta?.dirs ?? []).flatMap((d: { worktree?: Worktree | null }) => (d.worktree ? [d.worktree] : [])),
+    ...dirCheckouts,
+  ];
   const [repoTab, setRepoTab] = useState<string | null>(null);
   useEffect(() => setRepoTab(null), [sessionId]);
   const otherTree = repoTab ? dirTrees.find((w) => w.repo === repoTab) : undefined;
   const diffable = worktree ?? checkout ?? undefined;
   const panel = side ?? (diffable ? "changes" : "note");
   const repoName = (w: Worktree) => w.repo.replace(/\/+$/, "").split("/").pop();
+  const shownTree = otherTree ?? diffable;
+  const [pathCopied, setPathCopied] = useState(false);
 
   const [pushing, setPushing] = useState(false);
   const push = async () => {
@@ -635,8 +647,8 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   }, [sessionId]);
 
   const send = async () => {
-    if (!input.trim()) return;
     const text = pastes.expand(input);
+    if (!text) return;
     try {
       await api.sendMessage(vault, sessionId, text);
       saveHistory(text);
@@ -757,8 +769,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           </div>
         )}
         <Resizer axis="y" sign={-1} pane={composerHeight} />
-        {info && <SessionOptions vault={vault} info={info} onChanged={loadInfo} onError={(e) => setError(e)} />}
-        <div className="composer-box">
+        <div className="composer-box stacked">
           <SlashTextarea
             ref={composerRef}
             value={input}
@@ -772,13 +783,17 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
               else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey) recallKey(e);
             }}
           />
-          <button className="icon forward" onClick={forward} disabled={!input.trim() && !latest}
-            title="Send to another session: what you typed, with this session's latest answer. Its answer can come back here.">
-            <Forward size={15} />
-          </button>
-          <button className="send" onClick={send} disabled={!input.trim()} title="Send">
-            <ArrowUp size={16} />
-          </button>
+          <div className="composer-bar">
+            {info && <SessionOptions vault={vault} info={info} onChanged={loadInfo} onError={(e) => setError(e)} />}
+            <span className="composer-bar-gap" />
+            <button className="icon forward" onClick={forward} disabled={!input.trim() && !latest}
+              title="Send to another session: what you typed, with this session's latest answer. Its answer can come back here.">
+              <Forward size={15} />
+            </button>
+            <button className="send" onClick={send} disabled={!input.trim() && !pastes.items.length} title="Send">
+              <ArrowUp size={16} />
+            </button>
+          </div>
         </div>
       </div>
       </div>
@@ -804,13 +819,21 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
                     {repoName(w)}
                   </button>
                 ))}
+                {/* Where the shown repository is: the worktree, or the directory itself. */}
+                <button className="repo-path" title={`${shownTree!.path}\nClick to copy the path`}
+                  onClick={() => navigator.clipboard.writeText(shownTree!.path).then(() => {
+                    setPathCopied(true);
+                    setTimeout(() => setPathCopied(false), 1200);
+                  }, () => {})}>
+                  <Folder size={11} /> <span className="ellipsis">{pathCopied ? "Copied" : shownTree!.path}</span>
+                </button>
               </div>
             )}
             {panel === "docs" ? (
               <SessionDocsPanel vault={vault} sessionId={sessionId} onOpenNote={onOpenOrigin} onCount={setDocCount} />
             ) : panel === "changes" && diffable ? (
               <ChangesPanel key={`${sessionId}:${otherTree?.repo ?? ""}`} vault={vault} sessionId={sessionId}
-                worktree={otherTree ?? diffable} repo={otherTree?.repo} checkout={!otherTree && !worktree}
+                worktree={otherTree ?? diffable} repo={otherTree?.repo} checkout={otherTree ? dirCheckouts.includes(otherTree) : !worktree}
                 title={meta?.title ?? ""} running={running}
                 onCompose={compose} onSend={sendText} />
             ) : (
@@ -857,23 +880,32 @@ function SessionOptions({ vault, info, onChanged, onError }: { vault: string; in
   const list = (models ?? []).map((m) => ({ ...m, value: m.value === "default" ? "" : m.value }));
   return (
     <div className="session-options">
-      <select value={mode} onChange={(e) => set({ permissionMode: e.target.value })} title="Permission mode, from the next message">
-        {MODES.map((m) => <option key={m.value} value={m.value} title={m.hint}>{m.label}</option>)}
-        {!MODES.some((m) => m.value === mode) && <option value={mode}>{mode}</option>}
-      </select>
-      {known && (
-        <select value={model} onChange={(e) => set({ model: e.target.value })} title="Model, from the next message">
-          <option value="">Model (default)</option>
-          {list.filter((m) => m.value).map((m) => <option key={m.value} value={m.value} title={m.description}>{m.label}</option>)}
-          {model && !list.some((m) => m.value === model) && <option value={model}>{model.replace(/^ollama:/, "")}</option>}
+      <span className="composer-opt" title="Permission mode, from the next message">
+        <select value={mode} onChange={(e) => set({ permissionMode: e.target.value })}>
+          {MODES.map((m) => <option key={m.value} value={m.value} title={m.hint}>{m.label}</option>)}
+          {!MODES.some((m) => m.value === mode) && <option value={mode}>{mode}</option>}
         </select>
+        <ChevronDown size={11} />
+      </span>
+      {known && (
+        <span className="composer-opt" title="Model, from the next message">
+          <select value={model} onChange={(e) => set({ model: e.target.value })}>
+            <option value="">Model (default)</option>
+            {list.filter((m) => m.value).map((m) => <option key={m.value} value={m.value} title={m.description}>{m.label}</option>)}
+            {model && !list.some((m) => m.value === model) && <option value={model}>{model.replace(/^ollama:/, "")}</option>}
+          </select>
+          <ChevronDown size={11} />
+        </span>
       )}
       {known && (
-        <select value={effort} onChange={(e) => set({ effort: e.target.value })} title="Reasoning effort, from the next message">
-          <option value="">Effort (default)</option>
-          {efforts.map((l) => <option key={l} value={l}>{l}</option>)}
-          {effort && !efforts.includes(effort) && <option value={effort}>{effort}</option>}
-        </select>
+        <span className="composer-opt" title="Reasoning effort, from the next message">
+          <select value={effort} onChange={(e) => set({ effort: e.target.value })}>
+            <option value="">Effort (default)</option>
+            {efforts.map((l) => <option key={l} value={l}>{l}</option>)}
+            {effort && !efforts.includes(effort) && <option value={effort}>{effort}</option>}
+          </select>
+          <ChevronDown size={11} />
+        </span>
       )}
     </div>
   );

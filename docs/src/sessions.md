@@ -41,7 +41,7 @@ directories:
   - ~/dev/git/mq-lib                 # used as it is
 ```
 
-The agent can read and edit every directory listed (Claude Code's additional directories), and is told where each one is. A directory with `worktree: true` that is a git repository gets a worktree on the same branch as the task's, when the task works in a worktree. It shows as a tab in the **Changes** panel, where you can review, commit, push and open a pull request for it on its own. Deleting the session can remove those worktrees too. Directories without a worktree are used as they are, so tasks running at the same time can change them at the same time.
+The agent can read and edit every directory listed (Claude Code's additional directories), and is told where each one is. A directory with `worktree: true` that is a git repository gets a worktree on the same branch as the task's, when the task works in a worktree. It shows as a tab in the **Changes** panel, where you can review, commit, push and open a pull request for it on its own. Deleting the session can remove those worktrees too. Directories without a worktree are used as they are, so tasks running at the same time can change them at the same time. Those that are git repositories get a tab too, showing the uncommitted changes of that checkout, whoever made them. Under the tabs is the path of the repository shown: the worktree, or the directory itself.
 
 To pick a set again, save it as a **workspace**: **Save as workspace** in the New task dialog, or **New workspace** in the command palette. Either one writes `workspaces/<name>.md`:
 

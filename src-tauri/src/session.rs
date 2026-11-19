@@ -79,6 +79,8 @@ pub struct SessionInfo {
     /// `done` or `pr` once reviewed, from the latest `marq_review` line.
     pub review: Option<String>,
     pub pr_url: Option<String>,
+    /// How full the context was at the end of the latest turn, 0 to 1, when the agent reports it.
+    pub context: Option<f64>,
 }
 
 /// The latest review state of a session: `open`, `done` or `pr`, and the PR URL if one was made.
@@ -281,6 +283,7 @@ fn info_of(vault: &Path, events: &[Value]) -> Option<SessionInfo> {
         deletions: None,
         review,
         pr_url,
+        context: events.iter().rev().find(|e| e["type"] == "turn_end").and_then(|e| e["context"].as_f64()),
         meta,
     })
 }

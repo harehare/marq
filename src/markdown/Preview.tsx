@@ -21,7 +21,7 @@ type Props = {
   /** Add a comment under the block at this line. */
   onCommentAt?: (line: number) => void;
   /** Ask the agent to act on the comment at this line. */
-  onRunComment?: (line: number) => void;
+  onRunComment?: (line: number, fresh?: boolean) => void;
   onDeleteComment?: (line: number) => void;
   onOpenSession: (id: string, title: string) => void;
   /** Opens a note or board a relative `.md` link points to. */
@@ -178,8 +178,8 @@ function CommentCard({ line, sent, text }: { line: number; sent: boolean; text: 
         {parts.map((p, i) => (i % 2 ? <mark key={i} className="mention">{p}</mark> : p))}
       </span>
       {onRunComment && (
-        <button className="small-btn" title={sent ? "Sent to an agent already; ask again" : "Ask an agent to do what this comment says"}
-          onClick={() => onRunComment(line)}>
+        <button className="small-btn" title={`${sent ? "Sent to an agent already; ask again" : "Ask an agent to do what this comment says"}\n⌥-click: in a new session`}
+          onClick={(e) => onRunComment(line, e.altKey)}>
           {sent ? <Check size={11} /> : <Sparkles size={11} />} {sent ? "Sent" : "Ask marq"}
         </button>
       )}

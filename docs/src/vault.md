@@ -163,6 +163,7 @@ A comment is one line under the text it is about. The preview shows it as a card
 
 - **`@marq` in a comment** starts an agent on it as soon as you add the comment. The agent gets the text above the comment and what the comment says.
 - Without `@marq` the comment just stays in the note. **Ask marq** on its card sends it later, and **Ask marq (n)** in the toolbar sends all the comments not sent yet to one session.
+- Comments on the same note go to one session, so asking often does not pile up sessions: a document an agent wrote sends them to the session that wrote it, and any other note to the session its first comment started. A new session starts when that one is gone or more than half of its context is used, and the later comments go to the new one. ⌥-click **Ask marq** to start a new session yourself.
 - A comment that was sent reads `<!-- comment (sent): ... -->` and is shown dimmed. It is not sent again by **Ask marq (n)**, but **Sent** on its card asks again.
 
 Comments are left out of **Copy as Markdown**. Agents list them with `list_comments` (path, line, text, whether it was sent or mentions @marq, and the text it is under), for example to pick up the open `@marq` comments in a schedule.

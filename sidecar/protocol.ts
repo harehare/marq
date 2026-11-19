@@ -47,7 +47,9 @@ export type AgentEvent =
   | { type: "tool_call"; id: string; name: string; kind: ToolKind; input: unknown }
   | { type: "tool_result"; id: string; output: string; is_error?: boolean }
   /** The end of a turn. `result` is the final reply, written back into the origin note. */
-  | { type: "turn_end"; result: string; is_error: boolean; cost_usd?: number; duration_ms?: number; num_turns?: number };
+  | { type: "turn_end"; result: string; is_error: boolean; cost_usd?: number; duration_ms?: number; num_turns?: number;
+      /** How full the context was when the turn ended, 0 to 1, when the agent reports it. */
+      context?: number };
 
 export type PlanStep = { content: string; status: "pending" | "in_progress" | "completed" };
 

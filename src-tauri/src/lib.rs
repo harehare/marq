@@ -733,8 +733,33 @@ fn diff_target(vault: &str, session_id: &str, repo: Option<&str>) -> Result<git:
         return Ok(wt);
     }
     let meta = session::meta(Path::new(vault), session_id)?;
+    if let Some(co) = repo.and_then(|r| dir_checkouts(&meta).into_iter().find(|c| c.repo == r)) {
+        return Ok(co);
+    }
     git::checkout(&vault::expand_home(&meta.cwd))
         .ok_or_else(|| error::Error::Other(format!("{} is not a git repository with a commit", meta.cwd)))
+}
+
+/// The checkouts of a session's other directories that have no worktree of their own: one per git
+/// repository, leaving out the repository the session itself works on and those with a worktree.
+fn dir_checkouts(meta: &session::SessionMeta) -> Vec<git::Worktree> {
+    let own = meta.worktree.as_ref().map(|w| w.repo.clone()).or_else(|| git::checkout(&vault::expand_home(&meta.cwd)).map(|c| c.repo));
+    let mut seen: Vec<String> = own.into_iter().chain(meta.dirs.iter().filter_map(|d| d.worktree.as_ref().map(|w| w.repo.clone()))).collect();
+    let mut out = vec![];
+    for d in meta.dirs.iter().filter(|d| d.worktree.is_none()) {
+        let Some(co) = git::checkout(&vault::expand_home(&d.path)) else { continue };
+        if !seen.contains(&co.repo) {
+            seen.push(co.repo.clone());
+            out.push(co);
+        }
+    }
+    out
+}
+
+/// The other directories of a session that are used as they are, as checkouts to diff.
+#[tauri::command]
+async fn session_dir_checkouts(vault: String, session_id: String) -> Result<Vec<git::Worktree>> {
+    blocking(move || Ok(dir_checkouts(&session::meta(Path::new(&vault), &session_id)?))).await
 }
 
 /// The checkout a session without a worktree ran in, if it is a git repository.
@@ -1932,6 +1957,7 @@ pub fn run() {
             save_task,
             new_task_compare,
             session_checkout,
+            session_dir_checkouts,
             session_changes,
             session_file_diff,
             session_commit,
