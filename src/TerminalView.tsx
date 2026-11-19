@@ -31,8 +31,11 @@ function fontFamily(t: Settings["terminal"]) {
   return t?.font ? `${quote(t.font)}, ui-monospace, Menlo, monospace` : getComputedStyle(document.documentElement).getPropertyValue("--font-mono");
 }
 
+/** `[terminal] ligatures`: off unless asked for, since they cost the GPU renderer. */
+const wantsLigatures = (t: Settings["terminal"]) => t?.ligatures === true;
+
 /**
- * Draws with the GPU, much faster than the DOM renderer on heavy output, when ligatures are off: the WebGL
+ * Draws with the GPU, much faster than the DOM renderer on heavy output, unless ligatures are on: the WebGL
  * renderer draws glyph by glyph, so it cannot shape them. Falls back to the DOM if WebGL is unavailable or lost.
  */
 function attachRenderer(term: Terminal, ligatures: boolean): () => void {
@@ -68,7 +71,7 @@ function TerminalPane({ id, cwd, command, active, multi, focused, style, onTitle
   const termRef = useRef<Terminal | null>(null);
   // Disposes the WebGL renderer, if one is attached.
   const rendererRef = useRef<() => void>(() => {});
-  const ligaturesRef = useRef(getSettings().terminal?.ligatures !== false);
+  const ligaturesRef = useRef(wantsLigatures(getSettings().terminal));
   const [exited, setExited] = useState(false);
 
   useEffect(() => {
@@ -86,7 +89,7 @@ function TerminalPane({ id, cwd, command, active, multi, focused, style, onTitle
     term.loadAddon(fit);
     term.open(host.current!);
     fit.fit();
-    rendererRef.current = attachRenderer(term, t?.ligatures !== false);
+    rendererRef.current = attachRenderer(term, wantsLigatures(t));
     termRef.current = term;
     fitRef.current = fit;
 
@@ -98,14 +101,30 @@ function TerminalPane({ id, cwd, command, active, multi, focused, style, onTitle
       setExited(true);
       onExitRef.current();
     });
-    const input = term.onData((d) => api.terminalWrite(pty, d).catch(() => {}));
+    // One write at a time, in order: writes run off the main thread, so two in flight could land swapped,
+    // and a swapped reply to a query of the shell's (cursor position, device attributes) shows up as raw
+    // escape codes. What is typed while one is in flight goes in the next.
+    let pending = "";
+    let writing = false;
+    const send = async (d: string) => {
+      pending += d;
+      if (writing) return;
+      writing = true;
+      while (pending) {
+        const data = pending;
+        pending = "";
+        await api.terminalWrite(pty, data).catch(() => {});
+      }
+      writing = false;
+    };
+    const input = term.onData(send);
     // xterm sends a bare CR for Enter whatever the modifiers, so Shift+Enter would submit. Send
     // ESC CR instead (Meta+Enter), which Claude Code and most line editors take as a new line.
     term.attachCustomKeyEventHandler((e) => {
       if (e.key !== "Enter" || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return true;
       if (e.type === "keydown") {
         e.preventDefault();
-        api.terminalWrite(pty, "\x1b\r").catch(() => {});
+        send("\x1b\r");
       }
       return false;
     });
@@ -154,7 +173,7 @@ function TerminalPane({ id, cwd, command, active, multi, focused, style, onTitle
     term.options.fontFamily = fontFamily(settings.terminal);
     term.options.fontSize = settings.terminal?.font_size ?? 13;
     term.options.cursorStyle = settings.terminal?.cursor ?? "block";
-    const ligatures = settings.terminal?.ligatures !== false;
+    const ligatures = wantsLigatures(settings.terminal);
     if (ligatures !== ligaturesRef.current) {
       ligaturesRef.current = ligatures;
       rendererRef.current();
@@ -318,7 +337,7 @@ export function TerminalView({ id, cwd, command, active, onTitle }: {
   return (
     // The DOM renderer draws runs of text as one span, so the browser shapes ligatures unless this turns them off.
     // Panes are siblings whatever the tree looks like, so splitting never remounts (and restarts) a shell.
-    <div ref={box} className={`terminal-view ${settings.terminal?.ligatures === false ? "no-ligatures" : ""}`}>
+    <div ref={box} className={`terminal-view ${wantsLigatures(settings.terminal) ? "" : "no-ligatures"}`}>
       {leaves.map((l) => {
         const hidden = zoomed && l.id !== focus;
         return (

@@ -25,7 +25,7 @@ shell = "/bin/zsh"              # default: $SHELL (Windows: pwsh, else powershel
 args = ["-l"]
 font = "Fira Code"              # default: mono_font
 font_size = 13
-ligatures = true                # -> != |> … drawn as ligatures with fonts that have them
+ligatures = true                # -> != |> … drawn as ligatures with fonts that have them. Default: false, which draws with the GPU and is much faster
 cursor = "block"                # block | bar | underline
 
 [notifications]

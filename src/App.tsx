@@ -2048,7 +2048,12 @@ export default function App() {
                 onOpenCrew={openCrewAt}
                 onSendExcerpt={(excerpt) => setSending({ excerpt, exclude: t.id })} />}
               {t.kind === "terminal" && <TerminalView id={t.id} cwd={t.cwd} command={t.command} active={t.key === active}
-                onTitle={(title) => setTabs((prev) => prev.map((x) => (x.key === t.key && x.kind === "terminal" && !x.named ? { ...x, title } : x)))} />}
+                onTitle={(title) => setTabs((prev) => {
+                  // Programs set the same title over and over; only a new one is worth a render.
+                  const cur = prev.find((x) => x.key === t.key);
+                  if (cur?.kind !== "terminal" || cur.named || cur.title === title) return prev;
+                  return prev.map((x) => (x === cur ? { ...x, title } : x));
+                })} />}
               {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
                 onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
                 onStartTask={(prompt, after) => { taskAfter.current = after ?? null; setTaskPrompt(prompt); setShowNewTask(true); }} />}

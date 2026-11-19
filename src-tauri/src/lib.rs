@@ -1193,7 +1193,9 @@ fn terminal_open(
     terms.open(&app, &id, &cwd, cols, rows, command.as_deref())
 }
 
-#[tauri::command]
+// Off the main thread, so a keystroke never waits for another command running there. Calls may then run
+// in any order, so the webview sends one at a time.
+#[tauri::command(async)]
 fn terminal_write(terms: State<terminal::Terminals>, id: String, data: String) -> Result<()> {
     terms.write(&id, &data)
 }

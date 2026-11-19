@@ -34,6 +34,39 @@ pub fn path() -> &'static str {
     })
 }
 
+/// A UTF-8 `LANG` for a terminal when the app has no locale, as when started from Finder or the Dock: without
+/// one, `less`, `vim` and the like take the terminal for ASCII and print `<E2><94><82>` for `│`. None when
+/// the environment already names a locale.
+pub fn lang() -> Option<&'static str> {
+    static LANG: OnceLock<Option<String>> = OnceLock::new();
+    LANG.get_or_init(|| {
+        let set = |k: &str| std::env::var(k).is_ok_and(|v| !v.is_empty());
+        if cfg!(windows) || set("LC_ALL") || set("LC_CTYPE") || set("LANG") {
+            return None;
+        }
+        Some(system_lang())
+    })
+    .as_deref()
+}
+
+/// The language and region of System Settings, as Terminal.app does, when the system has that locale.
+#[cfg(target_os = "macos")]
+fn system_lang() -> String {
+    std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "AppleLocale"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().split('@').next().unwrap_or_default().to_string())
+        .map(|l| format!("{l}.UTF-8"))
+        .filter(|l| l.len() > 6 && Path::new("/usr/share/locale").join(l).exists())
+        .unwrap_or_else(|| "en_US.UTF-8".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_lang() -> String {
+    "C.UTF-8".into()
+}
+
 #[cfg(windows)]
 pub fn path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();

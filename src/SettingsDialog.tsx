@@ -9,6 +9,8 @@ type Field = {
   key: string;
   label: string;
   kind: "text" | "number" | "select" | "bool" | "list";
+  /** A bool that is off unless config.toml turns it on; the others are on unless turned off. */
+  off?: boolean;
   placeholder?: string;
   options?: { value: string; label: string }[];
   /** One line under the label saying what the setting does. */
@@ -86,7 +88,7 @@ const SECTIONS: Section[] = [
       { key: "terminal.args", label: "Arguments", kind: "list", placeholder: "-l", desc: "Separated by spaces" },
       { key: "terminal.font", label: "Font", kind: "text", placeholder: "Monospace font", desc: "Defaults to the monospace font" },
       { key: "terminal.font_size", label: "Font size", kind: "number", placeholder: "13", desc: "In px" },
-      { key: "terminal.ligatures", label: "Ligatures", kind: "bool", desc: "Draw -> != |> … as ligatures, with fonts that have them. Off draws with the GPU, which is much faster on heavy output" },
+      { key: "terminal.ligatures", label: "Ligatures", kind: "bool", off: true, desc: "Draw -> != |> … as ligatures, with fonts that have them. Off (the default) draws with the GPU, which is much faster on heavy output" },
       {
         key: "terminal.cursor", label: "Cursor", kind: "select",
         options: [{ value: "", label: "Block (default)" }, { value: "bar", label: "Bar" }, { value: "underline", label: "Underline" }],
@@ -167,13 +169,13 @@ function agentChanges(initial: AgentRow[], rows: AgentRow[]): Record<string, unk
 }
 
 /** What the form shows when the key is absent from config.toml. */
-const defaultOf = (f: Field): string | boolean => (f.kind === "bool" ? true : "");
+const defaultOf = (f: Field): string | boolean => (f.kind === "bool" ? !f.off : "");
 
 /** A field's value in the form: strings for inputs, booleans for checkboxes. */
 function fromConfig(c: Record<string, unknown>, f: Field): string | boolean {
   const [section, name] = f.key.split(".");
   const v = (c[section] as Record<string, unknown> | undefined)?.[name];
-  if (f.kind === "bool") return v !== false;
+  if (f.kind === "bool") return f.off ? v === true : v !== false;
   if (Array.isArray(v)) return v.join(" ");
   return v == null ? "" : String(v);
 }

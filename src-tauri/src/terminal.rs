@@ -41,6 +41,9 @@ impl Terminals {
         cmd.env("PATH", shell::path());
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        if let Some(lang) = shell::lang() {
+            cmd.env("LANG", lang);
+        }
         let child = pty.slave.spawn_command(cmd).map_err(|e| Error::Other(format!("could not start {shell}: {e}")))?;
         drop(pty.slave);
         let mut reader = pty.master.try_clone_reader().map_err(|e| Error::Other(e.to_string()))?;
