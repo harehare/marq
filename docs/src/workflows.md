@@ -96,13 +96,14 @@ A request names a playbook with `playbook: bug-fix` (the file's name, its title 
 
 When the request first starts, the playbook's phases are written into its `phases:`, and it runs as described under [Phases](#phases). The list stays as written from then on: editing the playbook later changes what the remaining phases are told, not which phases the request runs. A request that sets its own `phases:` keeps them and takes only the instructions from the playbook, so `phases: [fix]` runs one phase of it.
 
-Marq comes with three playbooks:
+Marq comes with four playbooks:
 
 | Playbook | Phases |
 | --- | --- |
 | `plan-first` | research → plan → implement |
 | `bug-fix` | reproduce → diagnose → fix |
 | `refactor` | baseline → change |
+| `organize` | survey → propose → move → index → verify |
 
 **New playbook** in the command palette writes a note to fill in. Give it the name of one of Marq's own to get a copy to edit; a note in `playbooks/` replaces Marq's playbook of the same name.
 
