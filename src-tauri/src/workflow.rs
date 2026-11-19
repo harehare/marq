@@ -583,6 +583,7 @@ const BUILTIN_PLAYBOOKS: &[(&str, &str)] =
         ("plan-first", include_str!("playbooks/plan-first.md")),
         ("bug-fix", include_str!("playbooks/bug-fix.md")),
         ("refactor", include_str!("playbooks/refactor.md")),
+        ("organize", include_str!("playbooks/organize.md")),
     ];
 
 /// How a kind of task is done: a note in `playbooks/` (`type: playbook`) whose `## ` sections are
@@ -970,7 +971,7 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         assert!(repro.instructions.starts_with("Show it failing.") && repro.instructions.contains("## not a phase"));
         assert_eq!(book.phase("fix").unwrap().instructions, "");
         assert_eq!(playbook(&dir, "Bug fix").unwrap().title, "My fix", "found by its title's slug");
-        assert_eq!(playbooks(&dir).iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["bug-fix", "plan-first", "refactor"]);
+        assert_eq!(playbooks(&dir).iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["bug-fix", "plan-first", "refactor", "organize"]);
 
         // A request takes the playbook's phases once, and keeps a list of its own.
         let request = with_playbook_phases(&dir, "---\ntype: request\nplaybook: bug-fix\n---\n## Request\n\nx\n").unwrap();
