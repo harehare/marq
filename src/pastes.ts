@@ -1,41 +1,45 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useState } from "react";
 
-// Pastes this long show as a `[Pasted text #n +k lines]` placeholder, expanded when sent.
+// Pastes this long are held as a chip above the input instead of going into the text.
 const MIN_LINES = 3;
 const MIN_CHARS = 800;
 
+export type Paste = { id: number; text: string; lines: number };
+
 export type Pastes = {
-  /** The placeholder for `text`, or null when it is short enough to paste as is. */
-  collapse: (text: string) => string | null;
-  /** `text` with every placeholder replaced by what was pasted. */
+  /** The pastes held back, in the order they were pasted; each shows as a chip. */
+  items: Paste[];
+  /** Holds `text` back as a chip. False when it is short enough to paste as is. */
+  add: (text: string) => boolean;
+  /** Takes a chip off and returns what it held, e.g. to put it into the text after all. */
+  remove: (id: number) => string;
+  /** What is sent: `text`, then each held paste as its own block. */
   expand: (text: string) => string;
   clear: () => void;
 };
 
-const PLACEHOLDER = /\[Pasted text #(\d+)(?: \+\d+ lines)?\]/g;
-
 /** Pasted text held back from the input box, per box. */
 export function usePastes(): Pastes {
-  const store = useRef(new Map<number, string>());
-  const next = useRef(1);
+  const [items, setItems] = useState<Paste[]>([]);
 
-  const collapse = useCallback((text: string) => {
+  const add = useCallback((text: string) => {
     const lines = text.split(/\r\n|\r|\n/).length;
-    if (lines <= MIN_LINES && text.length < MIN_CHARS) return null;
-    const id = next.current++;
-    store.current.set(id, text.replace(/\r\n?/g, "\n"));
-    return lines > 1 ? `[Pasted text #${id} +${lines} lines]` : `[Pasted text #${id}]`;
+    if (lines <= MIN_LINES && text.length < MIN_CHARS) return false;
+    setItems((prev) => [...prev, { id: (prev[prev.length - 1]?.id ?? 0) + 1, text: text.replace(/\r\n?/g, "\n"), lines }]);
+    return true;
   }, []);
 
-  const expand = useCallback(
-    (text: string) => text.replace(PLACEHOLDER, (m, id) => store.current.get(Number(id)) ?? m),
-    [],
+  const remove = useCallback(
+    (id: number) => {
+      setItems((prev) => prev.filter((p) => p.id !== id));
+      return items.find((p) => p.id === id)?.text ?? "";
+    },
+    [items],
   );
 
-  const clear = useCallback(() => {
-    store.current.clear();
-    next.current = 1;
-  }, []);
+  const expand = useCallback((text: string) => [text.trim(), ...items.map((p) => p.text.trim())].filter(Boolean).join("\n\n"), [items]);
 
-  return useMemo(() => ({ collapse, expand, clear }), [collapse, expand, clear]);
+  const clear = useCallback(() => setItems([]), []);
+
+  return useMemo(() => ({ items, add, remove, expand, clear }), [items, add, remove, expand, clear]);
 }

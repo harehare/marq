@@ -153,7 +153,7 @@ A **Compare** tab opens with one column per run: the model or agent, status, bra
 
 ## Checks, phases and the sandbox
 
-A request can check its own work after each turn (`verify:` and `## Acceptance`), run in phases (`phases: [research, plan, implement]`), and run in Claude Code's sandbox (`sandbox:`). See [Workflows](workflows.md).
+A request can check its own work after each turn (`verify:` and `## Acceptance`), run in phases (`phases: [research, plan, implement]`, or a playbook such as `playbook: bug-fix`), and run in Claude Code's sandbox (`sandbox:`). See [Workflows](workflows.md).
 
 ## Schedules
 
@@ -173,7 +173,7 @@ last_run: 2026-10-29T09:00:12+09:00
 Go through the Todo list on boards/sprint.md and move the cards that are ready to Agent.
 ```
 
-Each run saves a request note and starts a session from it, like **New task**. The request takes `verify`, `verify_retry`, `verify_retries`, `verify_timeout`, `verify_model`, `phases`, `phase_gate` and `sandbox` from the schedule; see [Workflows](workflows.md). An interval counts from the last run; a run is skipped while the previous one is still in its turn; runs missed while Marq was closed are made up once when it opens. The sidebar shows when each schedule runs next, with **Run now** and **Pause** on hover.
+Each run saves a request note and starts a session from it, like **New task**. The request takes `verify`, `verify_retry`, `verify_retries`, `verify_timeout`, `verify_model`, `phases`, `playbook`, `phase_gate` and `sandbox` from the schedule; see [Workflows](workflows.md). An interval counts from the last run; a run is skipped while the previous one is still in its turn; runs missed while Marq was closed are made up once when it opens. The sidebar shows when each schedule runs next, with **Run now** and **Pause** on hover.
 
 ### Only when a query has results
 

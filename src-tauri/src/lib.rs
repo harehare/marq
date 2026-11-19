@@ -235,6 +235,12 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
     let v = PathBuf::from(vault);
     let p = vault::resolve(&v, path)?;
     let text = std::fs::read_to_string(&p)?;
+    let is_request = vault::fm_get(&text, "type").as_deref() == Some("request");
+    // A request that names a playbook runs in the playbook's phases.
+    let text = if is_request { workflow::with_playbook_phases(&v, &text)? } else { text };
+    // A request in phases runs each phase in a new session, on the worktree of the one before.
+    let phase = if is_request { workflow::current_phase(&text) } else { None };
+    let book_phase = phase.as_deref().and_then(|ph| workflow::playbook_of(&v, &text)?.phase(ph).cloned());
     let rel = p.strip_prefix(&v).unwrap_or(&p).to_string_lossy().into_owned();
     let session_id = vault::new_id();
     // `workspace:` gives the project when the note has none, and the other directories.
@@ -244,13 +250,12 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         Some("plan") => Some("plan".to_string()),
         _ => vault::fm_get(&text, "permission_mode").filter(|s| !s.is_empty()),
     };
-    let model = opts.model.or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
-    let effort = opts.effort.or_else(|| vault::fm_get(&text, "effort")).filter(|s| !s.is_empty());
+    // The playbook's choice for this phase comes before the note's.
+    let (phase_model, phase_effort) = book_phase.map(|p| (p.model, p.effort)).unwrap_or_default();
+    let model = opts.model.or(phase_model).or_else(|| vault::fm_get(&text, "model")).filter(|s| !s.is_empty());
+    let effort = opts.effort.or(phase_effort).or_else(|| vault::fm_get(&text, "effort")).filter(|s| !s.is_empty());
     let agent = opts.agent.or_else(|| vault::fm_get(&text, "agent")).filter(|s| !s.is_empty() && s != agents::DEFAULT);
     let use_worktree = opts.worktree.unwrap_or_else(|| vault::fm_get(&text, "worktree").as_deref() != Some("false"));
-    let is_request = vault::fm_get(&text, "type").as_deref() == Some("request");
-    // A request in phases runs each phase in a new session, on the worktree of the one before.
-    let phase = if is_request { workflow::current_phase(&text) } else { None };
     let first_phase = phase.is_none() || workflow::phases_of(&text).first() == phase.as_ref();
     let last = (!first_phase).then(|| workflow::last_run(&v, &text)).flatten();
     let reuse = opts.reuse.clone().or_else(|| last.as_ref().filter(|_| use_worktree).and_then(|m| m.worktree.clone()));
@@ -299,8 +304,9 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         let phase_part = phase.as_deref().map(|ph| workflow::phase_prompt(&v, &p, &t, ph)).unwrap_or_default();
         let previous = opts.previous.as_deref().map(|m| format!("\n\n<previous_attempt>\n{m}\n</previous_attempt>")).unwrap_or_default();
         let prompt = format!(
-            "{body}{}{phase_part}{previous}{}",
+            "{body}{}{}{phase_part}{previous}{}",
             render_context(&v, &t),
+            workflow::playbook_prompt(&v, &t),
             ask_suffix(opts.intent.as_deref(), opts.instruction.as_deref())
         );
         let title = match &phase {
@@ -481,6 +487,9 @@ struct NewTask {
     /// Run the task in these phases, each in a new session.
     #[serde(default)]
     phases: Vec<String>,
+    /// A playbook's name (`playbook:`): its sections are the phases and what each is told.
+    #[serde(default)]
+    playbook: Option<String>,
     /// Criteria the agent is not shown, checked by a separate session (`## Acceptance`).
     #[serde(default)]
     acceptance: Option<String>,
@@ -557,9 +566,15 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let NewTask {
         title, prompt, project, permission_mode, model, effort, agent, carry_changes, base, worktree, verify, verify_retry, verify_retries,
-        sandbox, phases, acceptance, extra, workspace: ws, directories, ..
+        sandbox, phases, playbook, acceptance, extra, workspace: ws, directories, ..
     } = task;
     let v = Path::new(vault);
+    let playbook = playbook.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    // Its phases go into the note now, so the note shows which phase is next before it first runs.
+    let book = match &playbook {
+        Some(name) => Some(workflow::playbook(v, name).ok_or_else(|| error::Error::Other(format!("there is no playbook named {name}")))?),
+        None => None,
+    };
     let rel = vault::unique_path(v, "requests", &title);
     std::fs::create_dir_all(v.join("requests"))?;
     let now = vault::now();
@@ -597,7 +612,11 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
     set("verify_retries", verify_retries.map(|n| n.to_string()));
     set("sandbox", workflow::normalize_sandbox(sandbox.as_deref()));
     set("workspace", ws);
-    let phases: Vec<String> = phases.iter().map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
+    set("playbook", book.as_ref().map(|b| b.name.clone()));
+    let mut phases: Vec<String> = phases.iter().map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
+    if phases.is_empty() {
+        phases = book.iter().flat_map(|b| b.phases.iter().map(|p| p.name.clone())).collect();
+    }
     for (k, v) in &keys {
         // Commands go in quotes; the rest are plain words and numbers.
         let v = if k == "verify" { q(v) } else { v.clone() };
@@ -976,6 +995,20 @@ fn update_workspace(app: AppHandle, path: String, project: String, directories: 
     workspace::update(Path::new(&path), &project, &directories)?;
     let _ = app.emit("vault://changed", serde_json::json!({"path": path}));
     Ok(())
+}
+
+/// The playbooks a request can name: the vault's and marq's own.
+#[tauri::command]
+fn list_playbooks(vault: String) -> Vec<workflow::Playbook> {
+    workflow::playbooks(Path::new(&vault))
+}
+
+/// Writes a playbook note to edit (a copy of marq's own when the name is one of those) and returns its path.
+#[tauri::command]
+fn new_playbook(app: AppHandle, vault: String, title: String) -> Result<String> {
+    let p = workflow::new_playbook(Path::new(&vault), &title)?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
 }
 
 /// Writes a new spec note from the template and returns its path.
@@ -1844,6 +1877,8 @@ pub fn run() {
             knowledge_gardening,
             knowledge_promotion,
             new_spec,
+            list_playbooks,
+            new_playbook,
             spec_to_board,
             list_workspaces,
             create_workspace,

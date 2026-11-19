@@ -36,6 +36,8 @@ export type Board = { lists: { name: string; cards: Card[] }[] };
 /** How a request's work is checked and run; see docs/workflows.md. */
 export type TaskChecks = {
   verify?: string; verifyRetry?: "fresh"; verifyRetries?: number; sandbox?: string; phases?: string[]; acceptance?: string;
+  /** A playbook's name: its sections are the phases and what each is told. */
+  playbook?: string;
   /** A workspace note, for its directories (and project when none is given). */
   workspace?: string;
   /** Directories beyond the project, when not from a workspace. */
@@ -94,6 +96,11 @@ export type SessionInfo = {
 export type Worktree = { repo: string; path: string; branch: string; base: string; base_branch: string };
 type FileChange = { path: string; status: string; additions: number; deletions: number };
 export type Changes = { files: FileChange[]; additions: number; deletions: number; commits: string[]; dirty: boolean; upstream: string | null; ahead: number; branch: string | null };
+/** How a kind of task is done: a note in playbooks/ (or one that comes with Marq) whose sections are the phases. */
+export type Playbook = {
+  name: string; title: string; description: string; rules: string; builtin: boolean; gate: string | null;
+  phases: { name: string; instructions: string; model: string | null; effort: string | null }[];
+};
 export type SlashCommand = { name: string; description: string; argumentHint: string; aliases?: string[]; builtin?: boolean; /** Which agent's folder it was found in, when read from disk. */ source?: string };
 export type Approval = {
   request_id: string;
@@ -304,6 +311,9 @@ export const api = {
   /** The weekly schedule that writes reviewed knowledge into a project's CLAUDE.md and skills; off until its project is set. */
   knowledgePromotion: (vault: string) => invoke<string>("knowledge_promotion", { vault }),
   newSpec: (vault: string, title: string) => invoke<string>("new_spec", { vault, title }),
+  listPlaybooks: (vault: string) => invoke<Playbook[]>("list_playbooks", { vault }),
+  /** Writes playbooks/<name>.md to edit: a copy of Marq's own playbook of that name, else a template. Returns its path. */
+  newPlaybook: (vault: string, title: string) => invoke<string>("new_playbook", { vault, title }),
   /** Puts a spec's open tasks on its board; returns the board's path and how many cards were added. */
   specToBoard: (vault: string, path: string) => invoke<{ board: string; added: number }>("spec_to_board", { vault, path }),
   noteLinks: (vault: string, path: string) => invoke<NoteLinks>("note_links", { vault, path }),

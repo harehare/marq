@@ -1,6 +1,6 @@
 # Workflows
 
-A request can check its own work, run in phases, run sandboxed, and start from a spec. Set these in the request note's frontmatter (or in the New task dialog, under **How it runs and is checked**), or on a schedule.
+A request can check its own work, run in phases (its own, or a playbook's), run sandboxed, and start from a spec. Set these in the request note's frontmatter (or in the New task dialog, under **How it runs and is checked**), or on a schedule.
 
 ```markdown
 ---
@@ -11,7 +11,8 @@ verify_retries: 3           # failures sent back before giving up (default 2)
 verify_retry: fresh         # retry in a new session on the same worktree
 verify_timeout: 10m         # default 10m
 verify_model: opus          # the acceptance check's model
-phases: [research, plan, implement]
+playbook: bug-fix           # a playbook's phases and what each is told
+phases: [research, plan, implement]   # or only the phases
 phase_gate: auto            # start the next phase on its own
 sandbox: strict             # on | strict
 ---
@@ -55,6 +56,55 @@ The criteria are not shown to the implementing agent, but they are not secret ei
 Each phase's reply is saved in `phases/<request>-<phase>.md`, and every later phase gets those documents as context. All phases share one worktree: the first phase creates it and the later ones reuse it. `verify:` and acceptance criteria apply to the last phase only.
 
 After each phase, the request waits in review, and its **Ask** button reads **Start plan** (or whichever phase is next). With `phase_gate: auto`, the next phase starts on its own. `phase:` in the note is the next phase to run; change it to repeat a phase or skip one.
+
+## Playbooks
+
+A playbook says how a kind of task is done: which phases it runs in, and what each phase's session is told. A bug fix is not done like a refactor, so each gets its own.
+
+A playbook is a note in `playbooks/` with `type: playbook`. Each `## ` heading is a phase, in order, and the text under it is that phase's instructions:
+
+```markdown
+---
+type: playbook
+title: Bug fix
+description: Reproduce the bug, find its cause, then fix it
+phase_gate: auto            # optional: for requests that do not set their own
+---
+# Bug fix
+
+Make the smallest change the evidence supports.
+
+## reproduce
+
+model: haiku
+
+Reproduce the bug before anything else. Do not fix anything yet.
+End your reply with the command that reproduces it and its output.
+
+## fix
+
+Fix the cause, then run the reproduction again.
+```
+
+- The text above the first phase is given to every phase.
+- `model:` and `effort:` lines at the top of a section apply to that phase's session, before the request's own `model` and `effort`.
+- A section with no text gets the instructions `phases:` would give a phase of that name.
+- `<!-- comments -->` are left out of what the agent is told.
+- A playbook without any `## ` section adds its text to the request and runs it in one session.
+
+A request names a playbook with `playbook: bug-fix` (the file's name, its title or its path). In the New task dialog, type `/` in the prompt and pick one, or choose it under **Checks**. The playbook then shows as a chip above the prompt, and the prompt is the task itself and anything else this run should do. Backspace at the start of the prompt, or the chip's **×**, removes it.
+
+When the request first starts, the playbook's phases are written into its `phases:`, and it runs as described under [Phases](#phases). The list stays as written from then on: editing the playbook later changes what the remaining phases are told, not which phases the request runs. A request that sets its own `phases:` keeps them and takes only the instructions from the playbook, so `phases: [fix]` runs one phase of it.
+
+Marq comes with three playbooks:
+
+| Playbook | Phases |
+| --- | --- |
+| `plan-first` | research → plan → implement |
+| `bug-fix` | reproduce → diagnose → fix |
+| `refactor` | baseline → change |
+
+**New playbook** in the command palette writes a note to fill in. Give it the name of one of Marq's own to get a copy to edit; a note in `playbooks/` replaces Marq's playbook of the same name.
 
 ## Sandbox
 

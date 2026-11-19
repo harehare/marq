@@ -1,6 +1,6 @@
 import { forwardRef, KeyboardEvent, TextareaHTMLAttributes, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { FileText, Loader2 } from "lucide-react";
-import { api, FileEntry, SlashCommand } from "./api";
+import { ClipboardPaste, FileText, ListOrdered, Loader2, X } from "lucide-react";
+import { api, FileEntry, Playbook, SlashCommand } from "./api";
 import { useVaultFiles } from "./wikilinks";
 import { composing } from "./keys";
 import type { Pastes } from "./pastes";
@@ -61,6 +61,15 @@ function wikiName(files: FileEntry[], f: FileEntry) {
   return shared ? f.rel.replace(/\.md$/, "") : name;
 }
 
+/** Playbooks for `/`: by name or title, those that start with the query first. */
+function rankPlaybooks(books: Playbook[], q: string) {
+  const score = (b: Playbook) => {
+    const names = [b.name, b.title.toLowerCase()];
+    return names.some((n) => n.startsWith(q)) ? 0 : names.some((n) => n.includes(q)) ? 1 : 2;
+  };
+  return books.map((b) => ({ b, s: score(b) })).filter((x) => x.s < 2).sort((a, b) => a.s - b.s).map((x) => x.b);
+}
+
 function rank(cmds: SlashCommand[], q: string) {
   const score = (c: SlashCommand) => {
     const names = [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase());
@@ -87,13 +96,16 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
   sessionId?: string;
   /** Where the list opens relative to the field. */
   placement?: "above" | "below";
-  /** When given, long pastes show as a placeholder; expand them with `pastes.expand` before sending. */
+  /** When given, long pastes are held as chips above the field instead of going into the text; send `pastes.expand(value)`. */
   pastes?: Pastes;
+  /** Playbooks offered under `/`, before the commands. Picking one takes the `/word` out of the text and calls `onPlaybook`. */
+  playbooks?: Playbook[];
+  onPlaybook?: (playbook: Playbook) => void;
 };
 
-/** A textarea that completes `/` commands and skills from Claude Code, and `[[` with notes from the vault. */
+/** A textarea that completes `/` commands and skills from Claude Code (and playbooks, when given), and `[[` with notes from the vault. */
 export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function SlashTextarea(
-  { value, onChange, vault, cwd, sessionId, placement = "above", pastes, onKeyDown, onPaste, ...rest },
+  { value, onChange, vault, cwd, sessionId, placement = "above", pastes, playbooks, onPlaybook, onKeyDown, onPaste, ...rest },
   outer,
 ) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -118,10 +130,11 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
   }, [cwd, sessionId]);
 
   const matches = token && cmds ? rank(cmds, token.query) : [];
+  const books = token && playbooks && onPlaybook ? rankPlaybooks(playbooks, token.query) : [];
   const notes = wiki ? rankNotes(files, wiki.query) : [];
   const wikiOpen = !!wiki && notes.length > 0;
-  const open = wikiOpen || (!!token && (matches.length > 0 || !cmds || !!error));
-  const count = wikiOpen ? notes.length : matches.length;
+  const open = wikiOpen || (!!token && (books.length > 0 || matches.length > 0 || !cmds || !!error));
+  const count = wikiOpen ? notes.length : books.length + matches.length;
 
   useEffect(() => setIndex(0), [token?.query, wiki?.query]);
   useEffect(() => {
@@ -167,6 +180,32 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
     });
   };
 
+  /** A held paste goes into the text at the cursor after all. */
+  const unfold = (id: number) => {
+    const el = ref.current!;
+    const text = pastes!.remove(id);
+    const start = el.selectionStart;
+    onChange(`${value.slice(0, start)}${text}${value.slice(el.selectionEnd)}`);
+    const pos = start + text.length;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const pickPlaybook = (b: Playbook) => {
+    if (!token) return;
+    const el = ref.current!;
+    onChange(`${value.slice(0, token.start)}${value.slice(el.selectionStart)}`);
+    setToken(null);
+    onPlaybook?.(b);
+    const pos = token.start;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
   const keyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Keys during IME composition (choosing or confirming Japanese input) belong to the IME.
     if (composing(e)) return;
@@ -180,7 +219,8 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
       if ((e.key === "Enter" && !e.metaKey && !e.ctrlKey) || e.key === "Tab") {
         e.preventDefault();
         if (wikiOpen) insertNote(notes[index]);
-        else insert(matches[index]);
+        else if (index < books.length) pickPlaybook(books[index]);
+        else insert(matches[index - books.length]);
         return;
       }
     }
@@ -195,6 +235,20 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
 
   return (
     <div className="slash-wrap">
+      {!!pastes?.items.length && (
+        <div className="input-chips">
+          {pastes.items.map((p) => (
+            <span key={p.id} className="input-chip" title={p.text.length > 600 ? `${p.text.slice(0, 600)}…` : p.text}>
+              <ClipboardPaste size={12} />
+              <a title="Put this back into the text, to edit it" onClick={() => unfold(p.id)}>
+                <b>Pasted</b>
+                <span className="muted">{p.lines > 1 ? `${p.lines} lines` : `${p.text.length} characters`} · {p.text.trim().split("\n")[0].slice(0, 40)}</span>
+              </a>
+              <button className="icon" title="Remove" onClick={() => { pastes.remove(p.id); ref.current?.focus(); }}><X size={11} /></button>
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         {...rest}
         ref={ref}
@@ -207,16 +261,9 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
         onPaste={(e) => {
           onPaste?.(e);
           if (e.defaultPrevented || !pastes) return;
-          const label = pastes.collapse(e.clipboardData.getData("text/plain"));
-          if (!label) return;
+          if (!pastes.add(e.clipboardData.getData("text/plain"))) return;
           e.preventDefault();
-          const el = e.currentTarget;
-          const start = el.selectionStart;
-          const next = `${value.slice(0, start)}${label}${value.slice(el.selectionEnd)}`;
-          onChange(next);
           close();
-          const pos = start + label.length;
-          requestAnimationFrame(() => el.setSelectionRange(pos, pos));
         }}
         onClick={(e) => update(value, e.currentTarget.selectionStart)}
         onBlur={() => setTimeout(close, 120)}
@@ -245,8 +292,26 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
       {open && !wikiOpen && (
         <div ref={listRef} className={`slash-list ${placement}`} role="listbox">
           {error && <div className="slash-empty err">{error}</div>}
+          {books.map((b, i) => (
+            <button
+              key={`playbook-${b.name}`}
+              className={`slash-item ${i === index ? "on" : ""}`}
+              role="option"
+              aria-selected={i === index}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pickPlaybook(b);
+              }}
+              onMouseEnter={() => setIndex(i)}
+            >
+              <ListOrdered size={12} className="muted" />
+              <span className="slash-name">{b.title}</span>
+              <span className="slash-badge">playbook</span>
+              <span className="slash-desc">{[b.phases.map((p) => p.name).join(" → "), b.description].filter(Boolean).join(" · ")}</span>
+            </button>
+          ))}
           {!cmds && !error && <div className="slash-empty"><Loader2 size={13} className="spin" /> Loading skills and commands…</div>}
-          {matches.map((c, i) => (
+          {matches.map((c, n) => [c, n + books.length] as const).map(([c, i]) => (
             <button
               key={`${c.name}-${i}`}
               className={`slash-item ${i === index ? "on" : ""}`}

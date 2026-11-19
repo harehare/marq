@@ -2,7 +2,7 @@ import { createContext, forwardRef, memo, useCallback, useContext, useEffect, us
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
-  Inbox, BookA, ClipboardList, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
+  Inbox, BookA, ClipboardList, ListOrdered, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CheckCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
   ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft, Server,
@@ -278,6 +278,7 @@ function fileIcon(f: FileEntry) {
   if (f.kind === "glossary") return <BookA size={13} />;
   if (f.kind === "knowledge") return <Lightbulb size={13} />;
   if (f.kind === "spec") return <ClipboardList size={13} />;
+  if (f.kind === "playbook") return <ListOrdered size={13} />;
   if (f.kind === "workspace") return <FolderGit2 size={13} />;
   if (f.kind === "environment") return <Server size={13} />;
   if (f.kind === "schedule") return <Timer size={13} />;
@@ -609,7 +610,7 @@ export default function App() {
       localStorage.setItem("marq.sidebar", flag);
     } catch {}
   };
-  const [naming, setNaming] = useState<{ kind: "note" | "crew" | "spec" | "workspace"; initial: string } | null>(null);
+  const [naming, setNaming] = useState<{ kind: "note" | "crew" | "spec" | "workspace" | "playbook"; initial: string } | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   // New folder, rename and move share one name dialog.
   const [pathDialog, setPathDialog] = useState<{ mode: "folder" | "rename" | "move" | "keep"; from?: string; initial: string } | null>(null);
@@ -1130,9 +1131,9 @@ export default function App() {
     return path;
   };
 
-  const createNamed = async (kind: "note" | "crew" | "spec" | "workspace", name: string) => {
-    if (kind === "spec" || kind === "workspace") {
-      const path = kind === "spec" ? await api.newSpec(vault!, name) : await api.createWorkspace(vault!, name, "", []);
+  const createNamed = async (kind: "note" | "crew" | "spec" | "workspace" | "playbook", name: string) => {
+    if (kind === "spec" || kind === "workspace" || kind === "playbook") {
+      const path = kind === "spec" ? await api.newSpec(vault!, name) : kind === "playbook" ? await api.newPlaybook(vault!, name) : await api.createWorkspace(vault!, name, "", []);
       openNote(path, undefined, true);
       refreshFiles();
       return;
@@ -1443,6 +1444,7 @@ export default function App() {
         (e) => message(`${e}\n\nStart a task in the project first, so that Marq knows which one it is.`, { title: "Environment file", kind: "warning" }),
       ),
     },
+    "playbook.new": { label: "New playbook (the phases a kind of task runs in, and what each is told)", run: () => setNaming({ kind: "playbook", initial: "" }) },
     "spec.new": { label: "New spec (requirements, design, tasks and acceptance, broken down into a board)", run: () => setNaming({ kind: "spec", initial: "" }) },
     "instructions.open": { label: "Standing instructions: rules every session follows", run: () => void api.instructionsPath(vault!).then((p) => openNote(p)) },
     "glossary.open": { label: "Glossary: terms, aliases and broader/narrower terms", run: () => void api.glossaryPath(vault!).then((p) => openNote(p)) },
@@ -2123,13 +2125,14 @@ export default function App() {
       )}
       {naming && (
         <NameDialog
-          title={{ crew: "New crew", spec: "New spec", workspace: "New workspace", note: "New note" }[naming.kind]}
-          label={{ crew: "What will the crew work on? (a short name)", spec: "What is it for? (its title)", workspace: "Name", note: "Path, relative to the vault" }[naming.kind]}
+          title={{ crew: "New crew", spec: "New spec", workspace: "New workspace", playbook: "New playbook", note: "New note" }[naming.kind]}
+          label={{ crew: "What will the crew work on? (a short name)", spec: "What is it for? (its title)", workspace: "Name", playbook: "Name", note: "Path, relative to the vault" }[naming.kind]}
           initial={naming.initial}
-          placeholder={{ crew: "e.g. checkout-redesign", spec: "e.g. Show types on hover", workspace: "e.g. mq + docs", note: "e.g. notes/meeting-2026-10" }[naming.kind]}
+          placeholder={{ crew: "e.g. checkout-redesign", spec: "e.g. Show types on hover", workspace: "e.g. mq + docs", playbook: "e.g. release-notes, or bug-fix to edit Marq's own", note: "e.g. notes/meeting-2026-10" }[naming.kind]}
           hint={{
             crew: "Saved as crews/<name>.md with a lead, an implementer and a reviewer. Next, set the project and the goal in the note, then open the crew from the sidebar.",
             spec: "Saved in specs/ with Requirements, Design, Tasks and Acceptance to fill in (or ask an agent: /marq:spec). Break down puts the tasks on a board.",
+            playbook: "Saved as playbooks/<name>.md. Each ## heading is a phase, run in order in a new session; its text is what that session is told. Pick it with / in New task, or playbook: <name> in a request. The name of one of Marq's own (plan-first, bug-fix, refactor) gives you a copy to edit.",
             workspace: "Saved in workspaces/. Set its project and directories in the note, or save them from the New task dialog instead.",
             note: "Folders are created as needed. .md is added if you leave it out.",
           }[naming.kind]}

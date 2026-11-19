@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { ChevronRight, FolderGit2, History, FolderPlus, GitCompare, Layers, Loader2, Save, Sparkles, Users, X } from "lucide-react";
-import { api, type AgentInfo, type DirSpec, type EnvironmentStatus, type TaskChecks, type Workspace } from "./api";
+import { ChevronRight, FolderGit2, History, FolderPlus, GitCompare, Layers, ListOrdered, Loader2, Save, Sparkles, Users, X } from "lucide-react";
+import { api, type AgentInfo, type DirSpec, type EnvironmentStatus, type Playbook, type TaskChecks, type Workspace } from "./api";
 import { ProjectPicker } from "./ProjectPicker";
 import { SlashTextarea } from "./SlashTextarea";
 import { usePastes } from "./pastes";
@@ -49,7 +49,6 @@ const WORKSPACE_KEY = "marq.lastWorkspace";
 const BASE_KEY = "marq.lastBase";
 /** The verify command is per project: `marq.verify:<project>`. */
 const VERIFY_KEY = "marq.verify:";
-const RPI = ["research", "plan", "implement"];
 
 export const SANDBOXES = [
   { value: "", label: "Off", hint: "Commands run with your permissions, as Claude Code's settings allow." },
@@ -100,7 +99,13 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
   // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
-  const [phased, setPhased] = useState(false);
+  // How the task is done: picked with / in the prompt (or under Checks) and shown as a chip above it.
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
+  const [playbook, setPlaybook] = useState("");
+  useEffect(() => {
+    api.listPlaybooks(vault).then(setPlaybooks).catch(() => {});
+  }, [vault]);
+  const book = team ? undefined : playbooks.find((b) => b.name === playbook);
   const [verify, setVerify] = useState("");
   const [fresh, setFresh] = useState(false);
   const [acceptance, setAcceptance] = useState("");
@@ -222,7 +227,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     verifyRetry: verify.trim() && fresh ? "fresh" : undefined,
     acceptance: acceptance.trim() || undefined,
     sandbox: anyOther ? undefined : sandbox || undefined,
-    phases: phased ? RPI : undefined,
+    playbook: book?.name,
     workspace: asChosen ? wsRel : undefined,
     directories: asChosen ? undefined : dirs.filter((d) => d.path.trim()),
     base: !worktree || baseMode === "head" ? undefined : baseMode === "latest" ? "latest" : baseBranch.trim() || undefined,
@@ -330,7 +335,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         worktree ? (carry ? "worktree + my changes" : baseMode === "latest" ? "worktree · latest" : baseMode === "branch" && baseBranch.trim() ? `worktree · ${baseBranch.trim()}` : "worktree") : "in the project",
       ].join(" · ");
   const checksSummary = [
-    phased && "research → plan → implement",
+    book && book.title,
     verify.trim() && `${verify.trim()}${fresh ? " (fresh retries)" : ""}`,
     acceptance.trim() && "acceptance",
   ].filter(Boolean).join(" · ") || "None";
@@ -346,6 +351,16 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         </div>
         <div className="task-body">
           <div className="task-main">
+            {book && (
+              <div className="input-chips">
+                <span className="input-chip playbook" title={book.description || undefined}>
+                  <ListOrdered size={12} />
+                  <b>{book.title}</b>
+                  {book.phases.length > 0 && <span className="muted">{book.phases.map((p) => p.name).join(" → ")}</span>}
+                  <button className="icon" title="Remove the playbook (Backspace at the start of the text)" onClick={() => { setPlaybook(""); promptRef.current?.focus(); }}><X size={11} /></button>
+                </span>
+              </div>
+            )}
             <SlashTextarea
               ref={promptRef}
               className="task-prompt"
@@ -355,9 +370,18 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               vault={vault}
               cwd={project.trim() || undefined}
               placement="below"
-              placeholder={context ? "What should the agent do with these results?  Type / for skills and commands" : "Describe the task…  Type / for skills and commands"}
+              playbooks={team ? undefined : playbooks}
+              onPlaybook={(b) => setPlaybook(b.name)}
+              placeholder={book ? "Describe the task, and anything else this run should do…"
+                : context ? "What should the agent do with these results?  Type / for skills and commands"
+                : team ? "Describe the task…  Type / for skills and commands" : "Describe the task…  Type / for playbooks, skills and commands"}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") start();
+                // Backspace at the very start takes the chip off, as if it were the first thing in the text.
+                if (e.key === "Backspace" && book && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+                  e.preventDefault();
+                  setPlaybook("");
+                }
                 // From an empty box (or one still showing a recalled prompt), so the arrows keep moving the caret otherwise.
                 const at = recall.current;
                 const untouched = at === null ? !prompt : prompt === recent[at];
@@ -538,11 +562,15 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             </Section>
 
             <Section id="checks" title="Checks" summary={checksSummary}>
-              <label className="check"
-                title="Each phase is a new session on the same worktree and gets the earlier phases' replies. After each one the request waits in review; Start on it runs the next (or phase_gate: auto in the note).">
-                <input type="checkbox" checked={phased} onChange={(e) => setPhased(e.target.checked)} />
-                In phases: research → plan → implement
-              </label>
+              <div className="project-row"
+                title="A playbook runs the task in phases. Each phase is a new session on the same worktree and gets the earlier phases' replies. After each one the request waits in review; Start on it runs the next (or phase_gate: auto in the note). Playbooks are notes in playbooks/; also picked with / in the prompt.">
+                <select value={book?.name ?? ""} onChange={(e) => setPlaybook(e.target.value)} disabled={team}>
+                  <option value="">No playbook</option>
+                  {playbooks.map((b) => (
+                    <option key={b.name} value={b.name}>{b.title}{b.phases.length ? `: ${b.phases.map((p) => p.name).join(" → ")}` : ""}</option>
+                  ))}
+                </select>
+              </div>
               <div className="project-row">
                 <input value={verify} onChange={(e) => setVerify(e.target.value)} spellCheck={false}
                   placeholder="After each turn, e.g. pnpm check"

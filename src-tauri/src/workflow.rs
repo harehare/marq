@@ -10,7 +10,8 @@
 //! verify_retry: fresh         # retry in a new session on the same worktree instead of the same one
 //! verify_timeout: 10m
 //! verify_model: opus          # the acceptance check's model
-//! phases: [research, plan, implement]
+//! playbook: bug-fix           # a note in playbooks/ whose sections are the phases and what each is told
+//! phases: [research, plan, implement]   # or the phases themselves
 //! phase_gate: auto            # start the next phase on its own (default: wait for the user)
 //! sandbox: strict             # on | strict
 //! ---
@@ -482,26 +483,32 @@ fn phase_doc(request: &Path, phase: &str) -> String {
     format!("phases/{stem}-{}.md", vault::slug(phase))
 }
 
-/// What a session on `phase` is told, with the replies of the phases before it.
+/// What a session on `phase` is told, with the replies of the phases before it. A playbook's
+/// section for the phase replaces the built-in instructions.
 pub fn phase_prompt(vault: &Path, request: &Path, text: &str, phase: &str) -> String {
     let phases = phases_of(text);
     let all = phases.join(" → ");
     let last = is_last_phase(text, phase);
-    let what = match (phase, last) {
-        ("research", false) => "Investigate only: read the code, the notes and earlier sessions to learn what the task needs. \
-            Do not change any files. End your reply with the findings the next phase needs: the relevant files and how they \
-            work, constraints, risks and open questions."
-            .to_string(),
-        ("plan", false) => "Plan only: using what the earlier phases found, write a step-by-step plan with the files to change \
-            and how, in order, and how to check the result. Do not change any files. End your reply with the plan."
-            .to_string(),
-        (_, false) => format!("Do only the {phase} part of the task. End your reply with what the next phase needs."),
-        (_, true) => "Finish the task, building on what the earlier phases found.".to_string(),
+    let saved = if last { "" } else { " Your reply is saved and given to the next phase." };
+    let custom = playbook_of(vault, text).and_then(|b| b.phase(phase).map(|p| p.instructions.clone())).filter(|i| !i.is_empty());
+    let what = match (custom, phase, last) {
+        (Some(c), _, false) => format!("Do only this phase's part of the task.{saved}\n\n{c}"),
+        (Some(c), _, true) => format!("This is the last phase.\n\n{c}"),
+        (None, "research", false) => format!(
+            "Investigate only: read the code, the notes and earlier sessions to learn what the task needs. \
+             Do not change any files. End your reply with the findings the next phase needs: the relevant files and how they \
+             work, constraints, risks and open questions.{saved}"
+        ),
+        (None, "plan", false) => format!(
+            "Plan only: using what the earlier phases found, write a step-by-step plan with the files to change \
+             and how, in order, and how to check the result. Do not change any files. End your reply with the plan.{saved}"
+        ),
+        (None, _, false) => format!("Do only the {phase} part of the task. End your reply with what the next phase needs.{saved}"),
+        (None, _, true) => "Finish the task, building on what the earlier phases found.".to_string(),
     };
     let mut out = format!(
         "\n\n<phase name=\"{phase}\" of=\"{all}\">\nThis task is done in phases, each in a new session: {all}. This session \
-         is the {phase} phase. {what}{}\n</phase>",
-        if last { "" } else { " Your reply is saved and given to the next phase." }
+         is the {phase} phase. {what}\n</phase>"
     );
     for p in phases.iter().take_while(|p| *p != phase) {
         let rel = phase_doc(request, p);
@@ -536,7 +543,9 @@ fn next_phase_of(app: &AppHandle, vault: &Path, meta: &SessionMeta, path: &Path)
         return Ok(false);
     }
     std::fs::write(path, vault::fm_set(&text, "phase", next))?;
-    let auto = vault::fm_get(&text, "phase_gate").as_deref() == Some("auto");
+    // The request's own gate, else its playbook's.
+    let gate = vault::fm_get(&text, "phase_gate").filter(|g| !g.is_empty()).or_else(|| playbook_of(vault, &text).and_then(|b| b.gate));
+    let auto = gate.as_deref() == Some("auto");
     log(app, vault, &meta.id, json!({"type": "marq_phase", "done": phase, "next": next, "auto": auto, "at": vault::now()}))?;
     let _ = app.emit("vault://changed", json!({"path": path}));
     if !auto {
@@ -562,6 +571,183 @@ pub fn last_run(vault: &Path, text: &str) -> Option<SessionMeta> {
         .filter_map(|s| session::meta(vault, s).ok())
         .filter(|m| m.verifies.is_none())
         .find(|m| vault::expand_home(&m.cwd).is_dir())
+}
+
+// ---- playbooks ----
+
+pub const PLAYBOOK_FOLDER: &str = "playbooks";
+
+/// Playbooks that come with marq. A note of the same name in `playbooks/` replaces one.
+const BUILTIN_PLAYBOOKS: &[(&str, &str)] =
+    &[
+        ("plan-first", include_str!("playbooks/plan-first.md")),
+        ("bug-fix", include_str!("playbooks/bug-fix.md")),
+        ("refactor", include_str!("playbooks/refactor.md")),
+    ];
+
+/// How a kind of task is done: a note in `playbooks/` (`type: playbook`) whose `## ` sections are
+/// the phases, in order. A request names one with `playbook:`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Playbook {
+    /// The file's name without `.md`: what a request's `playbook:` says.
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    /// The text above the first phase, given to every phase.
+    pub rules: String,
+    pub phases: Vec<PlaybookPhase>,
+    /// `phase_gate:` for requests that do not set their own.
+    pub gate: Option<String>,
+    /// Comes with marq; false for a note in the vault.
+    pub builtin: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct PlaybookPhase {
+    pub name: String,
+    /// What the phase's session is told.
+    pub instructions: String,
+    /// `model:` and `effort:` lines at the top of the section, for this phase's session.
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+impl Playbook {
+    pub fn phase(&self, name: &str) -> Option<&PlaybookPhase> {
+        self.phases.iter().find(|p| p.name == name)
+    }
+}
+
+/// The text without `<!-- -->` comments, which the template uses for hints.
+fn without_comments(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        rest = rest[start..].find("-->").map_or("", |end| &rest[start + end + 3..]);
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
+
+fn parse_phase(name: &str, text: &str) -> PlaybookPhase {
+    let mut phase = PlaybookPhase { name: name.trim().to_lowercase(), ..Default::default() };
+    let text = without_comments(text);
+    let mut lines = text.lines().peekable();
+    while let Some(l) = lines.peek() {
+        let l = l.trim().trim_start_matches("- ").trim();
+        let value = |v: &str| Some(v.trim().trim_matches(['"', '\'', '`']).to_string()).filter(|v| !v.is_empty());
+        if let Some(v) = l.strip_prefix("model:") {
+            phase.model = value(v);
+        } else if let Some(v) = l.strip_prefix("effort:") {
+            phase.effort = value(v);
+        } else if !l.is_empty() {
+            break;
+        }
+        lines.next();
+    }
+    phase.instructions = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    phase
+}
+
+fn parse_playbook(name: &str, text: &str, builtin: bool) -> Playbook {
+    let body = vault::split_frontmatter(text).1;
+    let lines: Vec<&str> = body.lines().collect();
+    let sections = h2_sections(body);
+    let first = sections.first().map_or(lines.len(), |(_, start, _)| *start);
+    let rules: Vec<&str> = lines[..first].iter().filter(|l| !l.starts_with("# ")).copied().collect();
+    let get = |k: &str| vault::fm_get(text, k).filter(|v| !v.is_empty());
+    Playbook {
+        name: name.to_string(),
+        title: get("title").unwrap_or_else(|| name.to_string()),
+        description: get("description").unwrap_or_default(),
+        rules: without_comments(&rules.join("\n")),
+        phases: sections.iter().map(|(h, start, end)| parse_phase(h, &lines[start + 1..*end].join("\n"))).collect(),
+        gate: get("phase_gate"),
+        builtin,
+    }
+}
+
+/// The playbook called `name` (`bug-fix`, `Bug fix` or `playbooks/bug-fix.md`): the vault's, else marq's own.
+pub fn playbook(vault: &Path, name: &str) -> Option<Playbook> {
+    let stem = name.trim().trim_end_matches(".md").rsplit('/').next().unwrap_or_default();
+    [stem.to_string(), vault::slug(stem)].iter().find_map(|n| {
+        let own = std::fs::read_to_string(vault.join(PLAYBOOK_FOLDER).join(format!("{n}.md"))).ok();
+        own.map(|t| parse_playbook(n, &t, false)).or_else(|| BUILTIN_PLAYBOOKS.iter().find(|(b, _)| b == n).map(|(b, t)| parse_playbook(b, t, true)))
+    })
+}
+
+/// The playbook a request names with `playbook:`.
+pub fn playbook_of(vault: &Path, text: &str) -> Option<Playbook> {
+    playbook(vault, &vault::fm_get(text, "playbook").filter(|p| !p.is_empty())?)
+}
+
+/// Every playbook a request can name: the vault's, then marq's own that the vault does not replace.
+pub fn playbooks(vault: &Path) -> Vec<Playbook> {
+    let mut names: Vec<String> = std::fs::read_dir(vault.join(PLAYBOOK_FOLDER))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| Some(e.file_name().to_string_lossy().strip_suffix(".md")?.to_string()))
+        .collect();
+    names.sort();
+    let own: Vec<String> = BUILTIN_PLAYBOOKS.iter().map(|(b, _)| b.to_string()).filter(|b| !names.contains(b)).collect();
+    names.extend(own);
+    names.iter().filter_map(|n| playbook(vault, n)).collect()
+}
+
+/// A request that names a playbook, with the playbook's phases written into `phases:` unless the
+/// request lists its own. The list is fixed from then on, so editing the playbook does not move a
+/// request that is under way.
+pub fn with_playbook_phases(vault: &Path, text: &str) -> Result<String> {
+    let Some(name) = vault::fm_get(text, "playbook").filter(|p| !p.is_empty()) else { return Ok(text.to_string()) };
+    let book = playbook(vault, &name).ok_or_else(|| Error::Other(format!("there is no playbook named {name} in {PLAYBOOK_FOLDER}/")))?;
+    if book.phases.is_empty() || !phases_of(text).is_empty() {
+        return Ok(text.to_string());
+    }
+    let names: Vec<&str> = book.phases.iter().map(|p| p.name.as_str()).collect();
+    Ok(vault::fm_set(text, "phases", &format!("[{}]", names.join(", "))))
+}
+
+/// The playbook's rules, for every session on a request that names it.
+pub fn playbook_prompt(vault: &Path, text: &str) -> String {
+    match playbook_of(vault, text).filter(|b| !b.rules.is_empty()) {
+        Some(b) => format!("\n\n<playbook name=\"{}\">\n{}\n</playbook>", b.name, b.rules),
+        None => String::new(),
+    }
+}
+
+/// A new playbook note's text.
+fn playbook_template(title: &str) -> String {
+    format!(
+        "---\ntype: playbook\ntitle: {}\ndescription: \"\"\n---\n\
+# {title}\n\n\
+<!-- Rules for every phase go here, above the first phase. -->\n\n\
+## research\n\n\
+<!-- Each \"## \" heading is a phase. They run in this order, each in a new session. Write what the session should do and \
+what its reply must end with: the reply is saved and given to the later phases. A first line of \"model: opus\" or \
+\"effort: high\" sets them for this phase. -->\n\n\
+## implement\n\n\
+<!-- The last phase finishes the task. The request's verify: command and ## Acceptance apply to it. -->\n",
+        serde_json::to_string(title).unwrap()
+    )
+}
+
+/// Writes `playbooks/<name>.md`: a copy of marq's own playbook of that name to edit, else the
+/// template. An existing note is returned as it is.
+pub fn new_playbook(vault: &Path, title: &str) -> Result<PathBuf> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(Error::Other("a playbook needs a name".into()));
+    }
+    let name = vault::slug(title);
+    let path = vault.join(PLAYBOOK_FOLDER).join(format!("{name}.md"));
+    if !path.exists() {
+        std::fs::create_dir_all(vault.join(PLAYBOOK_FOLDER))?;
+        let text = BUILTIN_PLAYBOOKS.iter().find(|(b, _)| *b == name).map_or_else(|| playbook_template(title), |(_, t)| t.to_string());
+        std::fs::write(&path, text)?;
+    }
+    Ok(path)
 }
 
 // ---- specs ----
@@ -757,6 +943,59 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         let p = phase_prompt(&dir, &dir.join("requests/r.md"), &later, "plan");
         assert!(p.contains("This session is the plan phase"));
         assert!(p.contains("found things"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn playbooks_give_phases_and_instructions() {
+        let dir = std::env::temp_dir().join(format!("marq-playbook-{}", vault::new_id()));
+        std::fs::create_dir_all(dir.join("playbooks")).unwrap();
+        let none: [&str; 0] = [];
+
+        // marq's own, until the vault has one of the same name.
+        let own = playbook(&dir, "bug-fix").unwrap();
+        assert!(own.builtin);
+        assert_eq!(own.phases.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["reproduce", "diagnose", "fix"]);
+        assert!(own.rules.contains("smallest change") && !own.rules.contains("# Bug fix"));
+        std::fs::write(
+            dir.join("playbooks/bug-fix.md"),
+            "---\ntype: playbook\ntitle: My fix\nphase_gate: auto\n---\n# My fix\n\nBe brief.\n<!-- a hint -->\n\n\
+## Repro\n\n- model: haiku\neffort: low\n\nShow it failing.\n\n```md\n## not a phase\n```\n\n## Fix\n\n<!-- nothing yet -->\n",
+        )
+        .unwrap();
+        let book = playbook(&dir, "playbooks/bug-fix.md").unwrap();
+        assert_eq!((book.title.as_str(), book.rules.as_str(), book.gate.as_deref(), book.builtin), ("My fix", "Be brief.", Some("auto"), false));
+        let repro = book.phase("repro").unwrap();
+        assert_eq!((repro.model.as_deref(), repro.effort.as_deref()), (Some("haiku"), Some("low")));
+        assert!(repro.instructions.starts_with("Show it failing.") && repro.instructions.contains("## not a phase"));
+        assert_eq!(book.phase("fix").unwrap().instructions, "");
+        assert_eq!(playbook(&dir, "Bug fix").unwrap().title, "My fix", "found by its title's slug");
+        assert_eq!(playbooks(&dir).iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["bug-fix", "plan-first", "refactor"]);
+
+        // A request takes the playbook's phases once, and keeps a list of its own.
+        let request = with_playbook_phases(&dir, "---\ntype: request\nplaybook: bug-fix\n---\n## Request\n\nx\n").unwrap();
+        assert_eq!(phases_of(&request), ["repro", "fix"]);
+        let own_list = "---\ntype: request\nplaybook: bug-fix\nphases: [fix]\n---\nx\n";
+        assert_eq!(with_playbook_phases(&dir, own_list).unwrap(), own_list);
+        assert!(with_playbook_phases(&dir, "---\nplaybook: nope\n---\nx\n").is_err());
+        assert_eq!(phases_of(&with_playbook_phases(&dir, REQUEST).unwrap()), ["research", "plan", "implement"]);
+
+        let p = phase_prompt(&dir, &dir.join("requests/r.md"), &request, "repro");
+        assert!(p.contains("Show it failing.") && p.contains("saved and given to the next phase"));
+        // A phase the playbook says nothing about gets the built-in instructions.
+        assert!(phase_prompt(&dir, &dir.join("requests/r.md"), &request, "fix").contains("Finish the task"));
+        assert_eq!(playbook_prompt(&dir, &request), "\n\n<playbook name=\"bug-fix\">\nBe brief.\n</playbook>");
+        assert_eq!(playbook_prompt(&dir, REQUEST), "");
+
+        // New: a copy of marq's own to edit, else the template, whose hints are not instructions.
+        assert_eq!(new_playbook(&dir, "Bug fix").unwrap(), dir.join("playbooks/bug-fix.md"));
+        assert_eq!(playbook(&dir, "bug-fix").unwrap().title, "My fix", "an existing note is kept");
+        assert!(std::fs::read_to_string(new_playbook(&dir, "refactor").unwrap()).unwrap().contains("## baseline"));
+        new_playbook(&dir, "Release notes").unwrap();
+        let fresh = playbook(&dir, "release-notes").unwrap();
+        assert_eq!((fresh.title.as_str(), fresh.rules.as_str()), ("Release notes", ""));
+        assert_eq!(fresh.phases.iter().map(|p| (p.name.as_str(), p.instructions.as_str())).collect::<Vec<_>>(), [("research", ""), ("implement", "")]);
+        assert_eq!(phases_of("---\nphases: []\n---\n"), none);
         let _ = std::fs::remove_dir_all(dir);
     }
 

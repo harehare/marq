@@ -313,6 +313,7 @@ pub fn run_schedule(app: &AppHandle, vault: &Path, path: &Path) -> Result<Option
             verify_retries: get("verify_retries").and_then(|v| v.parse().ok()),
             sandbox: get("sandbox").or_else(workflow::unattended_sandbox),
             phases: vault::fm_list(&text, "phases"),
+            playbook: get("playbook"),
             extra: ["verify_timeout", "verify_model", "phase_gate"].iter().filter_map(|k| Some((k.to_string(), get(k)?))).collect(),
             workspace: get("workspace"),
             directories: crate::workspace::dirs_of(&text),

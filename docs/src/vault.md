@@ -15,6 +15,7 @@ The Markdown files in the vault are the source of truth. There is no database to
 ├─ crews/<name>.md, crews/<name>/     # crews: the note, its task list and documents
 ├─ boards/<name>.md                   # kanban boards
 ├─ specs/<slug>.md                    # specs: requirements, design, tasks, acceptance
+├─ playbooks/<name>.md                # playbooks: the phases a kind of task runs in
 ├─ workspaces/<slug>.md               # sets of directories to pick for tasks
 ├─ phases/<request>-<phase>.md        # each phase's reply, for the phases after it
 ├─ queries/*.mq                       # saved mq queries
