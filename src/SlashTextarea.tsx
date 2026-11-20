@@ -1,5 +1,5 @@
 import { forwardRef, KeyboardEvent, TextareaHTMLAttributes, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { ClipboardPaste, FileText, ListOrdered, Loader2, X } from "lucide-react";
+import { FileText, ListOrdered, Loader2 } from "lucide-react";
 import { api, FileEntry, Playbook, SlashCommand } from "./api";
 import { useVaultFiles } from "./wikilinks";
 import { composing } from "./keys";
@@ -96,7 +96,7 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
   sessionId?: string;
   /** Where the list opens relative to the field. */
   placement?: "above" | "below";
-  /** When given, long pastes are held as chips above the field instead of going into the text; send `pastes.expand(value)`. */
+  /** When given, long pastes are held back and shown in the text as a placeholder; send `pastes.expand(value)`. */
   pastes?: Pastes;
   /** Playbooks offered under `/`, before the commands. Picking one takes the `/word` out of the text and calls `onPlaybook`. */
   playbooks?: Playbook[];
@@ -180,19 +180,6 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
     });
   };
 
-  /** A held paste goes into the text at the cursor after all. */
-  const unfold = (id: number) => {
-    const el = ref.current!;
-    const text = pastes!.remove(id);
-    const start = el.selectionStart;
-    onChange(`${value.slice(0, start)}${text}${value.slice(el.selectionEnd)}`);
-    const pos = start + text.length;
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(pos, pos);
-    });
-  };
-
   const pickPlaybook = (b: Playbook) => {
     if (!token) return;
     const el = ref.current!;
@@ -235,20 +222,6 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
 
   return (
     <div className="slash-wrap">
-      {!!pastes?.items.length && (
-        <div className="input-chips">
-          {pastes.items.map((p) => (
-            <span key={p.id} className="input-chip" title={p.text.length > 600 ? `${p.text.slice(0, 600)}…` : p.text}>
-              <ClipboardPaste size={12} />
-              <a title="Put this back into the text, to edit it" onClick={() => unfold(p.id)}>
-                <b>Pasted</b>
-                <span className="muted">{p.lines > 1 ? `${p.lines} lines` : `${p.text.length} characters`} · {p.text.trim().split("\n")[0].slice(0, 40)}</span>
-              </a>
-              <button className="icon" title="Remove" onClick={() => { pastes.remove(p.id); ref.current?.focus(); }}><X size={11} /></button>
-            </span>
-          ))}
-        </div>
-      )}
       <textarea
         {...rest}
         ref={ref}
@@ -261,9 +234,15 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
         onPaste={(e) => {
           onPaste?.(e);
           if (e.defaultPrevented || !pastes) return;
-          if (!pastes.add(e.clipboardData.getData("text/plain"))) return;
+          const token = pastes.add(e.clipboardData.getData("text/plain"));
+          if (!token) return;
           e.preventDefault();
           close();
+          const el = e.currentTarget;
+          const start = el.selectionStart;
+          onChange(`${value.slice(0, start)}${token}${value.slice(el.selectionEnd)}`);
+          const pos = start + token.length;
+          requestAnimationFrame(() => el.setSelectionRange(pos, pos));
         }}
         onClick={(e) => update(value, e.currentTarget.selectionStart)}
         onBlur={() => setTimeout(close, 120)}
