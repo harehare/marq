@@ -2020,9 +2020,12 @@ export default function App() {
             {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
               {pinned.map(tabEl)}
             </TabStrip>}
-            <TabStrip lead={pinned.length === 0 && showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
-              {unpinned.map(tabEl)}
-            </TabStrip>
+            {/* Nothing to show (no unpinned tabs, no sidebar button, no split controls): leave the row out. */}
+            {(unpinned.length > 0 || (pinned.length === 0 && showSidebar) || splitControls) && (
+              <TabStrip lead={pinned.length === 0 && showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
+                {unpinned.map(tabEl)}
+              </TabStrip>
+            )}
           </>
         ) : (
           <TabStrip lead={showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
