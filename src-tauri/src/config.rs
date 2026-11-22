@@ -53,6 +53,11 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [inbox]
 # parallel = 1                    # how many scheduled runs and queued requests go at once (1 to 8); the rest wait their turn in the Inbox
 
+[worktree]
+# dir = "~/.marq/worktrees"       # where sessions' worktrees are made (applies to new worktrees)
+# default = true                  # New task starts with "Work in a new worktree" on; false starts it off
+# base = "latest"                 # head | latest: where New task's "Start from…" begins; unset remembers the last choice
+
 [sandbox]
 # unattended = "on"               # on | strict: Claude Code's sandbox for schedules that do not set one
 

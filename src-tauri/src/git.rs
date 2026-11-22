@@ -197,12 +197,24 @@ fn branch_tip<'r>(repo: &'r Repository, name: &str) -> Result<git2::Commit<'r>> 
     Ok(found.get().peel_to_commit()?)
 }
 
-/// Creates `~/.marq/worktrees/<repo>/<short id>` on a new `branch` starting at `base`.
+/// `[worktree] dir` in config.toml (`~` allowed), else `~/.marq/worktrees`.
+fn worktrees_root() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_default();
+    let dir = crate::config::read().ok().and_then(|c| c["worktree"]["dir"].as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty());
+    match dir {
+        Some(d) if d == "~" => home,
+        Some(d) if d.starts_with("~/") => home.join(&d[2..]),
+        Some(d) => PathBuf::from(d),
+        None => home.join(".marq/worktrees"),
+    }
+}
+
+/// Creates `<worktrees dir>/<repo>/<short id>`, `~/.marq/worktrees` unless `[worktree] dir` says otherwise, on a new `branch` starting at `base`.
 /// With `carry`, the repo's uncommitted changes and untracked files are copied into it as well.
 pub fn create(repo_dir: &Path, session_id: &str, branch: &str, carry: bool, base: &Base) -> Result<Worktree> {
     let short = &session_id[session_id.len().saturating_sub(8)..];
     let name = repo_dir.file_name().unwrap_or_default().to_string_lossy();
-    let path = dirs::home_dir().unwrap_or_default().join(".marq/worktrees").join(&*name).join(short);
+    let path = worktrees_root().join(&*name).join(short);
     create_at(repo_dir, &path, short, branch, carry, base)
 }
 

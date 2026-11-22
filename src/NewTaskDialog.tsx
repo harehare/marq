@@ -1,3 +1,4 @@
+import { getSettings } from "./settings";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
@@ -59,7 +60,12 @@ export const SANDBOXES = [
 /** The project the last task was started in, where a new terminal opens when nothing else says. */
 export const lastProject = () => stored(PROJECT_KEY, "");
 /** What the last task used, for work that is queued without opening the dialog. */
-export const lastTaskDefaults = () => ({ project: stored(PROJECT_KEY, ""), mode: stored(MODE_KEY, "auto"), worktree: stored(WORKTREE_KEY, "true") === "true" });
+export const lastTaskDefaults = () => ({ project: stored(PROJECT_KEY, ""), mode: stored(MODE_KEY, "auto"), worktree: worktreeDefault() });
+
+/** `[worktree] default` in config.toml wins over the last choice. */
+function worktreeDefault() {
+  return getSettings().worktree?.default ?? stored(WORKTREE_KEY, "true") === "true";
+}
 
 function stored(key: string, fallback: string) {
   try {
@@ -90,13 +96,13 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   const [carry, setCarry] = useState(false);
   // Where the worktree's branch starts. Uncommitted changes only fit a start at HEAD.
   const [baseMode, setBaseMode] = useState<"head" | "latest" | "branch">(() => {
-    const b = stored(BASE_KEY, "latest");
+    const b = getSettings().worktree?.base ?? stored(BASE_KEY, "latest");
     return b === "head" || b === "branch" ? b : "latest";
   });
   const [baseBranch, setBaseBranch] = useState(() => stored(BASE_KEY + ".branch", ""));
   // More agents or models to run the same task on, to compare the results.
   const [extra, setExtra] = useState<{ agent: string; model: string; effort: string }[]>([]);
-  const [worktree, setWorktree] = useState(() => stored(WORKTREE_KEY, "true") === "true");
+  const [worktree, setWorktree] = useState(worktreeDefault);
   // One session that may hand large work to a crew, or a crew from the start.
   const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
   // How the task is done: picked with / in the prompt (or under Checks) and shown as a chip above it.

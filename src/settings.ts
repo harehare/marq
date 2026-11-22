@@ -10,6 +10,7 @@ export type Settings = {
   };
   editor?: { default_mode?: "preview" | "edit" | "split"; autosave?: boolean; vim?: boolean };
   notifications?: { enabled?: boolean };
+  worktree?: { dir?: string; default?: boolean; base?: "head" | "latest" };
   inbox?: { parallel?: number };
   chat?: { send?: SendKey };
   tabs?: { pinned_layout?: "inline" | "row"; overflow?: "scroll" | "wrap" };

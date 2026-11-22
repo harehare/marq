@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
+import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { api, type AgentInfo } from "./api";
 import { composing } from "./keys";
@@ -99,6 +99,18 @@ const SECTIONS: Section[] = [
     id: "notifications", title: "Notifications", icon: Bell,
     fields: [
       { key: "notifications.enabled", label: "Session notifications", kind: "bool", desc: "Notify when a session finishes, fails or needs an approval" },
+    ],
+  },
+  {
+    id: "worktree", title: "Worktrees", icon: GitBranch,
+    note: "The location applies to worktrees made from now on. The other two set what New task starts with.",
+    fields: [
+      { key: "worktree.dir", label: "Location", kind: "text", placeholder: "~/.marq/worktrees", desc: "Where each session's worktree is made, as <location>/<repo>/<id>" },
+      { key: "worktree.default", label: "Work in a new worktree", kind: "bool", desc: "Whether New task starts with this on" },
+      {
+        key: "worktree.base", label: "Start from", kind: "select", desc: "Where a new worktree's branch begins. Unset: New task remembers your last choice",
+        options: [{ value: "", label: "Last used" }, { value: "latest", label: "Latest default branch" }, { value: "head", label: "Current checkout (HEAD)" }],
+      },
     ],
   },
   {
