@@ -210,6 +210,65 @@ pub fn set_reviewed(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A reviewed note this many days old is mentioned as such: the code has likely moved on.
+const OLD_AFTER_DAYS: i64 = 90;
+
+/// File paths the note names in backticks (`src/lib.rs`, `docs/a.md:12`), outside its `## Sources`.
+fn mentioned_paths(text: &str) -> Vec<String> {
+    const EXTS: [&str; 14] = ["rs", "ts", "tsx", "js", "jsx", "md", "toml", "json", "py", "go", "yml", "yaml", "sh", "css"];
+    let body = vault::split_frontmatter(text).1;
+    let body = body.split("\n## Sources").next().unwrap_or(body);
+    let mut out: Vec<String> = vec![];
+    for (i, span) in body.split('`').enumerate() {
+        // Every second piece is inside a pair of backticks.
+        if i % 2 == 0 {
+            continue;
+        }
+        let path = span.trim();
+        // `file:12` names a line.
+        let path = match path.rsplit_once(':') {
+            Some((p, n)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => p,
+            _ => path,
+        };
+        let plain = !path.is_empty()
+            && !path.contains(|c: char| c.is_whitespace() || "*?<>{}()[]$~=|,;\"'".contains(c))
+            && !path.contains("://")
+            && !path.contains("::")
+            && !path.starts_with(['/', '.', '-'])
+            && !path.contains("..");
+        let ext_ok = path.rsplit_once('.').is_some_and(|(stem, e)| !stem.is_empty() && EXTS.contains(&e));
+        if plain && ext_ok && !out.iter().any(|o| o == path) {
+            out.push(path.to_string());
+        }
+    }
+    out
+}
+
+/// What may be out of date in a knowledge note for `project`: files it names that the project no
+/// longer has, and a review that is old. Empty when there is nothing to say.
+fn staleness(text: &str, project: &str) -> String {
+    let root = vault::expand_home(project.trim());
+    let missing: Vec<String> = if project.trim().is_empty() || !root.is_dir() {
+        vec![]
+    } else {
+        mentioned_paths(text).into_iter().filter(|p| !root.join(p).exists()).collect()
+    };
+    let mut notes = vec![];
+    if !missing.is_empty() {
+        let shown: Vec<String> = missing.iter().take(3).map(|p| format!("`{p}`")).collect();
+        let more = if missing.len() > 3 { format!(" and {} more", missing.len() - 3) } else { String::new() };
+        notes.push(format!("names files that no longer exist: {}{more}", shown.join(", ")));
+    }
+    let age = vault::fm_get(text, "reviewed")
+        .and_then(|r| chrono::DateTime::parse_from_rfc3339(r.trim()).ok())
+        .map(|r| (chrono::Local::now().fixed_offset() - r).num_days())
+        .filter(|d| *d > OLD_AFTER_DAYS);
+    if let Some(d) = age {
+        notes.push(format!("reviewed {d} days ago"));
+    }
+    if notes.is_empty() { String::new() } else { format!(", check against the code first: {}", notes.join("; ")) }
+}
+
 /// Knowledge notes for a session in `project` (and those for no project), for its system prompt.
 pub fn for_project(vault: &Path, project: &str) -> String {
     let p = norm(project);
@@ -221,7 +280,7 @@ pub fn for_project(vault: &Path, project: &str) -> String {
             let np = vault::fm_get(&text, "project").unwrap_or_default();
             (np.is_empty() || norm(&np) == p).then(|| {
                 let draft = if vault::fm_get(&text, "status").as_deref() == Some("reviewed") { "" } else { ", draft: not checked by the user yet" };
-                format!("- [[{}]] ({}{draft})", f.title.unwrap_or_default(), f.rel)
+                format!("- [[{}]] ({}{draft}{})", f.title.unwrap_or_default(), f.rel, staleness(&text, project))
             })
         })
         .take(30)
@@ -231,7 +290,8 @@ pub fn for_project(vault: &Path, project: &str) -> String {
     }
     format!(
         "\n\nKnowledge notes for this project, merged from earlier sessions' learnings. Read the ones that bear on the task \
-with read_note before you start, and trust reviewed ones over drafts:\n{}",
+with read_note before you start, and trust reviewed ones over drafts. A note marked to check may be out of date: \
+verify what it says in the code before you rely on it, and record the correction with append_learning:\n{}",
         notes.join("\n")
     )
 }
@@ -241,9 +301,34 @@ pub const GARDENING_PROMPT: &str = "Merge what earlier sessions learned into kno
 
 1. Call list_learnings to get the learnings no knowledge note has taken in yet.
 2. Look at the knowledge notes that exist (list_notes with folder \"knowledge\") and at glossary.md, and read the ones these learnings touch.
-3. Group the learnings by topic. For each topic, call write_knowledge with the whole note: merge the new learnings into what is there, drop duplicates, the obvious and what no longer holds, and keep each point short and specific (what, why, where in the code). Use the glossary's terms and link related notes with [[Title]]. Pass every session you drew on as sources, including ones whose learnings you dropped, so they are not offered again.
+3. Check the notes you read against the repository: a file, command or function a note names must still exist, so fix or drop what no longer does. Then group the learnings by topic. For each topic, call write_knowledge with the whole note: merge the new learnings into what is there, drop duplicates, the obvious and what no longer holds, and keep each point short and specific (what, why, where in the code). Use the glossary's terms and link related notes with [[Title]]. Pass every session you drew on as sources, including ones whose learnings you dropped, so they are not offered again.
 4. When a learning contradicts a note the user has reviewed (status: reviewed), do not overwrite it: keep both under \"## Open questions\".
 5. Reply with a short list of the notes you created or changed and why.";
+
+/// The prompt of the hardening schedule: failures turned into rules, checks and playbooks.
+pub const HARDENING_PROMPT: &str = "Turn what keeps going wrong in this vault's sessions into rules, so it stops happening.
+
+1. Look at recent sessions with search_sessions and read_session: failed checks (marq_verify with passed false, or `verified: failed` on a request), approvals that were denied, errors, and learnings that say a mistake was made. Ignore one-off slips.
+2. Group them by cause. Keep only the causes that happened more than once, or that cost a lot.
+3. For each, choose the smallest guard that stops it, and say which:
+   - a command that must not run, or must be asked about: an `ask` or `deny` entry in the project's environment note;
+   - a missing setup step, file or variable: `setup:`, `copy:` or `vars:` there;
+   - work that was wrong in a way a command can catch: a better `verify:` command;
+   - a way of working: a line in the playbook or in a knowledge note.
+4. Write the proposals as one document with write_doc: for each, the evidence (the sessions), the cause, the change and the file it goes in. Do not edit environment notes, playbooks or the repository yourself; the user decides.
+5. Reply with the document's path and a one-line summary of each proposal. If nothing repeats, say so and write nothing.";
+
+/// The hardening schedule, created on first use. Returns its path.
+pub fn ensure_hardening(vault: &Path) -> Result<PathBuf> {
+    let existing = vault::list_files(vault).into_iter().find(|f| {
+        f.kind.as_deref() == Some("schedule")
+            && std::fs::read_to_string(&f.path).is_ok_and(|t| t.contains("Turn what keeps going wrong"))
+    });
+    match existing {
+        Some(f) => Ok(PathBuf::from(f.path)),
+        None => crate::automation::create(vault, "Harden from failures", "1w", HARDENING_PROMPT, "", ""),
+    }
+}
 
 /// The gardening schedule, created on first use. Returns its path.
 pub fn ensure_gardening(vault: &Path) -> Result<PathBuf> {
@@ -287,6 +372,20 @@ pub fn list_json(items: Vec<SessionLearnings>) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn finds_paths_a_note_names_and_what_is_gone() {
+        let note = "---\nreviewed: 2020-01-01T00:00:00+00:00\n---\nSee `src/a.rs:12` and `src/gone.rs`, run `cargo test`, `foo::bar`, `https://x.dev/a.md`.\n\n## Sources\n- `src/ignored.rs`\n";
+        assert_eq!(mentioned_paths(note), ["src/a.rs", "src/gone.rs"]);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.rs"), "").unwrap();
+        let s = staleness(note, &dir.path().to_string_lossy());
+        assert!(s.contains("`src/gone.rs`") && !s.contains("src/a.rs") && s.contains("days ago"), "{s}");
+        assert_eq!(staleness("---\n---\nNothing named.", &dir.path().to_string_lossy()), "");
+        // Without a project directory there is nothing to compare with.
+        assert!(!staleness(note, "").contains("no longer exist"));
+    }
     use super::*;
 
     fn session(v: &Path, name: &str, id: &str, project: &str, learnings: &str) {

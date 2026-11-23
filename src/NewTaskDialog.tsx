@@ -610,15 +610,27 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             {!team && !worktree && (
               <p className="task-warn small">Works directly in the project: tasks in the same project can get in each other's way.</p>
             )}
-            {envStatus?.from_repo && (envStatus.vars.length > 0 || envStatus.resources.length > 0) && (
+            {envStatus?.from_repo && (envStatus.vars.length > 0 || envStatus.resources.length > 0 || envStatus.setup.length > 0 || envStatus.verify) && (
               envStatus.trusted ? (
-                <p className="muted small">.marq/environment.md is trusted: its variables are set for the agent{envStatus.resources.length > 0 ? ` and its ${envStatus.resources.length} resource${envStatus.resources.length > 1 ? "s are" : " is"} made before the agent starts` : ""}.</p>
+                <p className="muted small">.marq/environment.md is trusted: {[
+                  envStatus.vars.length > 0 && "its variables are set for the agent",
+                  envStatus.resources.length > 0 && `its ${envStatus.resources.length} resource${envStatus.resources.length > 1 ? "s are" : " is"} made before the agent starts`,
+                  envStatus.setup.length > 0 && "its setup commands run in the new worktree",
+                  envStatus.verify && "its check runs after each turn",
+                ].filter(Boolean).join(", ")}.</p>
               ) : (
                 <div className="task-warn small">
-                  <p>This repository's <code>.marq/environment.md</code> asks to set environment variables for the agent{envStatus.resources.length > 0 ? " and to run commands on your machine to make and drop resources" : ""}. Marq does so only if you trust the file; until then the agent just reads them as text and nothing is run.</p>
+                  <p>This repository's <code>.marq/environment.md</code> asks to {[
+                    envStatus.vars.length > 0 && "set environment variables for the agent",
+                    envStatus.resources.length > 0 && "run commands on your machine to make and drop resources",
+                    envStatus.setup.length > 0 && "run setup commands in each new worktree",
+                    envStatus.verify && "run a check command after each turn",
+                  ].filter(Boolean).join(", ")}. Marq does so only if you trust the file; until then the agent just reads them as text and nothing is run.</p>
                   <pre>{[
                     ...envStatus.vars.map(([k, v]) => `${k}=${v}`),
                     ...envStatus.resources.flatMap(([n, c, x]) => [`${n} create: ${c}`, `${n} drop: ${x}`]),
+                    ...envStatus.setup.map((c) => `setup: ${c}`),
+                    ...(envStatus.verify ? [`verify: ${envStatus.verify}`] : []),
                   ].join("\n")}</pre>
                   <button onClick={trustEnv} title="Remembered for this project until these variables change">Trust and apply</button>
                 </div>

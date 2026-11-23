@@ -30,6 +30,8 @@ Show types on hover.
 
 With `verify:`, Marq runs the command in the session's directory (its worktree) when a turn ends. If the command fails, Marq sends its output back to the agent as a new message and checks again after that turn. This repeats until the check passes, or until it has failed `verify_retries` + 1 times. The session shows each check with its output, and the request records `verified: passed` or `verified: failed`.
 
+A project can set a default check in its [environment note](sessions.md#a-check-for-every-request), so each request does not repeat it; `verify: off` in a request skips that default.
+
 The command runs with your shell's `PATH` and `CI=1`, and stops after `verify_timeout`. It runs in the session's working directory, not in a [workspace](sessions.md#workspaces)'s other directories; to check those too, use `cd` in the command. It runs code from the worktree that the agent changed (a package script, a Makefile). So when the session is sandboxed, the check is sandboxed too: on macOS it runs under `sandbox-exec`, with writes allowed only in the working directory, the workspace's other directories and temp folders, no network except localhost, and no access to `~/.ssh`, `~/.aws` or gcloud credentials.
 
 The check is taken from the note when the session starts, so editing the note during the session does not change it.
@@ -162,5 +164,9 @@ Every Claude session loads Marq's plugin, `sidecar/plugin/`, with these skills:
 ## From learnings to the repository
 
 Sessions record learnings. The **knowledge gardening** schedule merges them into knowledge notes, and once you mark a knowledge note `status: reviewed`, Marq tells sessions on that project about it.
+
+A note that names a file the project no longer has, or that was reviewed more than 90 days ago, is listed to sessions with a warning to check it against the code first, and the gardening run is told to fix or drop what no longer holds.
+
+To turn what keeps going wrong into rules, use **Knowledge: propose rules, checks and setup from repeated failures** in the command palette. It creates a weekly schedule that looks at failed checks, denied approvals and errors across recent sessions, keeps the causes that repeat, and writes a document of proposals: an `ask` or `deny` rule, a `setup:` step, a better `verify:` command, or a line in a playbook. It changes nothing itself; you decide which to adopt.
 
 To make that knowledge reach every agent, not only sessions started from Marq, use **Knowledge: write reviewed knowledge into a project's CLAUDE.md and skills** in the command palette. It creates a weekly schedule that is turned off at first. Set its `project:` and `enabled: true`. Each run works in a new worktree: it folds the reviewed knowledge notes into the project's CLAUDE.md (or AGENTS.md) and `.claude/skills/`, and opens a pull request with gh.

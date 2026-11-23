@@ -1428,6 +1428,10 @@ export default function App() {
       label: "Knowledge: merge session learnings into knowledge notes (daily schedule)",
       run: () => void api.knowledgeGardening(vault!).then((p) => { refreshFiles(); openNote(p); }),
     },
+    "knowledge.hardening": {
+      label: "Knowledge: propose rules, checks and setup from repeated failures (weekly schedule)",
+      run: () => void api.knowledgeHardening(vault!).then((p) => { refreshFiles(); openNote(p); }),
+    },
     "knowledge.promotion": {
       label: "Knowledge: write reviewed knowledge into a project's CLAUDE.md and skills (weekly schedule)",
       run: () => void api.knowledgePromotion(vault!).then((p) => { refreshFiles(); openNote(p); }),

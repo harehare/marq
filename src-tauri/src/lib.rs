@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod crew;
 mod environment;
+mod setup;
 mod error;
 mod git;
 mod inbox;
@@ -287,7 +288,11 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
     // Taken now, so the session cannot change its own check by editing the note.
     let verify = match &phase {
         Some(ph) if !workflow::is_last_phase(&text, ph) => None,
-        _ if is_request => opts.verify.clone().or_else(|| workflow::verify_of(&text)),
+        _ if is_request => opts.verify.clone().or_else(|| {
+            // The project's environment note can set the check every request on it runs.
+            let default = project.as_deref().and_then(|p| environment::load(&v, p)).filter(|e| e.trusted).and_then(|e| e.verify);
+            workflow::verify_with(&text, default.as_ref())
+        }),
         _ => None,
     };
     let sandbox = workflow::sandbox_of(&text);
@@ -1067,6 +1072,14 @@ async fn spec_to_board(app: AppHandle, vault: String, path: String) -> Result<Br
 #[tauri::command]
 fn knowledge_promotion(app: AppHandle, vault: String) -> Result<String> {
     let p = knowledge::ensure_promotion(Path::new(&vault))?;
+    let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// The schedule that proposes rules, checks and setup from repeated failures, created on first use.
+#[tauri::command]
+fn knowledge_hardening(app: AppHandle, vault: String) -> Result<String> {
+    let p = knowledge::ensure_hardening(Path::new(&vault))?;
     let _ = app.emit("vault://changed", serde_json::json!({"path": p}));
     Ok(p.to_string_lossy().into_owned())
 }
@@ -1900,6 +1913,7 @@ pub fn run() {
             note_links,
             knowledge_review,
             knowledge_gardening,
+            knowledge_hardening,
             knowledge_promotion,
             new_spec,
             list_playbooks,

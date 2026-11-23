@@ -67,7 +67,7 @@ fn save(vault: &Path, session: &str, l: &Ledger) -> Result<()> {
 }
 
 /// Runs a command line in `cwd` with the shell's PATH and `vars`. Ok with its output, or Err with why not.
-fn run(command: &str, cwd: &Path, vars: &Value, timeout: Duration) -> std::result::Result<String, String> {
+pub(crate) fn run(command: &str, cwd: &Path, vars: &Value, timeout: Duration) -> std::result::Result<String, String> {
     let out_path = std::env::temp_dir().join(format!("marq-resource-{}.log", vault::new_id()));
     let out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
     let err = out.try_clone().map_err(|e| e.to_string())?;
