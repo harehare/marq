@@ -156,19 +156,28 @@ fn parse_secs(s: &str) -> Option<u64> {
 
 /// The check a request asks for, or None.
 pub fn verify_of(text: &str) -> Option<Verify> {
+    verify_with(text, None)
+}
+
+/// The check a request asks for. What the request leaves out comes from `default`, the project's
+/// environment note, if that is trusted. `verify: off` in the request turns the default command off.
+pub fn verify_with(text: &str, default: Option<&Verify>) -> Option<Verify> {
     let get = |k: &str| vault::fm_get(text, k).filter(|v| !v.trim().is_empty());
-    let command = get("verify");
+    let raw = get("verify");
+    let off = raw.as_deref().is_some_and(|c| matches!(c.trim().to_lowercase().as_str(), "off" | "none" | "false" | "no"));
+    let command = if off { None } else { raw.or_else(|| default.and_then(|d| d.command.clone())) };
     let acceptance = section(vault::split_frontmatter(text).1, "Acceptance");
     if command.is_none() && acceptance.is_none() {
         return None;
     }
+    let d = default.cloned().unwrap_or(Verify { retries: DEFAULT_RETRIES, timeout_secs: DEFAULT_TIMEOUT, ..Default::default() });
     Some(Verify {
         command,
         acceptance,
-        retries: get("verify_retries").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_RETRIES).min(MAX_RETRIES),
-        fresh: get("verify_retry").as_deref() == Some("fresh"),
-        timeout_secs: get("verify_timeout").and_then(|v| parse_secs(&v)).unwrap_or(DEFAULT_TIMEOUT),
-        model: get("verify_model"),
+        retries: get("verify_retries").and_then(|v| v.parse().ok()).map_or(d.retries, |n: u32| n.min(MAX_RETRIES)),
+        fresh: get("verify_retry").map_or(d.fresh, |v| v == "fresh"),
+        timeout_secs: get("verify_timeout").and_then(|v| parse_secs(&v)).unwrap_or(d.timeout_secs),
+        model: get("verify_model").or(d.model),
         attempt: 0,
     })
 }
@@ -902,6 +911,17 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         assert_eq!(v.acceptance.as_deref(), Some("- hovering a name shows its type"));
         assert_eq!(verify_of("---\ntype: request\n---\n## Request\n\nx\n"), None);
         assert_eq!(verify_of("---\nverify: make\n---\nx\n").unwrap().retries, DEFAULT_RETRIES);
+
+        // The project's default fills in what the request leaves out; `verify: off` turns the command off.
+        let d = verify_of("---\nverify: pnpm check\nverify_retries: 5\nverify_retry: fresh\n---\n").unwrap();
+        let v = verify_with("---\ntype: request\n---\nx\n", Some(&d)).unwrap();
+        assert_eq!((v.command.as_deref(), v.retries, v.fresh), (Some("pnpm check"), 5, true));
+        let v = verify_with("---\nverify: make\nverify_retries: 1\n---\nx\n", Some(&d)).unwrap();
+        assert_eq!((v.command.as_deref(), v.retries), (Some("make"), 1));
+        assert_eq!(verify_with("---\nverify: off\n---\nx\n", Some(&d)), None);
+        let v = verify_with("---\nverify: off\n---\n## Acceptance\n\n- works\n", Some(&d)).unwrap();
+        assert_eq!((v.command, v.acceptance.as_deref()), (None, Some("- works")));
+        assert_eq!(verify_of("---\nverify: off\n---\nx\n"), None);
     }
 
     #[test]

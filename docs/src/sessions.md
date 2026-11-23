@@ -107,6 +107,33 @@ There are two places for it:
 
 Up to four names are used. `vars:` from a vault note are set in the agent's environment. A repository's `vars:` are not, and its `resources:` commands are not run, until you trust them: a file you cloned could otherwise set `PATH`, `NODE_OPTIONS` or `ANTHROPIC_BASE_URL` for the agent's process. **New task** lists them when you pick such a project, with **Trust and apply**. Until then the agent only reads them as text and sets them in the commands that need them, under the usual permissions. The choice is kept in `~/.marq/trusted-environments.json` for that project and those exact variables and commands, so changing one asks again; editing the rest of the file does not. Tasks that start without the dialog (schedules, queued work) use what you trusted earlier. Naming ports is always safe, so it works from either place.
 
+### Setting up a new worktree
+
+A new worktree has the code but not what git leaves out: `node_modules`, a `.env` file, a build. Without help, every agent works out the same steps again. List them once and Marq runs them before the agent starts:
+
+```yaml
+copy: [.env.local]                      # taken from the project's own checkout, if the worktree lacks it
+setup:                                  # run in the worktree, in order, after the resources are made
+  - pnpm install --frozen-lockfile
+```
+
+- **`copy:`** takes files from the project's checkout into the worktree when they are not there. Paths are relative to the project, and `..` or an absolute path is ignored. A symlink that leads out of the project is skipped. It works from either place without being trusted.
+- **`setup:`** is one command or a list. They run in the worktree with the session's `MARQ_*` variables and the shell's `PATH`, one after the other, and stop at the first failure after at most 15 minutes. If one fails the session does not start and shows the output; **Resume** tries again. The agent is told setup ran, so it does not repeat it.
+- **Once per worktree.** What ran is kept in `.marq/setup/` in the vault with the commands as they were, so a resumed session, a later phase and the session that checks acceptance do not install again. Changing a command runs them all again.
+- **Not in your own checkout.** A session that works directly in the project (`worktree: false`, or a project that is not a git repository) is not set up: Marq does not run commands in your working copy behind your back.
+- **Trust**: like `resources:`, `setup:` commands run outside the agent's permissions, so a repository's file is only run after you trust it in **New task**, which lists them; changing one asks again. Until then the agent is told the commands and may run them itself under the usual permissions.
+
+Because the file lives in the repository, a new teammate and every agent start from the same steps, and adding a step helps everyone from then on.
+
+### A check for every request
+
+`verify:` in an environment note is the check that every request on the project runs after each turn, as in [Workflows](workflows.md#checks). It takes the same `verify_retries`, `verify_retry`, `verify_timeout` and `verify_model` as a request. A request's own `verify:` replaces it, and `verify: off` skips the command for that request (its `## Acceptance` still runs). Like `setup:`, a repository's `verify:` only runs once you trust the file.
+
+```yaml
+verify: pnpm check
+verify_retries: 3
+```
+
 ### Stopping commands: `ask` and `deny`
 
 A rule in the note's text is only a request. `ask` and `deny` are enforced:

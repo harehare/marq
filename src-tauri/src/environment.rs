@@ -49,6 +49,20 @@
 //! shared) resource, and should be safe to run twice. Marq runs them itself, so they need the same
 //! trust as variables.
 //!
+//! `setup:` and `copy:` make a fresh worktree ready before the agent starts, so that every session (and
+//! every person who clones the repository) starts from the same state instead of finding the steps out
+//! again (see `setup`):
+//!
+//! ```yaml
+//! copy: [.env.local]                  # files taken from the project's own checkout, if missing
+//! setup:                              # run once in each new worktree, after the resources are made
+//!   - pnpm install --frozen-lockfile
+//! ```
+//!
+//! `verify:` (with `verify_retries`, `verify_retry`, `verify_timeout` and `verify_model`, as in a
+//! request) is the check that every request on the project runs after each turn unless it sets its own
+//! (`verify: off` turns it off for one request).
+//!
 //! The user can trust a repository's variables and commands (New task asks). That is remembered in
 //! `~/.marq/trusted-environments.json` as the project and the exact variables and commands trusted, so a
 //! change to them asks again.
@@ -68,6 +82,8 @@ pub const KIND: &str = "environment";
 pub const MAX_PORTS: usize = 4;
 /// Most `ask` and `deny` entries each.
 const MAX_RULES: usize = 50;
+/// Most `setup` commands and `copy` files.
+const MAX_SETUP: usize = 20;
 
 /// Something made for a session and removed after it, from `resources:`.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +104,12 @@ pub struct Environment {
     /// Unexpanded: `{id}` is still in the values.
     pub vars: Vec<(String, String)>,
     pub resources: Vec<Resource>,
+    /// Commands run once in a new worktree before the agent starts.
+    pub setup: Vec<String>,
+    /// Files copied from the project's checkout into a new worktree when they are missing (`.env`).
+    pub copy: Vec<String>,
+    /// The check requests on the project run by default.
+    pub verify: Option<crate::workflow::Verify>,
     /// Commands that wait for the user's approval, and commands that are refused.
     pub ask: Vec<String>,
     pub deny: Vec<String>,
@@ -167,6 +189,24 @@ fn resources_of(fm: &str) -> (Vec<Resource>, Vec<String>) {
     (ok, bad)
 }
 
+/// `setup:` as a list of commands: one string, or a list of them.
+fn setup_of(fm: &str) -> Vec<String> {
+    use yaml_rust2::{Yaml, YamlLoader};
+    let Some(doc) = YamlLoader::load_from_str(fm).ok().and_then(|d| d.into_iter().next()) else { return vec![] };
+    let items: Vec<String> = match &doc["setup"] {
+        Yaml::String(s) => vec![s.clone()],
+        Yaml::Array(a) => a.iter().filter_map(str_of).collect(),
+        _ => vec![],
+    };
+    items.into_iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).take(MAX_SETUP).collect()
+}
+
+/// A path that stays inside the project: relative, without `..`.
+fn copy_path_ok(p: &str) -> bool {
+    let path = Path::new(p);
+    !p.is_empty() && p.chars().count() <= 200 && path.is_relative() && path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 /// A rule list: trimmed, without empty or very long entries, and at most `MAX_RULES`.
 fn rules_of(text: &str, key: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![];
@@ -189,7 +229,10 @@ pub fn parse(text: &str, source: &str, trusted: bool) -> Environment {
     }
     let body = memory::clip(&memory::without_comments(body));
     let (resources, invalid) = fm.map(resources_of).unwrap_or_default();
-    Environment { source: source.into(), ports, vars: fm.map(vars_of).unwrap_or_default(), resources, ask: rules_of(text, "ask"), deny: rules_of(text, "deny"), invalid, trusted, from_repo: false, body }
+    let copy: Vec<String> = vault::fm_list(text, "copy").into_iter().filter(|p| copy_path_ok(p)).take(MAX_SETUP).collect();
+    // A request's own `## Acceptance` is not an environment's: only the command is a default.
+    let verify = crate::workflow::verify_of(text).filter(|v| v.command.is_some()).map(|v| crate::workflow::Verify { acceptance: None, ..v });
+    Environment { source: source.into(), ports, vars: fm.map(vars_of).unwrap_or_default(), resources, setup: fm.map(setup_of).unwrap_or_default(), copy, verify, ask: rules_of(text, "ask"), deny: rules_of(text, "deny"), invalid, trusted, from_repo: false, body }
 }
 
 /// Where the variables the user trusted are remembered.
@@ -204,6 +247,10 @@ fn trust_key(e: &Environment) -> String {
         lines.push(format!("resource {} create: {}", r.name, r.create));
         lines.push(format!("resource {} drop: {}", r.name, r.drop));
         lines.extend(r.env.iter().map(|(k, v)| format!("resource {} env {k}={v}", r.name)));
+    }
+    lines.extend(e.setup.iter().map(|c| format!("setup: {c}")));
+    if let Some(c) = e.verify.as_ref().and_then(|v| v.command.as_ref()) {
+        lines.push(format!("verify: {c}"));
     }
     lines.sort();
     lines.join("\n")
@@ -240,7 +287,7 @@ fn load_with(vault: &Path, project: &str, trust: &Path) -> Option<Environment> {
     if let Ok(text) = std::fs::read_to_string(vault::expand_home(project).join(FILE)) {
         let mut e = parse(&text, &format!("{FILE} in the repository"), false);
         e.from_repo = true;
-        e.trusted = (e.vars.is_empty() && e.resources.is_empty()) || trusted_vars(trust, project).is_some_and(|k| k == trust_key(&e));
+        e.trusted = (e.vars.is_empty() && e.resources.is_empty() && e.setup.is_empty() && e.verify.is_none()) || trusted_vars(trust, project).is_some_and(|k| k == trust_key(&e));
         return Some(e);
     }
     let p = knowledge::norm(project);
@@ -260,6 +307,9 @@ fn load_with(vault: &Path, project: &str, trust: &Path) -> Option<Environment> {
 const FIELDS: &str = "# ports: [web, api]          # MARQ_PORT_WEB and MARQ_PORT_API: names for the ports reserved for each session
 # vars:                        # set in the agent's environment ({id} is the session's short id)
 #   DATABASE_URL: \"postgres://localhost/app_{id}\"
+# copy: [.env.local]           # files copied from the project's checkout into each new worktree
+# setup: pnpm install          # run once in each new worktree before the agent starts (or a list of commands)
+# verify: pnpm check           # the check every request runs after each turn (verify: off in a request skips it)
 ";
 
 const RULES: &str = "<!-- Everything below goes into the system prompt of each session on the project, so keep it short.
@@ -310,13 +360,16 @@ pub struct Status {
     pub vars: Vec<(String, String)>,
     /// Name, create and drop of each resource.
     pub resources: Vec<(String, String, String)>,
+    pub setup: Vec<String>,
+    pub verify: Option<String>,
     pub trusted: bool,
 }
 
 pub fn status(vault: &Path, project: &str) -> Option<Status> {
     let e = load(vault, project)?;
     let resources = e.resources.into_iter().map(|r| (r.name, r.create, r.drop)).collect();
-    Some(Status { source: e.source, from_repo: e.from_repo, ports: e.ports, vars: e.vars, resources, trusted: e.trusted })
+    let verify = e.verify.and_then(|v| v.command);
+    Some(Status { source: e.source, from_repo: e.from_repo, ports: e.ports, vars: e.vars, resources, setup: e.setup, verify, trusted: e.trusted })
 }
 
 /// `{id}` replaced by the session's short id.
@@ -346,6 +399,16 @@ pub fn system_prompt(env: &Environment, short: &str) -> String {
             format!("\nThe file lists resources ({}) that Marq has not made: the user has not trusted its commands. Do not assume they exist.", names.join(", "))
         });
     }
+    if !env.setup.is_empty() {
+        out.push_str(&if env.trusted {
+            "\nMarq ran the project's setup commands in this worktree before you started: do not repeat them unless the task changes what they install.".to_string()
+        } else {
+            format!("\nThe file lists setup commands that Marq has not run: the user has not trusted them. If the worktree needs them, run them yourself: {}.", env.setup.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", "))
+        });
+    }
+    if let Some(c) = env.verify.as_ref().and_then(|v| v.command.as_ref()).filter(|_| env.trusted) {
+        out.push_str(&format!("\nMarq runs `{c}` when each of your turns ends and sends you its output if it fails: run it yourself first."));
+    }
     if !env.deny.is_empty() {
         out.push_str(&format!("\nDo not run commands that contain any of: {}.", env.deny.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ")));
     }
@@ -373,6 +436,20 @@ mod tests {
     use super::*;
 
     const NOTE: &str = "---\ntype: environment\nports: [web, api, web, \"d b\", a, b]\nvars:\n  DATABASE_URL: \"postgres://localhost/app_{id}\"\n  BAD-NAME: x\n  PORT: 8080\n---\n<!-- hidden -->\n## Rules\n- Never deploy.\n";
+
+    #[test]
+    fn reads_setup_copy_and_verify_and_asks_again_when_they_change() {
+        let note = "---\nsetup:\n  - pnpm install\n  - \"\"\ncopy: [.env, ../x]\nverify: pnpm check\nverify_retries: 4\n---\n";
+        let e = parse(note, "n.md", true);
+        assert_eq!((e.setup.as_slice(), e.copy.as_slice()), (&["pnpm install".to_string()][..], &[".env".to_string()][..]));
+        let v = e.verify.clone().unwrap();
+        assert_eq!((v.command.as_deref(), v.retries, v.acceptance), (Some("pnpm check"), 4, None));
+        assert_eq!(parse("---\nsetup: make deps\n---\n", "n", true).setup, ["make deps"]);
+        assert!(parse("---\nports: [a]\n---\n## Acceptance\n- x\n", "n", true).verify.is_none());
+        let changed = parse(&note.replace("pnpm install", "rm -rf /"), "n.md", true);
+        assert_ne!(trust_key(&e), trust_key(&changed));
+        assert!(system_prompt(&parse(note, "n.md", false), "abc").contains("Marq has not run"));
+    }
 
     #[test]
     fn reads_ports_vars_and_the_body() {

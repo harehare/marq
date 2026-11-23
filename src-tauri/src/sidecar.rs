@@ -169,13 +169,16 @@ the names of databases, containers and temp directories you create. If a reserve
 take another free one rather than stopping the process that holds it, which may belong to another session. \
 A command that was cut off before it reported its result (a migration, a deploy) may have run: check before you repeat it.";
 
-/// Makes the resources the project's environment note lists for the session, if it is trusted.
+/// Makes the resources the project's environment note lists for the session, if it is trusted, and sets up its worktree.
 fn provision_resources(app: &AppHandle, vault: &Path, meta: &SessionMeta) -> Result<()> {
     let Some(env) = environment::load(vault, meta.project()) else { return Ok(()) };
     let progress = |s: &str| {
         let _ = app.emit("task://progress", s);
     };
-    crate::resources::provision(vault, &meta.id, &vault::expand_home(&meta.cwd), &env, &session_env(&meta.id, Some(&env)), &progress)
+    let (cwd, vars) = (vault::expand_home(&meta.cwd), session_env(&meta.id, Some(&env)));
+    crate::resources::provision(vault, &meta.id, &cwd, &env, &vars, &progress)?;
+    // Then the worktree itself: the files git does not carry, and the project's setup commands.
+    crate::setup::prepare(vault, &vault::expand_home(meta.project()), &cwd, &env, &vars, &progress)
 }
 
 /// Drops what was made for the session. Returns what could not be dropped.
