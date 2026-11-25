@@ -187,7 +187,7 @@ class ClaudeSession implements AgentSession {
           return { behavior: "allow", updatedInput: d.answers ? { ...input, answers: d.answers } : input };
         },
         allowedTools: VAULT_TOOLS,
-        mcpServers: { marq: vaultServer(c.id, c.crew) },
+        mcpServers: { marq: vaultServer(c.id) },
         additionalDirectories: c.additionalDirectories,
         systemPrompt: { type: "preset", preset: "claude_code", append: c.system },
         settingSources: ["user", "project", "local"],
@@ -217,7 +217,7 @@ class ClaudeSession implements AgentSession {
       this.effort = effort;
       void this.q.applyFlagSettings({ effortLevel: (effort || undefined) as "low" | "medium" | "high" | "xhigh" | "max" | undefined }).catch((e) => log("setEffort failed:", e));
     }
-    // A crew member switched models between turns. Ollama sessions keep theirs: its env is set at start.
+    // The model was switched between turns. Ollama sessions keep theirs: its env is set at start.
     const next = model ?? null;
     if (model !== undefined && next !== (this.model ?? null) && !next?.startsWith("ollama:") && !this.model?.startsWith("ollama:")) {
       this.model = next;

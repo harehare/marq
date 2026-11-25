@@ -25,11 +25,6 @@ type Props = {
   onCreateNote: (rel: string) => Promise<string>;
   /** Starts a session from a card, with a prompt naming the card. `after` runs once the task has started. */
   onStartTask: (prompt: string, after?: () => void) => void;
-  /**
-   * The board is this crew's task list: owners are picked from its members and assigning one tells
-   * that member. The members work the cards, so there is no Start a session and no queue.
-   */
-  crew?: { id: string; members: string[] };
 };
 
 /** A card's links to notes, with their index among its nested items. */
@@ -73,7 +68,7 @@ function Avatar({ name }: { name: string }) {
 }
 
 /** A kanban board stored as Markdown. */
-export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFile, onCreateNote, onStartTask, crew }: Props) {
+export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFile, onCreateNote, onStartTask }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"kanban" | "list">("kanban");
@@ -110,10 +105,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
     load();
   };
   const update = (id: string, change: Parameters<typeof api.boardUpdate>[3]) =>
-    // A crew assigns through its own call, which tells the new owner.
-    run(crew && change.owner !== undefined && Object.keys(change).length === 1
-      ? api.crewTaskUpdate(vault, crew.id, id, { owner: change.owner })
-      : api.boardUpdate(vault, path, id, change));
+    run(api.boardUpdate(vault, path, id, change));
   const listOp = (op: string, name: string, to?: string) => run(api.boardList(vault, path, op, name, to));
 
   const vaultRel = (p: string) => (p.startsWith(`${vault}/`) ? p.slice(vault.length + 1) : p);
@@ -223,9 +215,9 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   const openCard = open ? board.lists.flatMap((l) => l.cards.map((c) => ({ c, list: l.name }))).find((x) => x.c.id === open) : undefined;
 
   return (
-    <div className={`board ${crew ? "crew-board" : ""}`}>
+    <div className="board">
       <header className="board-head">
-        {!crew && <h2><Columns3 size={16} /> {title}</h2>}
+        <h2><Columns3 size={16} /> {title}</h2>
         <div className="modes">
           <button className={`mode ${view === "kanban" ? "on" : ""}`} onClick={() => setView("kanban")}><Columns3 size={13} /> Board</button>
           <button className={`mode ${view === "list" ? "on" : ""}`} onClick={() => setView("list")}><ListIcon size={13} /> List</button>
@@ -347,16 +339,16 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
         ))}
       </div>
       {openCard && (
-        <CardDialog card={openCard.c} list={openCard.list} lists={board.lists.map((l) => l.name)} labels={allLabels} members={crew?.members}
-          onUpdate={(ch) => update(openCard.c.id, ch)} onStart={crew ? undefined : () => { start(openCard.c, openCard.list); setOpen(null); }}
-          onQueue={crew ? undefined : () => { void queueCard(openCard.c, openCard.list); setOpen(null); }}
+        <CardDialog card={openCard.c} list={openCard.list} lists={board.lists.map((l) => l.name)} labels={allLabels}
+          onUpdate={(ch) => update(openCard.c.id, ch)} onStart={() => { start(openCard.c, openCard.list); setOpen(null); }}
+          onQueue={() => { void queueCard(openCard.c, openCard.list); setOpen(null); }}
           onOpenLink={openLink} onLinkNote={() => setLinking(openCard.c)} onNewNote={() => setCreating(openCard.c)}
           onRemove={() => { setOpen(null); run(api.boardRemove(vault, path, openCard.c.id)); }}
           onClose={() => setOpen(null)} />
       )}
       {linking && (
         <QuickOpen recent={recent} placeholder={`Link a note to ${linking.id}…`}
-          files={files.filter((f) => !f.kind || !["board", "crew"].includes(f.kind))
+          files={files.filter((f) => !f.kind || f.kind !== "board")
             .filter((f) => !f.rel.startsWith("sessions/") && !linksOf(linking).some((k) => resolveLink(path, k.href) === f.path))}
           onOpen={(f) => link(linking, f.title ?? f.rel.split("/").pop()!.replace(/\.md$/, ""), f.path)}
           onClose={() => setLinking(null)} />
@@ -424,15 +416,13 @@ function ListHeader({ name, count, shown, first, last, onRename, onMove, onRemov
   );
 }
 
-function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQueue, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
+function CardDialog({ card, list, lists, labels, onUpdate, onStart, onQueue, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
   card: Card; list: string; lists: string[];
   /** Every label on the board, offered when adding one. */
   labels: string[];
   onUpdate: (c: Parameters<typeof api.boardUpdate>[3]) => void; onStart?: () => void;
   /** Puts the card in the inbox to start when there is room. */
   onQueue?: () => void;
-  /** Crew roles to pick the owner from, instead of typing one. */
-  members?: string[];
   onOpenLink: (href: string) => void; onLinkNote: () => void; onNewNote: () => void; onRemove: () => void; onClose: () => void;
 }) {
   const [title, setTitle] = useState(card.title);
@@ -507,16 +497,9 @@ function CardDialog({ card, list, lists, labels, members, onUpdate, onStart, onQ
               </div>
               <div className="board-dialog-field">
                 <label className="field-label"><User size={11} /> Owner</label>
-                {members ? (
-                  <Select value={card.owner ?? ""} onChange={(v) => onUpdate({ owner: v })}>
-                    <option value="">No owner</option>
-                    {members.map((m) => <option key={m} value={m}>@{m}</option>)}
-                  </Select>
-                ) : (
-                  <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="e.g. me"
-                    onBlur={() => owner !== (card.owner ?? "") && onUpdate({ owner })}
-                    onKeyDown={(e) => { if (!composing(e) && e.key === "Enter") e.currentTarget.blur(); blurOnEsc(e); }} />
-                )}
+                <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="e.g. me"
+                  onBlur={() => owner !== (card.owner ?? "") && onUpdate({ owner })}
+                  onKeyDown={(e) => { if (!composing(e) && e.key === "Enter") e.currentTarget.blur(); blurOnEsc(e); }} />
               </div>
             </div>
             <label className="field-label"><AlignLeft size={11} /> Notes</label>

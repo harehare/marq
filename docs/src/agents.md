@@ -39,7 +39,6 @@ Marq reads Ollama's URL from `$OLLAMA_HOST`, then `[ollama] url` in [`~/.marq/co
 
 Limitations:
 
-- Crews always use Claude.
 - Quality depends on the model. Smaller local models may follow tool instructions less reliably than Claude.
 
 ## Other agents (ACP)
@@ -63,7 +62,7 @@ kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
 
 Marq's [vault tools](tools.md) reach the agent over MCP (HTTP) when it supports that, and its permission requests show up as approval cards. Limitations compared with Claude:
 
-- Crews and the model picker are Claude only. For Codex, the New task dialog has a model field (empty: Codex's own default, from `~/.codex/config.toml`); other ACP agents run on their own model. An ACP agent can be one of the runs of a [comparison](sessions.md#compare-agents-and-models), on its own model.
+- The model picker is Claude only. For Codex, the New task dialog has a model field (empty: Codex's own default, from `~/.codex/config.toml`); other ACP agents run on their own model. An ACP agent can be one of the runs of a [comparison](sessions.md#compare-agents-and-models), on its own model.
 - The sandbox is Claude only; an ACP agent with `sandbox:` set refuses to start.
 
 ## Permission modes

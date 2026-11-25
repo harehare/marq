@@ -62,7 +62,7 @@ const SECTIONS: Section[] = [
     id: "chat", title: "Chat", icon: MessageSquare,
     fields: [
       {
-        key: "chat.send", label: "Send a message with", kind: "select", desc: "Conversations with sessions and crews. ⌘↵ always sends; the other keys add a new line",
+        key: "chat.send", label: "Send a message with", kind: "select", desc: "Conversations with sessions. ⌘↵ always sends; the other keys add a new line",
         options: [{ value: "", label: "⌘↵ (default)" }, { value: "enter", label: "↵ (⇧↵ for a new line)" }, { value: "shift-enter", label: "⇧↵" }],
       },
     ],

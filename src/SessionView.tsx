@@ -4,7 +4,7 @@ import { attempt } from "./attempt";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowUp, ArrowRight, ChevronDown, ListChecks, Circle, Square, FileText, FilePen, Terminal, Search, Globe, Wrench, ChevronRight, Bot, Loader2,
-  Folder, FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Users, Upload,
+  Folder, FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
@@ -29,10 +29,6 @@ type Props = {
   onOpenOrigin: (path: string, line: number) => void;
   onOpenSession: (id: string, title: string) => void;
   onSendExcerpt: (excerpt: Excerpt) => void;
-  /** Opens a crew this session handed its task to (`start_crew`). */
-  onOpenCrew?: (rel: string, title: string) => void;
-  /** Starts with the side panel closed, for narrow embeds such as the crew view. */
-  compact?: boolean;
 };
 
 type Item =
@@ -42,7 +38,6 @@ type Item =
   | { kind: "info"; text: string; error?: boolean }
   | { kind: "next"; actions: NextAction[] }
   | { kind: "doc"; path: string; title: string; created: boolean }
-  | { kind: "crew"; path: string; title: string }
   /** Markdown files the turn wrote or edited, shown when it ends. */
   | { kind: "files"; paths: string[] }
   /** A message from or to another session. */
@@ -116,8 +111,6 @@ function toItems(events: SessionEvent[]): Item[] {
       items.push({ kind: "relay", dir: e.by === "reply" ? "reply" : "in", session: e.from, title: e.title, reply: !!e.reply, by: e.by });
     } else if (e.type === "marq_sent") {
       items.push({ kind: "relay", dir: "out", session: e.to, title: e.title, reply: !!e.reply, by: e.by });
-    } else if (e.type === "marq_crew") {
-      items.push({ kind: "crew", path: e.path, title: e.title });
     } else if (e.type === "marq_approval" && e.tool === "AskUserQuestion") {
       const answers = Object.entries((e.answers ?? {}) as Record<string, string>);
       items.push(e.allow && answers.length
@@ -318,13 +311,12 @@ type ListProps = {
   events: SessionEvent[];
   onOpenOrigin: (path: string, line: number) => void;
   onOpenSession: (id: string, title: string) => void;
-  onOpenCrew?: (rel: string, title: string) => void;
   onError: (message: string) => void;
 };
 
 /** The conversation. Memoized so typing in the composer does not render every message again;
  * a new event renders the list, and Md/ToolRow skip the messages that did not change. */
-const MessageList = memo(function MessageList({ vault, onNext, idle, events, onOpenOrigin, onOpenSession, onOpenCrew, onError }: ListProps) {
+const MessageList = memo(function MessageList({ vault, onNext, idle, events, onOpenOrigin, onOpenSession, onError }: ListProps) {
   const items = useMemo(() => toItems(events), [events]);
   const openNote = useCallback((path: string) => onOpenOrigin(path, 0), [onOpenOrigin]);
   const lastNext = items.map((x) => x.kind).lastIndexOf("next");
@@ -393,23 +385,13 @@ const MessageList = memo(function MessageList({ vault, onNext, idle, events, onO
               {it.reply && <span className="muted small">{it.dir === "out" ? "· the answer comes back here" : "· your answer goes back"}</span>}
             </a>
           );
-        case "crew":
-          return (
-            <a key={i} className="doc-card" onClick={() => onOpenCrew?.(it.path, it.title)} title="Open the crew">
-              <Users size={18} />
-              <span className="doc-card-body">
-                <span className="doc-card-title">{it.title}</span>
-                <span className="muted small mono">Handed to a crew · {it.path}</span>
-              </span>
-            </a>
-          );
       }
     })}
     </>
   );
 });
 
-export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onSendExcerpt, onOpenCrew, compact }: Props) {
+export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onSendExcerpt }: Props) {
   const sendKey = useSettings().chat?.send;
   const messagesRef = useRef<HTMLDivElement>(null);
   // null until the user picks a tab: Changes for worktree sessions, otherwise the note.
@@ -428,7 +410,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
       un.then((f) => f());
     };
   }, [vault, sessionId]);
-  const [sideOpen, setSideOpen] = useState(!compact);
+  const [sideOpen, setSideOpen] = useState(true);
   const sideWidth = usePaneSize("sessionSide", 480, 300, 2000);
   const sideRef = useRef<HTMLElement>(null);
   const composerHeight = usePaneSize("composer", 52, 36, COMPOSER_MAX);
@@ -750,7 +732,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           onSend={(text) => onSendExcerpt({ text, source: `session: ${title}`, from: { id: sessionId, title } })} />
         <div className="messages-inner">
           <MessageList vault={vault} onNext={(p) => void sendText(p).catch((e) => setError(String(e)))} idle={!running} events={events} onOpenOrigin={onOpenOrigin} onOpenSession={onOpenSession}
-            onOpenCrew={onOpenCrew} onError={setError} />
+            onError={setError} />
           {approvals.map((a) => <ApprovalCard key={a.request_id} a={a} />)}
           {running && approvals.length === 0 && (
             <div className="thinking"><Loader2 size={14} className="spin" /> Working…</div>

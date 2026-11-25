@@ -53,18 +53,3 @@ See [Inbox and follow-ups](inbox.md).
 
 A board is named by its name, title or path, or left out when there is only one.
 
-## Crews
-
-| Tool | Approval | Who | Description |
-| --- | --- | --- | --- |
-| `start_crew(title, goal)` | yes | outside crews | Hand a large task to a new crew |
-| `crew_members()` | no | members | The roster with status, unread mail, directory and branch |
-| `crew_send(to?, text, kind?, reply_to?)` | no | members | Message members by role, `all`, or `user`. `kind` is `tell`, `ask` or `reply` |
-| `crew_decide(decision)` | no | members | Record a decision in the crew note and tell everyone |
-| `crew_add_member(role, instructions, …)` | yes | members | Add a member, with its worktree, permission mode and model |
-| `crew_set_model(role?, model)` | no | members | Switch a member (by default the caller) to another model from its next turn |
-| `task_list()` | no | members | The shared task list |
-| `task_add(title, owner?, note?)` | no | members | Add a task; the owner is told |
-| `task_update(id, status?, owner?, note?)` | no | members | Change status or owner, or add a note |
-
-See [Crews and boards](crews-and-boards.md) for how these fit together.

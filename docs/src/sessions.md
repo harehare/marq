@@ -21,7 +21,6 @@ A session from Ask starts with the section's heading as its title and is renamed
 
 - Leave the title empty and a small model names the task from its prompt, in the prompt's language. If that takes over 15 seconds, the first line of the prompt is the title.
 - The task is saved as a request note in `requests/` first, so every task stays in the vault.
-- Choose **Team** to run it as a [crew](crews-and-boards.md) from the start.
 
 **Save for later** in the New task dialog saves the task as a request note without running it, and **Queue** saves it and puts it in the [Inbox](inbox.md) to start in its turn (one at a time with schedules, by default), so you can line up several tasks. You can also write a request by hand: set `project:` to the repository, and optionally `permission_mode: acceptEdits`. Requests that have not been started show a dot in the Notes tree, and are listed in **Inbox** and in the Query tab's Inbox preset. Right-click one to mark it done, drop it, or move it back to todo.
 
@@ -61,9 +60,9 @@ mq-docs is the documentation site; update it when a feature changes.
 
 Choose it under **Workspace** in the New task dialog. A request that uses a workspace unchanged records `workspace: workspaces/mq-docs.md`, so later edits to the workspace apply to it. If you change the directories in the dialog, the request lists them itself instead. To keep the change, choose **Update "name"** to overwrite the workspace, or **Save as workspace** with the name of an existing workspace. Overwriting replaces the note's project and directories, and keeps its text. The workspace's body goes to the agent as context. A request's own `project:` and `directories:` take precedence over the workspace's.
 
-Schedules (`workspace:` or `directories:`) and [crews](crews-and-boards.md#workspaces) take a workspace too.
+Schedules take a workspace too (`workspace:` or `directories:`).
 
-A session remembers the workspace its request or crew named, so a workspace is also a place to find its work again:
+A session remembers the workspace its request named, so a workspace is also a place to find its work again:
 
 - **Workspaces** in the sidebar lists them with how many sessions ran on each. The filter button on a row shows those sessions in **Recent**.
 - A workspace note's side panel lists its sessions, the requests that name it and the documents they produced.
@@ -227,11 +226,11 @@ Pick the ones you can fix and open a pull request for each.   # empty: the query
 
 ## Active sessions
 
-**Active** at the top of the sidebar lists every session that is running or waiting for you, crew members included, those waiting first. The status bar shows the same counts; click it to go through them one by one (also **Go to the next running or waiting session** in the command palette).
+**Active** at the top of the sidebar lists every session that is running or waiting for you, those waiting first. The status bar shows the same counts; click it to go through them one by one (also **Go to the next running or waiting session** in the command palette).
 
 ## Notifications
 
-Marq shows a system notification, and a count on the Dock icon, when a session finishes a turn, stops with an error, or needs an approval. Nothing is shown for a session whose tab is open in the focused window. Sessions with a result you have not looked at are bold with a dot in the sidebar until you open them. Crew members do not notify on every turn (the crew view shows them), but an approval request from one does.
+Marq shows a system notification, and a count on the Dock icon, when a session finishes a turn, stops with an error, or needs an approval. Nothing is shown for a session whose tab is open in the focused window. Sessions with a result you have not looked at are bold with a dot in the sidebar until you open them.
 
 Turn notifications off with `[notifications] enabled = false` in [`config.toml`](settings.md).
 
@@ -245,7 +244,7 @@ With the **Ask** or **Accept edits** permission modes, a tool call that needs pe
 - A session that stopped part-way (interrupted or error) shows a **Resume** button, also in the sidebar's right-click menu. It continues the conversation, or starts again from the first prompt if the agent never started.
 - An idle session process is closed after 10 minutes and resumed on your next message.
 - Markdown files a turn wrote show up as cards when it ends. A file in the vault opens in a tab; one outside it opens in its default app. Documents saved with `write_doc` get a card as soon as they are written.
-- The side panel's **Docs** tab lists every document the task saved with `write_doc`, newest first, like a crew's Docs view: those from every run of the same request (other models, earlier sessions) and any the session revised. Click one to open it in a tab.
+- The side panel's **Docs** tab lists every document the task saved with `write_doc`, newest first: those from every run of the same request (other models, earlier sessions) and any the session revised. Click one to open it in a tab.
 - A document opened in a tab has a **Session** button that goes back to the session that wrote it (the latest one, if several revised it). The side panel lists them all under **Written by**. Select text in the document's preview and choose **Ask its session** to send it to that session with a question; with the screen split, the conversation shows next to the document.
 
 ## Slash commands and skills

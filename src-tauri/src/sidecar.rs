@@ -21,7 +21,7 @@ use crate::environment::{self, Environment};
 use crate::session::{self, SessionMeta};
 use crate::error::{Error, Result};
 use crate::thesaurus::{Query, Thesaurus};
-use crate::{boards, comments, crew, knowledge, links, memory, mq, organize, relay, vault, workflow, workspace};
+use crate::{boards, comments, knowledge, links, memory, mq, organize, relay, vault, workflow, workspace};
 
 /// How a turn reaches the agent.
 #[derive(Clone, Copy, PartialEq)]
@@ -51,7 +51,7 @@ pub struct Runner {
     tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     /// Sessions whose agent process is alive in the sidecar.
     alive: Mutex<HashSet<String>>,
-    /// Sessions in a turn: from a prompt until its result. Crew mail waits for these.
+    /// Sessions in a turn: from a prompt until its result.
     busy: Mutex<HashSet<String>>,
     /// Vault of each session seen in this app run, for writing its log.
     vaults: Mutex<HashMap<String, PathBuf>>,
@@ -120,18 +120,15 @@ On a long task, or one you will come back to after a follow-up, keep short progr
 they are given back to you at every later run, even after the conversation is compacted.\n\n\
 When the user asks you to organize their notes, use list_notes to see the vault, create_folder for new folders, \
 and move_note to move or rename notes and folders; it keeps relative links between notes working. \
-Leave sessions/ alone, since Marq manages it.\n\n\
-For a large task that needs several kinds of work in parallel, such as a feature spanning many parts that should be \
-designed, implemented, reviewed and tested separately, you can hand it to a crew with start_crew: a team of sessions \
-with a lead that forms the team and runs it. The user approves it. Do small and medium tasks yourself.";
+Leave sessions/ alone, since Marq manages it.";
 
 /// Ports each session gets, as `MARQ_PORT_1`…, and the range they are taken from. The range sits below
 /// the OS's ephemeral ports, so a port picked here is not handed out to an outgoing connection.
 const SESSION_PORTS: u16 = 4;
 const PORT_RANGE: (u16, u16) = (20000, 10000);
 
-/// The environment that tells sessions apart, so that tasks running at the same time (a comparison, a
-/// crew) can each start their own dev server or database without colliding. It is derived from the
+/// The environment that tells sessions apart, so that tasks running at the same time (a comparison,
+/// queued requests) can each start their own dev server or database without colliding. It is derived from the
 /// session's id alone, so a resumed session gets the same values and finds its own server again.
 ///
 /// - `MARQ_SESSION_ID`: the session's short id, for naming databases, containers or temp directories.
@@ -194,25 +191,19 @@ pub fn release_resources(app: &AppHandle, vault: &Path, id: &str) -> Vec<String>
     crate::resources::release(vault, id, &session_env(id, env.as_ref()), &progress)
 }
 
-/// The sidecar command that starts a session's process. Crew members also get the crew's
-/// system prompt, the crew tools and read access to the other members' directories.
+/// The sidecar command that starts a session's process.
 fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Value {
     let mut system = SYSTEM_APPEND.to_string();
     system.push_str(NEXT_NOTE);
-    let mut dirs = vec![];
     system.push_str(&memory::system_prompt(vault, &meta.id));
     system.push_str(&knowledge::for_project(vault, meta.project()));
-    if let Some(c) = &meta.crew {
-        system.push_str(&crew::system_prompt(vault, c));
-        dirs = crew::other_dirs(vault, c);
-    }
     system.push_str(&workspace::system_prompt(&meta.dirs, None));
     system.push_str(ENV_NOTE);
     let environment = environment::load(vault, meta.project());
     if let Some(e) = &environment {
         system.push_str(&environment::system_prompt(e, &meta.id[meta.id.len().saturating_sub(8)..]));
     }
-    dirs.extend(meta.dirs.iter().map(|d| d.path.clone()));
+    let dirs: Vec<String> = meta.dirs.iter().map(|d| d.path.clone()).collect();
     let (executable, args) = agents::command(meta.agent.as_deref());
     json!({
         "op": "start",
@@ -228,7 +219,6 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
         "args": args,
         "agentSession": if resume { agent_session(vault, &meta.id) } else { None },
         "system": system,
-        "crew": meta.crew.is_some(),
         "additionalDirectories": dirs,
         "sandbox": meta.sandbox,
         "env": session_env(&meta.id, environment.as_ref()),
@@ -509,17 +499,6 @@ fn finish(app: &AppHandle, id: &str, status: &str, error: Option<&str>) {
         let _ = session::rerender(v, id);
     }
     let _ = app.emit("session://exit", json!({"session_id": id, "status": status, "stderr": error.unwrap_or("")}));
-    // A crew member that failed may be started again.
-    if status == "error"
-        && let Some(v) = runner.vaults.lock().unwrap().get(id).cloned()
-    {
-        let (app, id) = (app.clone(), id.to_string());
-        tauri::async_runtime::spawn_blocking(move || {
-            if let Err(e) = crew::on_exit(&app, &v, &id) {
-                eprintln!("marq: could not restart the crew member: {e}");
-            }
-        });
-    }
 }
 
 async fn handle(app: &AppHandle, ev: Value) {
@@ -540,13 +519,9 @@ async fn handle(app: &AppHandle, ev: Value) {
                 // The final reply, for the notification.
                 let _ = app.emit("session://turn", json!({"session_id": id, "result": event["result"].as_str().unwrap_or("")}));
                 runner.busy.lock().unwrap().remove(&id);
-                // Crew mail that arrived during the turn is delivered now.
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
-                    if let Err(e) = crew::on_turn_end(&app, &v, &id) {
-                        eprintln!("marq: crew delivery failed: {e}");
-                    }
-                    // So do replies other sessions are waiting for.
+                    // Replies other sessions are waiting for are delivered now.
                     if let Err(e) = relay::on_turn_end(&app, &v, &id) {
                         eprintln!("marq: reply failed: {e}");
                     }
@@ -715,20 +690,12 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
         "write_doc" => {
             let meta = session::meta(vault, session)?;
             let opt = |k: &str| p[k].as_str().filter(|v| !v.is_empty());
-            // A crew member's documents go to the crew's folder unless it names one.
-            let folder = match (opt("folder"), &meta.crew) {
-                (Some(f), _) => Some(f.to_string()),
-                (None, Some(c)) => crew::docs_folder(vault, &c.id).ok(),
-                (None, None) => None,
-            };
+            let folder = opt("folder").map(str::to_string);
             let tags: Vec<String> =
                 p["tags"].as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect()).unwrap_or_default();
             let (title, content) = (s("title"), s("content"));
             let req = vault::DocWrite { title: &title, content: &content, folder: folder.as_deref(), path: opt("path"), tags: &tags };
             let doc = vault::write_doc(vault, req, session, &meta.origin)?;
-            if let (Some(c), true) = (&meta.crew, doc.created) {
-                crew::doc_saved(app, vault, &c.id, &c.role, &doc.rel, &doc.title)?;
-            }
             let line = json!({"type": "marq_doc", "path": doc.rel, "title": doc.title, "created": doc.created});
             session::append(&session::raw_path(vault, session), &line)?;
             let _ = app.emit("session://event", json!({"session_id": session, "event": line}));
@@ -801,73 +768,6 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             } else {
                 "Sent."
             }))
-        }
-        "start_crew" => {
-            let meta = session::meta(vault, session)?;
-            if meta.crew.is_some() {
-                return Err(Error::Other("this session is already in a crew".into()));
-            }
-            // The crew works on the repository itself, not on this session's worktree.
-            let project = meta.worktree.as_ref().map(|w| w.repo.clone()).unwrap_or(meta.cwd.clone());
-            // Likewise the other directories: the repositories, with a worktree where this session had one.
-            let dirs: Vec<workspace::DirSpec> = meta
-                .dirs
-                .iter()
-                .map(|d| workspace::DirSpec { path: d.worktree.as_ref().map_or(d.source.clone(), |w| w.repo.clone()), worktree: d.worktree.is_some() })
-                .collect();
-            let c = crew::start(app, vault, &s("title"), &s("goal"), &project, &workspace::render_dirs(&dirs))?;
-            let line = json!({"type": "marq_crew", "path": c.rel, "title": c.title});
-            session::append(&session::raw_path(vault, session), &line)?;
-            let _ = app.emit("session://event", json!({"session_id": session, "event": line}));
-            let _ = app.emit("crew://started", json!({"rel": c.rel, "title": c.title}));
-            Ok(json!({"crew": c.rel, "note": "The crew has started and its lead has the goal. Tell the user it is running in its own tab; you do not need to do the work yourself."}))
-        }
-        "crew_members" | "crew_send" | "crew_add_member" | "crew_set_model" | "crew_decide" | "task_list" | "task_add" | "task_update" => {
-            let Some(c) = session::meta(vault, session)?.crew else {
-                return Err(Error::Other("this session is not in a crew".into()));
-            };
-            match method {
-                "crew_members" => return crew::members_for_tool(app, vault, &c),
-                "crew_add_member" => {
-                    let (role, instructions) = (s("role"), s("instructions"));
-                    let m = crew::NewMember {
-                        role: &role,
-                        instructions: &instructions,
-                        worktree: p["worktree"].as_bool().unwrap_or(true),
-                        permission_mode: p["permission_mode"].as_str(),
-                        model: p["model"].as_str(),
-                    };
-                    crew::add_member(app, vault, &c.id, &c.role, m)?;
-                    return Ok(json!({"added": role, "note": "Its session starts when the first message reaches it."}));
-                }
-                "crew_set_model" => {
-                    let role = p["role"].as_str().filter(|r| !r.is_empty()).unwrap_or(&c.role).to_string();
-                    let model = crew::set_model(app, vault, &c.id, &c.role, &role, p["model"].as_str())?;
-                    return Ok(json!({"role": role, "model": model.as_deref().unwrap_or("default"), "note": "It applies from that member's next turn."}));
-                }
-                "task_list" => return crew::task_list(vault, &c.id),
-                "task_add" => {
-                    let t = crew::task_add(app, vault, &c.id, &c.role, &s("title"), p["owner"].as_str(), p["note"].as_str())?;
-                    return Ok(json!(t));
-                }
-                "task_update" => {
-                    let change = crew::TaskChange { status: p["status"].as_str(), owner: p["owner"].as_str(), note: p["note"].as_str() };
-                    return Ok(json!(crew::task_update(app, vault, &c.id, &c.role, &s("id"), change)?));
-                }
-                "crew_decide" => {
-                    let sent = crew::decide(app, vault, &c.id, &c.role, &s("decision"))?;
-                    return Ok(json!({"recorded": true, "told": sent.to, "held": sent.held}));
-                }
-                _ => {}
-            }
-            let (to, kind, text) = (s("to"), s("kind"), s("text"));
-            let msg = crew::Outgoing { from: &c.role, to: &to, kind: &kind, text: &text, reply_to: p["reply_to"].as_str() };
-            let sent = crew::send(app, vault, &c.id, msg)?;
-            Ok(if sent.held {
-                json!({"id": sent.id, "status": "held", "note": "The crew reached its hop limit, so the user will read this and decide whether to let it through. Finish your turn."})
-            } else {
-                json!({"id": sent.id, "status": "sent", "to": sent.to})
-            })
         }
         _ => Err(Error::Other(format!("unknown method: {method}"))),
     }

@@ -2,7 +2,7 @@ import { getSettings } from "./settings";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { ChevronRight, FolderGit2, History, FolderPlus, GitCompare, Layers, ListOrdered, Loader2, Save, Sparkles, Users, X } from "lucide-react";
+import { ChevronRight, FolderGit2, History, FolderPlus, GitCompare, Layers, ListOrdered, Loader2, Save, Sparkles, X } from "lucide-react";
 import { api, type AgentInfo, type DirSpec, type EnvironmentStatus, type Playbook, type TaskChecks, type Workspace } from "./api";
 import { ProjectPicker } from "./ProjectPicker";
 import { SlashTextarea } from "./SlashTextarea";
@@ -15,8 +15,6 @@ type Props = {
   vault: string;
   onClose: () => void;
   onStarted: (sessionId: string, title: string) => void;
-  /** A task started as a crew (Team). */
-  onStartedCrew: (rel: string, title: string) => void;
   /** A task saved as a request note without running it. */
   /** `queued`: it was put in the inbox to start when there is room, so there is no need to open it. */
   onSaved: (rel: string, queued: boolean) => void;
@@ -43,7 +41,6 @@ const MODEL_KEY = "marq.lastModel";
 const EFFORT_KEY = "marq.lastEffort";
 const CODEX_MODEL_KEY = "marq.lastCodexModel";
 const MODE_KEY = "marq.lastMode";
-const TEAM_KEY = "marq.lastTeam";
 const WORKTREE_KEY = "marq.lastWorktree";
 const SANDBOX_KEY = "marq.lastSandbox";
 const WORKSPACE_KEY = "marq.lastWorkspace";
@@ -76,7 +73,7 @@ function stored(key: string, fallback: string) {
 }
 
 /** Starts a task. It is saved as a request note first, so the task stays in the knowledge base. */
-export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSaved, onStartedCompare, initialPrompt = "", context }: Props) {
+export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCompare, initialPrompt = "", context }: Props) {
   const [prompt, setPrompt] = useState(initialPrompt || context?.prompt || "");
   const pastes = usePastes();
   // The latest few, shown under an empty box; ↑ / ↓ in the box walks through all of them.
@@ -103,15 +100,13 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
   // More agents or models to run the same task on, to compare the results.
   const [extra, setExtra] = useState<{ agent: string; model: string; effort: string }[]>([]);
   const [worktree, setWorktree] = useState(worktreeDefault);
-  // One session that may hand large work to a crew, or a crew from the start.
-  const [team, setTeam] = useState(() => stored(TEAM_KEY, "") === "true");
   // How the task is done: picked with / in the prompt (or under Checks) and shown as a chip above it.
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [playbook, setPlaybook] = useState("");
   useEffect(() => {
     api.listPlaybooks(vault).then(setPlaybooks).catch(() => {});
   }, [vault]);
-  const book = team ? undefined : playbooks.find((b) => b.name === playbook);
+  const book = playbooks.find((b) => b.name === playbook);
   const [verify, setVerify] = useState("");
   const [fresh, setFresh] = useState(false);
   const [acceptance, setAcceptance] = useState("");
@@ -204,9 +199,9 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
     if (typeof dir === "string") setProject(dir);
   };
 
-  // Teams, model choice and the sandbox are Claude's; other agents (ACP) run on their own model.
-  const other = !team && agent !== "claude";
-  const comparing = worktree && !team && extra.length > 0;
+  // Model choice and the sandbox are Claude's; other agents (ACP) run on their own model.
+  const other = agent !== "claude";
+  const comparing = worktree && extra.length > 0;
   // A comparison with any non-Claude run cannot use what only Claude has.
   const anyOther = other || (comparing && extra.some((x) => x.agent !== "claude"));
   // Codex takes a model of its own; the other ACP agents run on theirs.
@@ -220,7 +215,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
       ? { model: t.model, effort: agentEffort("claude", t.effort) }
       : { agent: t.agent, model: agentModel(t.agent, t.model), effort: agentEffort(t.agent, t.effort) });
   const agentLabel = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
-  const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !team && !comparing;
+  const canSplit = !!context && context.files > 1 && context.files <= MAX_FANOUT && !comparing;
   const splitting = canSplit && perFile;
   // The agent gets the instruction, then the results; a saved request keeps both.
   const withContext = (text: string, results = context?.all) => {
@@ -254,21 +249,11 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
         localStorage.setItem(CODEX_MODEL_KEY, codexModel);
         localStorage.setItem(EFFORT_KEY, effort);
         localStorage.setItem(AGENT_KEY, agent);
-        localStorage.setItem(TEAM_KEY, String(team));
         localStorage.setItem(WORKTREE_KEY, String(worktree));
         localStorage.setItem(SANDBOX_KEY, sandbox);
         localStorage.setItem(WORKSPACE_KEY, asChosen ? wsRel : "");
         localStorage.setItem(VERIFY_KEY + project, verify.trim());
       } catch {}
-      if (team) {
-        const c = await api.newCrew(vault, {
-          title: derivedTitle, prompt: withContext(prompt), project, autoTitle: !title.trim(),
-          workspace: checks.workspace, directories: checks.directories,
-        });
-        onStartedCrew(c.rel, c.title);
-        onClose();
-        return;
-      }
       if (comparing) {
         const r = await api.newTaskCompare(
           vault,
@@ -331,15 +316,13 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
 
   // One line per group, so a closed group still says what it is set to.
   const modelLabel = (m: string) => (m ? m.replace(/^ollama:/, "").replace(/^\w/, (c) => c.toUpperCase()) : "Default model");
-  const runSummary = team
-    ? "Set per member in the crew note"
-    : [
-        comparing
-          ? [{ agent, model }, ...extra].map((t) => (t.agent === "claude" ? modelLabel(t.model) : agentLabel(t.agent))).join(" vs ")
-          : other ? agentLabel(agent) : modelLabel(model),
-        MODES.find((m) => m.value === mode)?.label,
-        worktree ? (carry ? "worktree + my changes" : baseMode === "latest" ? "worktree · latest" : baseMode === "branch" && baseBranch.trim() ? `worktree · ${baseBranch.trim()}` : "worktree") : "in the project",
-      ].join(" · ");
+  const runSummary = [
+    comparing
+      ? [{ agent, model }, ...extra].map((t) => (t.agent === "claude" ? modelLabel(t.model) : agentLabel(t.agent))).join(" vs ")
+      : other ? agentLabel(agent) : modelLabel(model),
+    MODES.find((m) => m.value === mode)?.label,
+    worktree ? (carry ? "worktree + my changes" : baseMode === "latest" ? "worktree · latest" : baseMode === "branch" && baseBranch.trim() ? `worktree · ${baseBranch.trim()}` : "worktree") : "in the project",
+  ].join(" · ");
   const checksSummary = [
     book && book.title,
     verify.trim() && `${verify.trim()}${fresh ? " (fresh retries)" : ""}`,
@@ -376,11 +359,11 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               vault={vault}
               cwd={project.trim() || undefined}
               placement="below"
-              playbooks={team ? undefined : playbooks}
+              playbooks={playbooks}
               onPlaybook={(b) => setPlaybook(b.name)}
               placeholder={book ? "Describe the task, and anything else this run should do…"
                 : context ? "What should the agent do with these results?  Type / for skills and commands"
-                : team ? "Describe the task…  Type / for skills and commands" : "Describe the task…  Type / for playbooks, skills and commands"}
+                : "Describe the task…  Type / for playbooks, skills and commands"}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") start();
                 // Backspace at the very start takes the chip off, as if it were the first thing in the text.
@@ -419,7 +402,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                   <div className="modes">
                     <button className={`mode ${!splitting ? "on" : ""}`} onClick={() => setPerFile(false)}>One session</button>
                     <button className={`mode ${splitting ? "on" : ""}`} onClick={() => setPerFile(true)} disabled={!canSplit}
-                      title={canSplit ? "" : `Up to ${MAX_FANOUT} files, and not for a team or a comparison`}>
+                      title={canSplit ? "" : `Up to ${MAX_FANOUT} files, and not for a comparison`}>
                       One session per file ({context.files})
                     </button>
                   </div>
@@ -427,16 +410,6 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               </div>
             )}
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (empty: named automatically)" />
-            <div className="modes">
-              <button className={`mode ${!team ? "on" : ""}`} onClick={() => setTeam(false)}
-                title="One agent session. If the task turns out to be large, it can suggest handing it to a crew, and you approve it.">
-                <Sparkles size={13} /> One session
-              </button>
-              <button className={`mode ${team ? "on" : ""}`} onClick={() => setTeam(true)}
-                title="Starts a crew: a lead forms the team (e.g. impl, reviewer, tester), they agree on a plan, and build, review and test together. Saved in crews/.">
-                <Users size={13} /> Team
-              </button>
-            </div>
           </div>
 
           <aside className="task-side">
@@ -458,9 +431,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                 <div className="project-row dir-row" key={i}>
                   <input value={d.path} onChange={(e) => setDir(i, { path: e.target.value })} {...pathInput()}
                     placeholder="~/dev/git/another-repo" spellCheck={false} title={d.path} />
-                  <label className="check" title={team
-                    ? "Members with their own worktree get one in this repository; the others use it as it is"
-                    : "This git repository gets its own worktree on the task's branch, shown in the Changes panel"}>
+                  <label className="check" title="This git repository gets its own worktree on the task's branch, shown in the Changes panel">
                     <input type="checkbox" checked={d.worktree} onChange={(e) => setDir(i, { worktree: e.target.checked })} /> wt
                   </label>
                   <button className="icon" onClick={() => setDirs(dirs.filter((_, j) => j !== i))} title="Remove"><X size={13} /></button>
@@ -488,7 +459,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
               )}
             </Section>
 
-            <Section id="run" title="Run" summary={runSummary} disabled={team}>
+            <Section id="run" title="Run" summary={runSummary}>
               {agents.length > 1 && (
                 <select className="model-select" value={agent} onChange={(e) => { setAgent(e.target.value); setEffort(""); }}
                   title="Agents other than Claude run over ACP on their own default model. Add or change them under [agents] in config.toml.">
@@ -570,7 +541,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             <Section id="checks" title="Checks" summary={checksSummary}>
               <div className="project-row"
                 title="A playbook runs the task in phases. Each phase is a new session on the same worktree and gets the earlier phases' replies. After each one the request waits in review; Start on it runs the next (or phase_gate: auto in the note). Playbooks are notes in playbooks/; also picked with / in the prompt.">
-                <select value={book?.name ?? ""} onChange={(e) => setPlaybook(e.target.value)} disabled={team}>
+                <select value={book?.name ?? ""} onChange={(e) => setPlaybook(e.target.value)}>
                   <option value="">No playbook</option>
                   {playbooks.map((b) => (
                     <option key={b.name} value={b.name}>{b.title}{b.phases.length ? `: ${b.phases.map((p) => p.name).join(" → ")}` : ""}</option>
@@ -593,7 +564,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                 title="Not shown to the agent: a separate session checks the work against them" />
             </Section>
 
-            {!team && !anyOther && (
+            {!anyOther && (
               <Section id="sandbox" title="Sandbox" summary={sandboxSummary}>
                 <div className="modes">
                   {SANDBOXES.map((m) => (
@@ -607,7 +578,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
             )}
 
             {/* Choices with a catch are spelled out; the rest is in the tooltips. */}
-            {!team && !worktree && (
+            {!worktree && (
               <p className="task-warn small">Works directly in the project: tasks in the same project can get in each other's way.</p>
             )}
             {envStatus?.from_repo && (envStatus.vars.length > 0 || envStatus.resources.length > 0 || envStatus.setup.length > 0 || envStatus.verify) && (
@@ -636,11 +607,8 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
                 </div>
               )
             )}
-            {!team && mode === "default" && (
+            {mode === "default" && (
               <p className="task-warn small">Ask: edits and commands wait in the session until you approve them.</p>
-            )}
-            {team && dirs.length > 0 && (
-              <p className="muted small">Members with their own worktree get one in each repository marked wt; the others use them as they are.</p>
             )}
           </aside>
         </div>
@@ -649,15 +617,15 @@ export function NewTaskDialog({ vault, onClose, onStarted, onStartedCrew, onSave
           {busy && stage ? (
             <span className="stage small"><Loader2 size={13} className="spin" /> {stage}</span>
           ) : (
-            <span className="muted small">{team ? "Saved as a crew note in crews/" : "Saved as a request note in requests/"}</span>
+            <span className="muted small">Saved as a request note in requests/</span>
           )}
           <span>
-            {!team && !comparing && (
+            {!comparing && (
               <button onClick={() => save()} disabled={!prompt.trim() || busy} title="Save as a request note in the vault and start it later">
                 Save for later
               </button>
             )}
-            {!team && !comparing && (
+            {!comparing && (
               <button onClick={() => save(true)} disabled={!prompt.trim() || busy} title="Save the request and put it in the Inbox: it starts in its turn, one at a time by default">
                 Queue
               </button>
@@ -692,8 +660,8 @@ function pathInput() {
 const SECTION_KEY = "marq.taskSection.";
 
 /** A group of settings: its title and a one-line summary, opened to change them. Remembers whether it was open. */
-function Section({ id, title, summary, defaultOpen = false, disabled = false, children }: {
-  id: string; title: string; summary: string; defaultOpen?: boolean; disabled?: boolean; children: React.ReactNode;
+function Section({ id, title, summary, defaultOpen = false, children }: {
+  id: string; title: string; summary: string; defaultOpen?: boolean; children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(() => stored(SECTION_KEY + id, String(defaultOpen)) === "true");
   const toggle = () => {
@@ -702,10 +670,10 @@ function Section({ id, title, summary, defaultOpen = false, disabled = false, ch
       localStorage.setItem(SECTION_KEY + id, String(!open));
     } catch {}
   };
-  const shown = open && !disabled;
+  const shown = open;
   return (
-    <section className={`task-section ${shown ? "open" : ""} ${disabled ? "disabled" : ""}`}>
-      <button className="task-section-head" onClick={toggle} disabled={disabled} aria-expanded={shown}>
+    <section className={`task-section ${shown ? "open" : ""}`}>
+      <button className="task-section-head" onClick={toggle} aria-expanded={shown}>
         <ChevronRight size={13} className="chev" />
         <span className="field-label">{title}</span>
         {!shown && <span className="task-section-summary" title={summary}>{summary}</span>}

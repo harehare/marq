@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Columns3, FileText, FolderGit2, MessageSquare, Search, Users } from "lucide-react";
+import { Columns3, FileText, FolderGit2, MessageSquare, Search } from "lucide-react";
 import { FileEntry, SessionInfo } from "./api";
 import { usePaletteKeys } from "./usePaletteKeys";
 import { composing } from "./keys";
@@ -22,7 +22,7 @@ function fuzzy(q: string, s: string): number {
 }
 
 const icon = (f: FileEntry) =>
-  f.kind === "board" ? Columns3 : f.kind === "crew" ? Users : f.kind === "workspace" ? FolderGit2 : f.rel.startsWith("sessions/") ? MessageSquare : FileText;
+  f.kind === "board" ? Columns3 : f.kind === "workspace" ? FolderGit2 : f.rel.startsWith("sessions/") ? MessageSquare : FileText;
 
 /** What the list is narrowed to. Tab goes through them; the letter and a space picks one as the first thing typed. */
 const SCOPES = [
@@ -60,14 +60,14 @@ const sessionEntry = (s: SessionInfo, workspaces: Map<string, string>): Entry =>
   // Also found by its project, its workspace and the note it started from.
   const also = [s.worktree?.repo, s.workspace && (workspaces.get(s.workspace) ?? s.workspace), s.origin_path].filter(Boolean).join(" ");
   return {
-    key: `session:${s.id}`, label: s.crew ? `${s.title} · ${s.crew.role}` : s.title,
-    detail: [s.crew ? "crew member" : "session", s.status, where, s.started.slice(0, 10)].filter(Boolean).join(" · "),
-    Icon: s.crew ? Users : MessageSquare, names: [s.title, s.crew?.role ?? ""], path: `${s.cwd} ${where} ${also}`, session: s,
+    key: `session:${s.id}`, label: s.title,
+    detail: ["session", s.status, where, s.started.slice(0, 10)].filter(Boolean).join(" · "),
+    Icon: MessageSquare, names: [s.title], path: `${s.cwd} ${where} ${also}`, session: s,
   };
 };
 
 /**
- * ⌘P: open a note, board or crew by title or path; recent ones first. With `sessions`, conversations are
+ * ⌘P: open a note or board by title or path; recent ones first. With `sessions`, conversations are
  * listed as sessions (opened in their chat view) rather than as their session notes, and the list can be
  * narrowed to a scope (Tab, or `s ` and the like) and to a tag (`#name`).
  */

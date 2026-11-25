@@ -1,4 +1,4 @@
-//! Messages between sessions outside crews.
+//! Messages between sessions.
 //!
 //! The recipient's log gets a `marq_message` line just before the prompt, and the sender's a
 //! `marq_sent` line, so both sessions show where a message came from and went. A message that asks

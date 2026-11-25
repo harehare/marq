@@ -12,7 +12,7 @@ use crate::thesaurus::{Query, Thesaurus};
 #[derive(Debug, Clone, Serialize)]
 pub struct FileEntry {
     pub path: String,
-    /// The frontmatter `id`, if any. The sidebar matches crew sessions to crew notes by it.
+    /// The frontmatter `id`, if any.
     pub id: Option<String>,
     pub rel: String,
     pub title: Option<String>,
@@ -406,8 +406,8 @@ pub fn write_doc(vault: &Path, doc: DocWrite, session: &str, origin: &str) -> Re
     Ok(SavedDoc { rel, title: title.into(), created: true })
 }
 
-/// Documents agents wrote (`type: doc`) for `origin` (a request, note anchor or crew id), plus those
-/// `session` wrote or revised, newest first. The crew view and a session's Docs tab list them.
+/// Documents agents wrote (`type: doc`) for `origin` (a request or note anchor), plus those
+/// `session` wrote or revised, newest first. A session's Docs tab lists them.
 pub fn docs_from(vault: &Path, origin: &str, session: Option<&str>) -> Vec<serde_json::Value> {
     let mut docs: Vec<(String, serde_json::Value)> = Vec::new();
     each_scanned(vault, |s| {

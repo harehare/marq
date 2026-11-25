@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { FileOutput } from "lucide-react";
-import { api, CrewDoc } from "../api";
+import { api, SessionDoc } from "../api";
 
 type Props = {
   vault: string;
@@ -13,7 +13,7 @@ type Props = {
 
 /** The documents a session's task wrote with `write_doc`, beside the chat. Each opens in its own tab. */
 export function SessionDocsPanel({ vault, sessionId, onOpenNote, onCount }: Props) {
-  const [docs, setDocs] = useState<CrewDoc[]>([]);
+  const [docs, setDocs] = useState<SessionDoc[]>([]);
 
   const load = useCallback(async () => {
     const list = await api.sessionDocs(vault, sessionId).catch(() => []);

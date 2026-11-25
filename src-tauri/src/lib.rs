@@ -4,7 +4,6 @@ mod boards;
 mod comments;
 mod commands;
 mod config;
-mod crew;
 mod environment;
 mod setup;
 mod error;
@@ -22,7 +21,6 @@ mod resources;
 mod scratch;
 mod session;
 mod shell;
-mod tasks;
 mod terminal;
 mod timers;
 mod thesaurus;
@@ -119,10 +117,6 @@ fn create_note(vault: String, rel: String, kind: String) -> Result<String> {
     }
     let title = p.file_stem().unwrap_or_default().to_string_lossy().into_owned();
     let now = vault::now();
-    if kind == "crew" {
-        std::fs::write(&p, crew::template(&vault::new_id(), &title, &now, "", "", ""))?;
-        return Ok(p.to_string_lossy().into_owned());
-    }
     let mut fm = format!("---\nid: {}\ntype: {kind}\ntitle: {title}\ncreated: {now}\nupdated: {now}\n", vault::new_id());
     if kind == "request" {
         fm.push_str("status: todo\nproject: \nsessions: []\n");
@@ -373,7 +367,6 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         effort,
         agent,
         worktree,
-        crew: None,
         sandbox,
         verify,
         verifies: None,
@@ -1636,80 +1629,6 @@ async fn keep_scratch(app: AppHandle, vault: String, from: String, to: String) -
     .await
 }
 
-/// The crew view's data: the note, its members and the message timeline.
-#[tauri::command]
-async fn crew_state(app: AppHandle, vault: String, crew_id: String) -> Result<crew::CrewState> {
-    blocking(move || crew::state(&app, Path::new(&vault), &crew_id)).await
-}
-
-/// Sends a message from the user to a crew member.
-#[tauri::command]
-async fn crew_send(app: AppHandle, vault: String, crew_id: String, to: String, text: String) -> Result<crew::Sent> {
-    blocking(move || {
-        let msg = crew::Outgoing { from: crew::USER, to: &to, kind: "tell", text: &text, reply_to: None };
-        crew::send(&app, Path::new(&vault), &crew_id, msg)
-    }).await
-}
-
-/// Sets the model a member runs on from its next turn. An empty model goes back to the crew's.
-#[tauri::command]
-async fn crew_set_model(app: AppHandle, vault: String, crew_id: String, role: String, model: String) -> Result<Option<String>> {
-    blocking(move || crew::set_model(&app, Path::new(&vault), &crew_id, crew::USER, &role, Some(&model))).await
-}
-
-/// Sends the crew's Goal to its first member.
-#[tauri::command]
-async fn crew_kick_off(app: AppHandle, vault: String, crew_id: String) -> Result<()> {
-    blocking(move || crew::kick_off(&app, Path::new(&vault), &crew_id).map(|_| ())).await
-}
-
-#[derive(Serialize)]
-struct StartedCrew {
-    rel: String,
-    title: String,
-}
-
-/// Starts a task as a crew (New task with Team): a crew note with the prompt as its Goal, kicked off.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-async fn new_crew(
-    app: AppHandle, vault: String, title: String, prompt: String, project: String, auto_title: bool,
-    workspace: Option<String>, directories: Option<Vec<workspace::DirSpec>>,
-) -> Result<StartedCrew> {
-    let title = if auto_title { self::auto_title(&app, &prompt, title, None).await } else { title };
-    let mut setup = workspace.filter(|w| !w.trim().is_empty()).map(|w| format!("workspace: {}\n", serde_json::to_string(w.trim()).unwrap())).unwrap_or_default();
-    setup.push_str(&workspace::render_dirs(&directories.unwrap_or_default()));
-    blocking(move || {
-        progress(&app, "Starting the crew…");
-        let c = crew::start(&app, Path::new(&vault), &title, &prompt, &project, &setup)?;
-        Ok(StartedCrew { rel: c.rel, title: c.title })
-    })
-    .await
-}
-
-/// Changes a task's status or owner as the user. An empty owner unassigns it.
-#[tauri::command]
-async fn crew_task_update(
-    app: AppHandle,
-    vault: String,
-    crew_id: String,
-    id: String,
-    status: Option<String>,
-    owner: Option<String>,
-) -> Result<tasks::Task> {
-    blocking(move || {
-        let change = crew::TaskChange { status: status.as_deref(), owner: owner.as_deref(), note: None };
-        crew::task_update(&app, Path::new(&vault), &crew_id, crew::USER, &id, change)
-    })
-    .await
-}
-
-/// Lets a message held at the hop limit through.
-#[tauri::command]
-async fn crew_release(app: AppHandle, vault: String, crew_id: String, msg_id: String) -> Result<()> {
-    blocking(move || crew::release(&app, Path::new(&vault), &crew_id, &msg_id)).await
-}
-
 #[derive(Serialize)]
 struct OriginLocation {
     path: String,
@@ -1995,20 +1914,13 @@ pub fn run() {
             move_path,
             open_in,
             recent_projects,
-            crew_state,
             session_docs,
             create_untitled,
             discard_untitled,
             sweep_scratch,
             keep_scratch,
-            crew_send,
-            crew_release,
-            crew_kick_off,
-            crew_set_model,
             forward_message,
             rename_session,
-            crew_task_update,
-            new_crew,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,8 +10,8 @@ export type Command =
       /** The agent's own id for the conversation, for agents whose ids are not marq's (ACP). */
       agentSession?: string;
       system?: string;
-      /** A crew member gets the crew tools and read access to the other members' directories. */
-      crew?: boolean; additionalDirectories?: string[];
+      /** Directories beyond `cwd` the agent may read and edit. */
+      additionalDirectories?: string[];
       /** `on` or `strict`: run Bash in Claude Code's OS sandbox. Only the Claude backend has one. */
       sandbox?: string | null;
       /** Environment variables for the agent's process, such as the ports reserved for the session. */

@@ -99,7 +99,7 @@ function start(c: Extract<Command, { op: "start" }>) {
     // A sandbox the agent cannot provide must not be dropped silently: the user asked for it.
     if (c.sandbox && c.agent && c.agent !== "claude") throw new Error(`the sandbox is only available for Claude sessions, not ${c.agent}`);
     checkCwd(c.cwd);
-    entry = { session: backendFor(c.agent).start({ ...c, crew: !!c.crew }, host), alwaysAllow: new Set() };
+    entry = { session: backendFor(c.agent).start(c, host), alwaysAllow: new Set() };
   } catch (e) {
     emit({ ev: "exit", id: c.id, status: "error", error: message(e) });
     return;

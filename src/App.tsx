@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Inbox, BookA, ClipboardList, ListOrdered, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CheckCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
-  Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
+  Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
   ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft, Server, ListFilter, Layers,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
@@ -15,7 +15,6 @@ import { ScheduleDialog } from "./AutomationDialogs";
 import { setVaultFiles } from "./wikilinks";
 import { NoteEditor } from "./NoteEditor";
 import { SessionView } from "./SessionView";
-import { CrewView } from "./CrewView";
 import { QueryView } from "./QueryView";
 import { TerminalView, PANE_EVENT, type PaneAction, type PaneRequest } from "./TerminalView";
 import { BoardView } from "./BoardView";
@@ -51,8 +50,6 @@ type Tab = { pinned?: boolean } & (
   | { key: string; kind: "query"; title: string }
   /** The runs of one request on several models, side by side. */
   | { key: string; kind: "compare"; ids: string[]; title: string }
-  /** `crew` is the crew note's vault-relative path when the tab was opened. */
-  | { key: string; kind: "crew"; crew: string; title: string }
   | { key: string; kind: "board"; path: string; title: string }
   /** `initial` changes (with a new nonce) when a search is started from elsewhere. */
   | { key: string; kind: "search"; title: string; initial: string; nonce: number }
@@ -92,7 +89,7 @@ type Split = { other: string; dir: "row" | "column"; side: 0 | 1 };
 
 // Kinds no longer in the app are dropped. Terminals' shells ended with the app: only pinned ones
 // come back, as a fresh shell in the same directory with the same title (not the command they ran).
-const RESTORED_KINDS = new Set(["note", "session", "query", "compare", "crew", "board", "search"]);
+const RESTORED_KINDS = new Set(["note", "session", "query", "compare", "board", "search"]);
 const restored = (t: Tab) => RESTORED_KINDS.has(t.kind) || (t.kind === "terminal" && !!t.pinned && typeof t.cwd === "string");
 
 /**
@@ -329,7 +326,6 @@ function countFiles(tree: Tree): number {
 function fileIcon(f: FileEntry) {
   if (f.rel.startsWith("sessions/")) return <MessageSquare size={13} />;
   if (f.kind === "request") return <Inbox size={13} />;
-  if (f.kind === "crew") return <Users size={13} />;
   if (f.kind === "scratch") return <StickyNote size={13} />;
   if (f.rel === "instructions.md") return <ScrollText size={13} />;
   if (f.kind === "glossary") return <BookA size={13} />;
@@ -437,19 +433,19 @@ const GROUPS = [
 ];
 
 /**
- * `active`: every running session and every one that needs the user, crew members included, those
- * waiting first. Other crew members are listed under their crew. The rest is `recent`.
+ * `active`: every running session and every one that needs the user, those waiting first.
+ * The rest is `recent`.
  */
 function groupSessions(sessions: SessionInfo[]) {
   const active = sessions.filter((s) => s.status === "waiting" || s.status === "running")
     .sort((a, b) => Number(b.status === "waiting") - Number(a.status === "waiting"));
   const used = new Set(active.map((s) => s.id));
   const groups = GROUPS.map((g) => {
-    const items = sessions.filter((s) => !used.has(s.id) && g.match(s) && !s.crew);
+    const items = sessions.filter((s) => !used.has(s.id) && g.match(s));
     items.forEach((s) => used.add(s.id));
     return { ...g, items };
   }).filter((g) => g.items.length);
-  return { active, groups, recent: sessions.filter((s) => !used.has(s.id) && !s.crew) };
+  return { active, groups, recent: sessions.filter((s) => !used.has(s.id)) };
 }
 
 /** `every 1h · 14:30`, `daily 09:00 · tomorrow`: how often and when next. */
@@ -667,7 +663,7 @@ export default function App() {
       localStorage.setItem("marq.sidebar", flag);
     } catch {}
   };
-  const [naming, setNaming] = useState<{ kind: "note" | "crew" | "spec" | "workspace" | "playbook"; initial: string } | null>(null);
+  const [naming, setNaming] = useState<{ kind: "note" | "spec" | "workspace" | "playbook"; initial: string } | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   // New folder, rename and move share one name dialog.
   const [pathDialog, setPathDialog] = useState<{ mode: "folder" | "rename" | "move" | "keep"; from?: string; initial: string } | null>(null);
@@ -789,10 +785,7 @@ export default function App() {
     };
     const uns = [
       listen<{ session_id: string; result?: string }>("session://turn", (e) => {
-        // Crew members take many short turns, and the crew view shows them.
-        if (!watch.current.sessions.find((x) => x.id === e.payload.session_id)?.crew) {
-          attention(e.payload.session_id, summary(e.payload.result ?? "") || "Finished", true);
-        }
+        attention(e.payload.session_id, summary(e.payload.result ?? "") || "Finished", true);
       }),
       listen<{ session_id: string; status: string; stderr?: string }>("session://exit", (e) => {
         const why = summary(e.payload.stderr?.trim().split("\n").pop() ?? "", 140);
@@ -857,7 +850,6 @@ export default function App() {
   };
   const treePrefix = viewPrefix(noteView);
   const tree = useMemo(() => (noteView === "folder" ? buildTree(files, dirs, noteSort) : buildGroupTree(files, noteView, noteSort)), [files, dirs, noteSort, noteView]);
-  const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   // Newest first: their names are the time they were made.
   // Untitled notes are named by what they say, so their tabs follow as the text changes.
   useEffect(() => {
@@ -874,8 +866,7 @@ export default function App() {
       return changed ? next : prev;
     });
   }, [files]);
-  // A crew's task board is shown on its Tasks tab, not with the other boards.
-  const boards = useMemo(() => files.filter((f) => f.kind === "board" && !f.rel.startsWith("crews/")), [files]);
+  const boards = useMemo(() => files.filter((f) => f.kind === "board"), [files]);
   const [newBoard, setNewBoard] = useState(false);
   // Workspaces with how many sessions ran on each.
   const workspaces = useMemo(() => files.filter((f) => f.kind === "workspace").map((f) => ({ f, count: sessions.filter((s) => namesWorkspace(s.workspace, f)).length })), [files, sessions]);
@@ -920,9 +911,6 @@ export default function App() {
       }
       return n;
     });
-  // Crews whose member list is open in the sidebar.
-  const [openCrews, setOpenCrews] = useState<Set<string>>(new Set());
-  const crewMembers = (f: FileEntry) => sessions.filter((s) => s.crew && s.crew.id === f.id);
 
   // Restored tabs on notes deleted or moved while the vault was closed.
   useEffect(() => {
@@ -1005,21 +993,6 @@ export default function App() {
       un.then((f) => f());
     };
   }, []);
-
-  // A session handed its task to a crew (start_crew): show the crew.
-  useEffect(() => {
-    const un = listen<{ rel: string; title: string }>("crew://started", (e) => {
-      setTabs((prev) => (prev.some((t) => t.key === `crew:${e.payload.rel}`)
-        ? prev
-        : [...prev, { key: `crew:${e.payload.rel}`, kind: "crew", crew: e.payload.rel, title: e.payload.title }]));
-      setActive(`crew:${e.payload.rel}`);
-      refresh();
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, [refresh]);
-
 
   const switchVault = (dir: string) => {
     try {
@@ -1158,8 +1131,6 @@ export default function App() {
     refresh();
   };
 
-  const openCrewAt = (rel: string, title: string) => openTab({ key: `crew:${rel}`, kind: "crew", crew: rel, title });
-  const openCrew = (f: FileEntry) => openCrewAt(f.rel, fileLabel(f));
 
   /** Pinned tabs move to the end of the pinned ones; unpinned ones to the start of the rest. */
   const togglePin = (key: string) => {
@@ -1221,28 +1192,27 @@ export default function App() {
     if (vault) api.sweepScratch(vault).then((r) => { if (r.removed.length || r.trashed.length) void refreshFiles(); }).catch(() => {});
   }, [vault]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const create = async (rel: string, kind: "note" | "crew") => {
-    const path = await api.createNote(vault!, rel, kind);
+  const create = async (rel: string) => {
+    const path = await api.createNote(vault!, rel, "note");
     openNote(path, undefined, true);
     refreshFiles();
     return path;
   };
 
-  const createNamed = async (kind: "note" | "crew" | "spec" | "workspace" | "playbook", name: string) => {
+  const createNamed = async (kind: "note" | "spec" | "workspace" | "playbook", name: string) => {
     if (kind === "spec" || kind === "workspace" || kind === "playbook") {
       const path = kind === "spec" ? await api.newSpec(vault!, name) : kind === "playbook" ? await api.newPlaybook(vault!, name) : await api.createWorkspace(vault!, name, "", []);
       openNote(path, undefined, true);
       refreshFiles();
       return;
     }
-    const slug = name.replace(/\.md$/, "").replace(/[\s/]+/g, "-");
-    const rel = kind === "crew" ? `crews/${slug}.md` : /\.(md|mq|txt|json|ya?ml|toml|csv|html|css|[jt]sx?|py|rs|go|sh|sql|xml)$/i.test(name) ? name : `${name}.md`;
-    await create(rel.replace(/^\/+/, ""), kind);
+    const rel = /\.(md|mq|txt|json|ya?ml|toml|csv|html|css|[jt]sx?|py|rs|go|sh|sql|xml)$/i.test(name) ? name : `${name}.md`;
+    await create(rel.replace(/^\/+/, ""));
   };
 
   /** Runs of the same request that have their own worktree, to compare. */
   const siblings = (s: SessionInfo) =>
-    s.worktree && s.origin ? sessions.filter((x) => x.origin === s.origin && x.worktree && !x.crew) : [];
+    s.worktree && s.origin ? sessions.filter((x) => x.origin === s.origin && x.worktree) : [];
 
   const sessionMenu = (e: React.MouseEvent, s: SessionInfo) => {
     e.preventDefault();
@@ -1303,7 +1273,6 @@ export default function App() {
       items: [
         { label: "Open", icon: ExternalLink, onClick: () => openNote(f.path) },
         { label: "Open to the side", icon: Columns2, onClick: () => beside(() => openNote(f.path)) },
-        ...(f.kind === "crew" ? [{ label: "Open crew", icon: Users, onClick: () => openCrew(f) }] : []),
         ...(f.kind === "scratch"
           ? [{ label: "Keep as note…", icon: NotebookPen, onClick: () => setPathDialog({ mode: "keep", from: f.rel, initial: `notes/${slugOf(fileLabel(f))}` }) }]
           : []),
@@ -1518,7 +1487,7 @@ export default function App() {
     "mode.pane": { label: "Pane mode", run: () => setMode("pane") },
     "mode.locked": { label: "Lock: send every key to the focused view", run: () => setMode("locked") },
     palette: { label: "Command palette", run: () => setShowPalette(true) },
-    "file.open": { label: "Open a note, board, crew or session…", run: () => setShowQuickOpen(true) },
+    "file.open": { label: "Open a note, board or session…", run: () => setShowQuickOpen(true) },
     "search.open": { label: "Search notes", run: () => openSearch("") },
     find: { label: "Find in this note or in the changes", run: () => active && window.dispatchEvent(new CustomEvent(FIND_EVENT, { detail: active })) },
     "knowledge.gardening": {
@@ -1734,17 +1703,16 @@ export default function App() {
     });
   };
 
-  // What a tab's sessions are doing, most urgent first: a crew shows its members, a comparison its runs.
+  // What a tab's sessions are doing, most urgent first: a comparison shows its runs.
   const tabStatus = (t: Tab): string | undefined => {
-    const ids = t.kind === "session" ? [t.id] : t.kind === "compare" ? t.ids
-      : t.kind === "crew" ? (() => { const f = crews.find((c) => c.rel === t.crew); return f ? crewMembers(f).map((m) => m.id) : []; })() : [];
+    const ids = t.kind === "session" ? [t.id] : t.kind === "compare" ? t.ids : [];
     const of = ids.map((id) => sessions.find((x) => x.id === id)?.status);
     return ["waiting", "running", "error"].find((st) => of.includes(st)) ?? (ids.some((id) => unread.has(id)) ? "unread" : undefined);
   };
   const STATUS_LABEL: Record<string, string> = { waiting: "Needs you", running: "Running", error: "Stopped with an error", unread: "New output" };
 
   const tabIcon = (t: Tab) => t.kind === "session" ? MessageSquare : t.kind === "compare" ? GitCompare : t.kind === "query" ? Braces
-    : t.kind === "crew" ? Users : t.kind === "terminal" ? SquareTerminal : t.kind === "board" ? Columns3 : t.kind === "search" ? Search : FileText;
+    : t.kind === "terminal" ? SquareTerminal : t.kind === "board" ? Columns3 : t.kind === "search" ? Search : FileText;
   /** The tabs scrolled out of sight, to pick one from. */
   const hiddenTabsMenu = (keys: string[], x: number, y: number) => setMenu({
     x, y,
@@ -1826,7 +1794,6 @@ export default function App() {
             ...(groups.length ? [["sessions", "Needs review", GitPullRequest, groups.reduce((n, g) => n + g.items.length, 0)] as [string, string, LucideIcon, number]] : []),
             ["recent", "Recent", History, 0],
             ["boards", "Boards", Columns3, 0],
-            ["crews", "Crews", Users, 0],
             ["workspaces", "Workspaces", FolderGit2, 0],
             ["schedules", "Schedules", Timer, 0],
             ["notes", "Notes", FileText, 0],
@@ -1856,7 +1823,7 @@ export default function App() {
           if (!railOn) return;
           const t = e.target as Element;
           if (t.closest("button, .section-actions, .tree-row.dir")) return;
-          if (t.closest(".active-row, .session-row, .recent-row, .inbox-row, .crew-member-row, .tree-row")) setRailPanel(null);
+          if (t.closest(".active-row, .session-row, .recent-row, .inbox-row, .tree-row")) setRailPanel(null);
         }}>
         <div className="vault" title={`${vault}\nClick to switch vaults`} onClick={vaultMenu}>
           <div className="logo small"><LogoMark size={18} /></div>
@@ -1867,7 +1834,7 @@ export default function App() {
           <button className="theme-btn" title="Icons only" onClick={(e) => (e.stopPropagation(), setSidebarMode("rail"))}><PanelLeft size={14} /></button>
           <button className="theme-btn" title="Hide the sidebar (⌘B)" onClick={(e) => (e.stopPropagation(), setSidebarOpen(false))}><PanelLeftClose size={14} /></button>
         </div>
-        <button className="side-search" onClick={() => openSearch("")} title="Search the text of notes and sessions (⇧⌘F). Open a note, crew or session by name: ⌘P">
+        <button className="side-search" onClick={() => openSearch("")} title="Search the text of notes and sessions (⇧⌘F). Open a note or session by name: ⌘P">
           <Search size={13} /> <span>Search</span> <kbd>⇧⌘F</kbd>
         </button>
         <button className="new-task" onClick={() => setShowNewTask(true)}>
@@ -1934,7 +1901,6 @@ export default function App() {
                     <span className={`dot ${s.status}`} />
                     <span className="active-body">
                       <span className="active-title">
-                        {s.crew && <Users size={11} className="muted" />}
                         <span className="ellipsis">{s.title}</span>
                         {s.status === "waiting" && <span className="row-badge waiting">needs you</span>}
                       </span>
@@ -1992,49 +1958,6 @@ export default function App() {
               </a>
             ))}
             {boards.length === 0 && <a className="muted small pad" onClick={() => setNewBoard(true)}>Create a board for your tasks</a>}
-          </Collapsible>
-          {/* Capped from the start, so many crews do not push Notes away. */}
-          <Collapsible title="Crews" panel="crews" icon={<Users size={11} />} count={crews.length} size={{ key: "crews", initial: 240 }}
-            action={<button className="section-action" title="New crew" onClick={() => setNaming({ kind: "crew", initial: "" })}>
-              <Plus size={13} />
-            </button>}>
-            {crews.map((f) => {
-              const members = crewMembers(f);
-              const open = openCrews.has(f.path);
-              // The crew's dot shows its most urgent member.
-              const status = ["waiting", "running", "error"].find((st) => members.some((m) => m.status === st));
-              return (
-                <div key={f.path}>
-                  <a className={`inbox-row crew-row ${current?.kind === "crew" && current.crew === f.rel ? "on" : ""}`}
-                    onClick={() => openCrew(f)} onContextMenu={(e) => fileMenu(e, f)} title={f.rel}>
-                    <button className="crew-row-toggle" disabled={!members.length} title={open ? "Hide members" : "Show members"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpenCrews((s) => { const n = new Set(s); n.has(f.path) ? n.delete(f.path) : n.add(f.path); return n; });
-                      }}>
-                      <ChevronRight size={11} className={`chev ${open ? "open" : ""}`} />
-                    </button>
-                    <Users size={13} /> <span className="ellipsis">{fileLabel(f)}</span>
-                    <span className="spacer" />
-                    {status && <span className={`dot ${status}`} />}
-                    {members.length > 0 && <span className="count">{members.length}</span>}
-                  </a>
-                  {open && members.map((s) => (
-                    <a key={s.id} className={`crew-member-row ${current?.kind === "session" && current.id === s.id ? "on" : ""}`}
-                      onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)} title={s.title}>
-                      <span className={`dot ${s.status}`} />
-                      <span className="ellipsis">{s.crew!.role}</span>
-                      {s.worktree && <span className="muted small ellipsis"><GitBranch size={10} /> {s.worktree.branch}</span>}
-                    </a>
-                  ))}
-                </div>
-              );
-            })}
-            {crews.length === 0 && (
-              <div className="muted small" style={{ padding: "2px 12px 6px" }}>
-                Sessions that work on one project together. <a onClick={() => setNaming({ kind: "crew", initial: "" })}>New crew</a>
-              </div>
-            )}
           </Collapsible>
           {(
             <Collapsible title="Workspaces" panel="workspaces" icon={<FolderGit2 size={11} />} count={workspaces.length} defaultOpen={false}
@@ -2220,7 +2143,6 @@ export default function App() {
                 onSendExcerpt={(excerpt) => setSending({ excerpt })} />}
               {t.kind === "compare" && <CompareView vault={vault} ids={t.ids} sessions={sessions} onOpenSession={openSession} onChanged={refresh} />}
               {t.kind === "session" && <SessionView vault={vault} sessionId={t.id} onOpenOrigin={openNote} onOpenSession={openSession}
-                onOpenCrew={openCrewAt}
                 onSendExcerpt={(excerpt) => setSending({ excerpt, exclude: t.id })} />}
               {t.kind === "terminal" && <TerminalView id={t.id} cwd={t.cwd} command={t.command} active={t.key === active}
                 onTitle={(title) => setTabs((prev) => {
@@ -2230,15 +2152,12 @@ export default function App() {
                   return prev.map((x) => (x === cur ? { ...x, title } : x));
                 })} />}
               {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
-                onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
+                onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel)}
                 onStartTask={(prompt, after) => { taskAfter.current = after ?? null; setTaskPrompt(prompt); setShowNewTask(true); }} />}
               {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active} files={files} sessions={sessions}
                 onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))}
                 onOpenSession={openSession} />}
               {t.kind === "query" && <QueryView vault={vault} saved={files.filter((f) => f.kind === "query")} onOpenNote={(p) => openNote(p)} />}
-              {t.kind === "crew" && <CrewView vault={vault} crewKey={t.crew} onOpenNote={openNote} onOpenSession={openSession}
-                onSendExcerpt={(excerpt) => setSending({ excerpt })} onOpenCrew={openCrewAt}
-                files={files} recent={recentFiles} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")} />}
             </TabPane>
           ))}
           {!current && (
@@ -2298,12 +2217,11 @@ export default function App() {
       )}
       {naming && (
         <NameDialog
-          title={{ crew: "New crew", spec: "New spec", workspace: "New workspace", playbook: "New playbook", note: "New note" }[naming.kind]}
-          label={{ crew: "What will the crew work on? (a short name)", spec: "What is it for? (its title)", workspace: "Name", playbook: "Name", note: "Path, relative to the vault" }[naming.kind]}
+          title={{ spec: "New spec", workspace: "New workspace", playbook: "New playbook", note: "New note" }[naming.kind]}
+          label={{ spec: "What is it for? (its title)", workspace: "Name", playbook: "Name", note: "Path, relative to the vault" }[naming.kind]}
           initial={naming.initial}
-          placeholder={{ crew: "e.g. checkout-redesign", spec: "e.g. Show types on hover", workspace: "e.g. mq + docs", playbook: "e.g. release-notes, or bug-fix to edit Marq's own", note: "e.g. notes/meeting-2026-10" }[naming.kind]}
+          placeholder={{ spec: "e.g. Show types on hover", workspace: "e.g. mq + docs", playbook: "e.g. release-notes, or bug-fix to edit Marq's own", note: "e.g. notes/meeting-2026-10" }[naming.kind]}
           hint={{
-            crew: "Saved as crews/<name>.md with a lead, an implementer and a reviewer. Next, set the project and the goal in the note, then open the crew from the sidebar.",
             spec: "Saved in specs/ with Requirements, Design, Tasks and Acceptance to fill in (or ask an agent: /marq:spec). Break down puts the tasks on a board.",
             playbook: "Saved as playbooks/<name>.md. Each ## heading is a phase, run in order in a new session; its text is what that session is told. Pick it with / in New task, or playbook: <name> in a request. The name of one of Marq's own (plan-first, bug-fix, refactor) gives you a copy to edit.",
             workspace: "Saved in workspaces/. Set its project and directories in the note, or save them from the New task dialog instead.",
@@ -2339,14 +2257,13 @@ export default function App() {
         <NewTaskDialog vault={vault} initialPrompt={taskPrompt} context={taskContext ?? undefined}
           onClose={() => { setShowNewTask(false); setTaskPrompt(""); setTaskContext(null); taskAfter.current = null; }}
           onStarted={(id, title) => { refresh(); openSession(id, title); taskAfter.current?.(); }}
-          onStartedCrew={(rel, title) => { refresh(); openCrewAt(rel, title); taskAfter.current?.(); }}
           onSaved={(rel, queued) => { refresh(); if (!queued) openNote(`${vault}/${rel}`); }}
           onStartedCompare={(ids, title) => { openCompare(ids, title); taskAfter.current?.(); }} />
       )}
       {showQuickOpen && (
         <QuickOpen files={files} recent={recentFiles} sessions={sessions} onClose={() => setShowQuickOpen(false)}
-          placeholder="Open a note, board, crew or session…  (Tab narrows, ⇧↵ searches the text)"
-          onOpen={(f) => (f.kind === "crew" ? openCrew(f) : openFile(f.path))}
+          placeholder="Open a note, board or session…  (Tab narrows, ⇧↵ searches the text)"
+          onOpen={(f) => openFile(f.path)}
           onOpenSession={(s) => openSession(s.id, s.title)} onSearch={openSearch} />
       )}
       {showPalette && (

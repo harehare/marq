@@ -28,7 +28,8 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 - **Workspaces.** Give a task several directories, with a worktree for each repository you choose, and save the set as a workspace to pick again.
 - **Review in the app.** The **Changes** panel shows the diff against the base commit. Comment on diff lines and send the review back to the agent, then commit, push and create a PR.
 - **Run an agent from a note.** Hover a heading and choose **Ask**. The session is linked to the heading, and the result comes back as a card under the section.
-- **Crews.** Several sessions work on one project as a team by role, with a shared task list. Kanban boards are Markdown too.
+- **Sessions that work together.** Send text from one session to another and have the answer come back, so two sessions can settle something between them. Agents can do the same, with your approval for each message.
+- **Boards.** Kanban boards are Markdown too: start or queue a session from a card, and the agent keeps the card up to date.
 - **Checks, phases and specs.** A request can run a command after each turn and send failures back to the agent (or to a fresh session), have a separate session check hidden acceptance criteria, run in phases with a fresh context each (research → plan → implement, or a playbook such as reproduce → diagnose → fix that you write as a note), and run in Claude Code's sandbox. Specs break down into board cards.
 - **Compare agents and models.** Run one task on 2 to 4 runs, Claude models or other agents such as Codex, each in its own worktree, look at the diffs side by side, and keep the one you prefer.
 - **Inbox and queues.** What needs you (approvals and errors) and what waits its turn to run (schedules, requests and board cards you queue) sit in one Inbox that survives a restart. Work starts from it one after the other (or as many at once as you set), and a failure stays visible until you dismiss it.
@@ -40,7 +41,7 @@ Marq runs coding agents in parallel, each in its own git worktree, and keeps eve
 
 ### Knowledge base
 
-- **Everything is Markdown.** Notes, requests, session logs, crews, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only rewrites the parts between its own markers.
+- **Everything is Markdown.** Notes, requests, session logs, boards and documents written by agents are all `.md` files in your vault. Edit them with any editor; Marq only rewrites the parts between its own markers.
 - **Query with mq.** `mq` code blocks run in the preview and show their output right below. The same queries power the todo list, the learnings across sessions, and the Query tab.
 - **Pick what the agent sees.** Extract a section with mq, select text in a note or a session, or attach `context:` queries to a request, then send exactly that to an agent.
 - **Sessions feed back into notes.** Learnings are written into the session note, and agents can search your notes and save documents to the vault.
@@ -111,7 +112,7 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | [Sessions](docs/src/sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume, sending text |
 | [Inbox and follow-ups](docs/src/inbox.md) | What waits for you, queued work, agents' follow-ups, standing instructions, notifications |
 | [mq queries](docs/src/mq.md) | `mq` code blocks, pinning, built-in queries, picking context for an agent |
-| [Crews and boards](docs/src/crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
+| [Boards](docs/src/boards.md) | Kanban boards as Markdown, and starting sessions from their cards |
 | [Workflows](docs/src/workflows.md) | Checks after each turn, acceptance criteria, phases, the sandbox, specs, skills |
 | [Agents and models](docs/src/agents.md) | Claude, Ollama, ACP agents, permission modes, how sessions run |
 | [Vault tools for agents](docs/src/tools.md) | The MCP tools agents use to read and organize the vault |
@@ -123,8 +124,8 @@ Open a folder as the vault (any folder of Markdown files works), then open a not
 | Agent | Status |
 | --- | --- |
 | Claude (through your `claude` CLI) | Supported |
-| Ollama (`ollama:<model>`) | Supported, except for crews |
-| Gemini CLI, Codex, OpenCode, Qwen Code, Goose (through [ACP](https://agentclientprotocol.com)) | Supported with limits: no crews, model choice or sandbox |
+| Ollama (`ollama:<model>`) | Supported |
+| Gemini CLI, Codex, OpenCode, Qwen Code, Goose (through [ACP](https://agentclientprotocol.com)) | Supported with limits: no model choice or sandbox |
 | Other ACP agents | Add one under `[agents.<id>]` in `config.toml` |
 
 See [Agents and models](docs/src/agents.md) for what each one can do.

@@ -274,7 +274,7 @@ fn run_check(command: &str, cwd: &Path, others: &[PathBuf], timeout: Duration, s
     }
 }
 
-/// Called when a session's turn ends (not for crew members). Checks the work, starts the next phase
+/// Called when a session's turn ends. Checks the work, starts the next phase
 /// or settles the session.
 pub fn on_turn_end(app: &AppHandle, vault: &Path, id: &str) {
     if let Err(e) = turn_ended(app, vault, id) {
@@ -287,9 +287,6 @@ pub fn on_turn_end(app: &AppHandle, vault: &Path, id: &str) {
 
 fn turn_ended(app: &AppHandle, vault: &Path, id: &str) -> Result<()> {
     let meta = session::meta(vault, id)?;
-    if meta.crew.is_some() {
-        return Ok(());
-    }
     let events = session::read_events(vault, id)?;
     if let Some(target) = &meta.verifies {
         return verdict(app, vault, &meta, target, &events);

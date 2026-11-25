@@ -9,7 +9,7 @@
 - [Sessions](sessions.md)
 - [Inbox and follow-ups](inbox.md)
 - [mq queries](mq.md)
-- [Crews and boards](crews-and-boards.md)
+- [Boards](boards.md)
 - [Workflows](workflows.md)
 
 # Reference

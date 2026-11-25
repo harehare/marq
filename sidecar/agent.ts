@@ -21,7 +21,6 @@ export type StartOptions = {
   agentSession?: string;
   /** Appended to the agent's system prompt. */
   system?: string;
-  crew: boolean;
   additionalDirectories?: string[];
   /** `on` or `strict`: run Bash in Claude Code's OS sandbox. */
   sandbox?: string | null;

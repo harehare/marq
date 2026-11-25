@@ -142,7 +142,7 @@ class AcpSession implements AgentSession {
     const caps = (await initialized).agentCapabilities ?? {};
     const mcpServers = [];
     if (caps.mcpCapabilities?.http) {
-      const m = await mcpUrl(c.id, c.crew);
+      const m = await mcpUrl(c.id);
       this.closeMcp = m.close;
       mcpServers.push({ type: "http", name: "marq", url: m.url, headers: [] });
     } else {

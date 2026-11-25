@@ -16,7 +16,7 @@ Marq is a Markdown knowledge base and an IDE for coding agents, in one app. It r
 | [Sessions](sessions.md) | Ask, tasks and requests, worktrees and review, approvals, resume |
 | [Inbox and follow-ups](inbox.md) | What waits for you, queued work, agents' follow-ups, standing instructions, notifications |
 | [mq queries](mq.md) | `mq` code blocks, pinning, built-in queries, picking context |
-| [Crews and boards](crews-and-boards.md) | Teams of sessions, the shared task list, kanban boards |
+| [Boards](boards.md) | Kanban boards as Markdown, and starting sessions from their cards |
 | [Workflows](workflows.md) | Checks, acceptance criteria, phases, the sandbox, specs, skills |
 | [Agents and models](agents.md) | Claude, Ollama, ACP agents, permission modes, how sessions run |
 | [Vault tools for agents](tools.md) | The MCP tools agents use to read and organize the vault |

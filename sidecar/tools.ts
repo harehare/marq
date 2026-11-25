@@ -1,63 +1,10 @@
-// marq's MCP tools: the vault, boards, sessions and crews. The tools call back into the app, which owns the vault.
+// marq's MCP tools: the vault, boards and sessions. The tools call back into the app, which owns the vault.
 // Built with the Agent SDK's in-process MCP server; mcp-http.ts serves the same server over HTTP to agents in other processes.
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { rpc } from "./protocol.ts";
 
 const text = (t: unknown) => ({ content: [{ type: "text" as const, text: typeof t === "string" ? t : JSON.stringify(t, null, 2) }] });
-
-/** Tools only crew members get. Messages go through the app, which delivers them between turns. */
-function crewTools(sessionId: string) {
-  return [
-    tool("crew_members", "List the members of your crew: role, status (idle, running, waiting), unread mail, working directory and branch.",
-      {}, async () => text(await rpc("crew_members", { session: sessionId }))),
-    tool("crew_send",
-      "Send a message to crew members. to: a role, \"user\", \"all\" (every other member) or roles separated by commas; " +
-        "leave it out with reply_to to answer everyone in that thread (how discussions work). " +
-        "kind: \"ask\" when you need an answer, \"reply\" (with reply_to, the id of the message you answer), \"tell\" otherwise. " +
-        "It is delivered when each recipient finishes its current turn. Do not wait for an answer: finish your turn and it arrives as a new message.",
-      { to: z.string().optional(), text: z.string(), kind: z.enum(["tell", "ask", "reply"]).optional(), reply_to: z.string().optional() },
-      async (a) => text(await rpc("crew_send", { ...a, session: sessionId }))),
-    tool("task_list", "The crew's shared task list: id, title, status (todo, doing, review, blocked, done), owner and notes.",
-      {}, async () => text(await rpc("task_list", { session: sessionId }))),
-    tool("task_add", "Add a task to the crew's task list. With owner (a role), that member is told and can start on it.",
-      { title: z.string(), owner: z.string().optional(), note: z.string().optional() },
-      async (a) => text(await rpc("task_add", { ...a, session: sessionId }))),
-    tool("task_update",
-      "Update a task: status (todo, doing, review, blocked, done), owner (a role, or empty to unassign) or a note " +
-        "(e.g. branch, commit, what is left). Setting doing takes the task; it fails if another member is already doing it.",
-      { id: z.string(), status: z.enum(["todo", "doing", "review", "blocked", "done"]).optional(), owner: z.string().optional(), note: z.string().optional() },
-      async (a) => text(await rpc("task_update", { ...a, session: sessionId }))),
-    tool("crew_decide",
-      "Record a decision the crew has made (approach, task split, who does what, a changed plan) in the crew note's Decisions " +
-        "section, and tell every member. Use it to close a discussion.",
-      { decision: z.string() }, async (a) => text(await rpc("crew_decide", { ...a, session: sessionId }))),
-    tool("crew_add_member",
-      "Add a member to the crew. role is one word (e.g. impl, reviewer, tester). instructions say what it owns, how it hands " +
-        "work on and who checks it. worktree (default true) gives it its own git worktree and branch; use false for members " +
-        "that only read, review or test. permission_mode: auto (default), default, acceptEdits or plan. model: opus, sonnet " +
-        "or haiku (default: the crew's model); fit it to the work. The user approves it.",
-      { role: z.string(), instructions: z.string(), worktree: z.boolean().optional(), permission_mode: z.string().optional(),
-        model: z.string().optional() },
-      async (a) => text(await rpc("crew_add_member", { ...a, session: sessionId }))),
-    tool("crew_set_model",
-      "Switch the model a member runs on, from its next turn: opus for design, hard problems and careful review, sonnet " +
-        "for most implementation and testing, haiku for simple mechanical work. role defaults to you; an empty model goes " +
-        "back to the crew's model.",
-      { role: z.string().optional(), model: z.string() },
-      async (a) => text(await rpc("crew_set_model", { ...a, session: sessionId }))),
-  ];
-}
-
-/** For sessions outside a crew: hand a large task to a new crew. The user approves it. */
-function startCrew(sessionId: string) {
-  return tool("start_crew",
-    "Hand a large task to a crew: a team of agent sessions (a lead who forms the team, then e.g. impl, reviewer, tester) " +
-      "working on this project together in their own tab. goal is the full task: what to build, constraints, and how to " +
-      "know it is done; include what you have learned so far. Use it only when the work clearly benefits from several " +
-      "members in parallel. The user approves it.",
-    { title: z.string(), goal: z.string() }, async (a) => text(await rpc("start_crew", { ...a, session: sessionId })));
-}
 
 /** Kanban boards in the vault. `board` is a name, title or path; empty for the only board. */
 function boardTools(sessionId: string) {
@@ -109,12 +56,11 @@ function boardTools(sessionId: string) {
   ];
 }
 
-export function vaultServer(sessionId: string, crew: boolean) {
+export function vaultServer(sessionId: string) {
   return createSdkMcpServer({
     name: "marq",
     version: "0.1.0",
     tools: [
-      ...(crew ? crewTools(sessionId) : [startCrew(sessionId)]),
       ...boardTools(sessionId),
       tool("search_notes", "Search the user's notes (Markdown knowledge base) by text. Words also match their synonyms and narrower terms from the vault's glossary and notes' aliases; tag:<name> (or #name) keeps notes with that tag; type:<request|doc|note|session|…>, status:<todo|review|done|…>, project:<part of its path>, workspace:<name> and since:/before:<YYYY-MM-DD or 7d> narrow by frontmatter, and work without any words to list notes. Returns matching paths and lines.",
         { text: z.string() }, async (a) => text(await rpc("search_notes", { ...a, session: sessionId }))),
@@ -184,9 +130,7 @@ export function vaultServer(sessionId: string, crew: boolean) {
 // Pre-approved: they only read the vault and sessions, or write Marq's own files in the vault.
 // send_to_session is left out so each send goes through the approval card.
 // move_note and trash_note change the user's notes, so they ask too.
-// Crew messages are pre-approved too: the crew's hop limit, not an approval card, keeps them in check.
-// crew_add_member asks, since every member is another session to pay for.
 export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "list_comments", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
-  "list_notes", "create_folder", "crew_members", "crew_send", "crew_set_model", "crew_decide", "task_list", "task_add", "task_update",
+  "list_notes", "create_folder",
   "list_boards", "read_board", "search_cards", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);

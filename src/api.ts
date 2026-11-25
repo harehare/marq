@@ -83,7 +83,7 @@ export type SessionInfo = {
   worktree: Worktree | null;
   /** Directories beyond `cwd`, from a workspace or the request. */
   dirs?: ExtraDir[];
-  /** The workspace note its request or crew named, relative to the vault. */
+  /** The workspace note its request named, relative to the vault. */
   workspace?: string | null;
   additions: number | null;
   deletions: number | null;
@@ -98,8 +98,6 @@ export type SessionInfo = {
   permission_mode?: string | null;
   /** The agent backend; empty for Claude. */
   agent?: string | null;
-  /** Set for crew members. */
-  crew?: { id: string; role: string };
 };
 export type Worktree = { repo: string; path: string; branch: string; base: string; base_branch: string };
 type FileChange = { path: string; status: string; additions: number; deletions: number };
@@ -118,56 +116,8 @@ export type Approval = {
   title: string | null;
   reason: string | null;
 };
-type CrewMember = { role: string; permission_mode: string | null; worktree: boolean; model: string | null; instructions: string };
-type CrewMemberState = {
-  role: string;
-  session_id: string | null;
-  /** idle (no session yet), running, waiting, done, error or interrupted. */
-  status: string;
-  /** Messages waiting for the member's next turn. */
-  pending: number;
-  cwd: string | null;
-  branch: string | null;
-  /** What it runs on from its next turn: its own model, else the crew's; null for Claude Code's default. */
-  model: string | null;
-};
-export type CrewMessage = {
-  /** `crew_event` lines (e.g. a member was added) carry only `text` and `at`. */
-  type: "crew_msg" | "crew_event";
-  id: string;
-  from: string;
-  /** One recipient, or several for a broadcast or a discussion. */
-  to: string | string[];
-  kind: "tell" | "ask" | "reply" | "decision";
-  text: string;
-  reply_to?: string;
-  hop: number;
-  at: string;
-  /** Held at the hop limit until the user releases it. */
-  held?: boolean;
-  released: boolean;
-  delivered: boolean;
-};
-export type CrewTask = { id: string; title: string; status: string; owner: string | null; labels: string[]; notes: string[] };
-export type CrewDoc = { path: string; rel: string; title: string | null; updated?: string };
-export type CrewState = {
-  id: string;
-  title: string;
-  path: string;
-  rel: string;
-  project: string | null;
-  max_hops: number;
-  /** The members' model unless they set their own. */
-  model: string | null;
-  members: CrewMember[];
-  goal: string;
-  members_state: CrewMemberState[];
-  messages: CrewMessage[];
-  tasks: CrewTask[];
-  /** The task list's absolute path. */
-  tasks_path: string;
-  docs: CrewDoc[];
-};
+/** A document a session saved with `write_doc`. */
+export type SessionDoc = { path: string; rel: string; title: string | null; updated?: string };
 // Agent SDK messages plus marq_meta / marq_user / marq_approval / marq_exit.
 export type SessionEvent = { type: string; [k: string]: any };
 
@@ -291,17 +241,8 @@ export const api = {
   inboxClear: () => invoke<void>("inbox_clear"),
   setNoteStatus: (vault: string, path: string, status: string) => invoke<void>("set_note_status", { vault, path, status }),
   recentProjects: (vault: string) => invoke<string[]>("recent_projects", { vault }),
-  /** `crewId` is the crew note's id or vault-relative path. */
-  crewState: (vault: string, crewId: string) => invoke<CrewState>("crew_state", { vault, crewId }),
   /** Documents a session's task produced (`write_doc`), newest first. */
-  sessionDocs: (vault: string, sessionId: string) => invoke<CrewDoc[]>("session_docs", { vault, sessionId }),
-  crewSend: (vault: string, crewId: string, to: string, text: string) =>
-    invoke<{ id: string; held: boolean }>("crew_send", { vault, crewId, to, text }),
-  crewKickOff: (vault: string, crewId: string) => invoke<void>("crew_kick_off", { vault, crewId }),
-  /** Empty goes back to the crew's model. */
-  crewSetModel: (vault: string, crewId: string, role: string, model: string) =>
-    invoke<string | null>("crew_set_model", { vault, crewId, role, model }),
-  /** Starts a task as a crew: a crew note with the prompt as its Goal, sent to its lead. */
+  sessionDocs: (vault: string, sessionId: string) => invoke<SessionDoc[]>("session_docs", { vault, sessionId }),
   terminalOpen: (id: string, cwd: string, cols: number, rows: number, command?: string) =>
     invoke<void>("terminal_open", { id, cwd, cols, rows, command }),
   /** `expanded`: each word the glossary or aliases widened, with what it also matched (the word first). */
@@ -366,12 +307,6 @@ export const api = {
   /** The models an agent (empty: Claude) lists for this login, with the efforts each supports. */
   agentModels: (agent?: string) => invoke<ModelOption[]>("agent_models", { agent }),
   ollamaModels: () => invoke<string[]>("ollama_models"),
-  newCrew: (vault: string, task: { title: string; prompt: string; project: string; autoTitle: boolean; workspace?: string; directories?: DirSpec[] }) =>
-    invoke<{ rel: string; title: string }>("new_crew", { vault, ...task }),
-  /** An empty owner unassigns the task. */
-  crewTaskUpdate: (vault: string, crewId: string, id: string, change: { status?: string; owner?: string }) =>
-    invoke<CrewTask>("crew_task_update", { vault, crewId, id, ...change }),
-  crewRelease: (vault: string, crewId: string, msgId: string) => invoke<void>("crew_release", { vault, crewId, msgId }),
   sessionOrigin: (vault: string, sessionId: string) =>
     invoke<{ path: string; line: number } | null>("session_origin", { vault, sessionId }),
 };

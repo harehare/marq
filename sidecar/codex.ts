@@ -159,7 +159,7 @@ class CodexSession implements AgentSession {
   private async setup(initialized: Promise<unknown>) {
     const c = this.c;
     await initialized;
-    const m = await mcpUrl(c.id, c.crew);
+    const m = await mcpUrl(c.id);
     this.closeMcp = m.close;
     const params = {
       cwd: c.cwd,

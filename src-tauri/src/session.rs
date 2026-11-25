@@ -40,9 +40,6 @@ pub struct SessionMeta {
     /// Set when the session works in its own git worktree.
     #[serde(default)]
     pub worktree: Option<git::Worktree>,
-    /// Set when the session is a member of a crew.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crew: Option<crate::crew::CrewRef>,
     /// `on` or `strict`: Bash runs in Claude Code's OS sandbox (see `workflow::sandbox_of`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<String>,
@@ -59,7 +56,7 @@ pub struct SessionMeta {
     /// Directories beyond `cwd` the agent may read and edit, from a workspace or the request.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirs: Vec<crate::workspace::ExtraDir>,
-    /// The workspace note the session's request or crew named, relative to the vault.
+    /// The workspace note the session's request named, relative to the vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
 }
@@ -105,9 +102,6 @@ pub fn set_review(vault: &Path, id: &str, state: &str, url: Option<&str>) -> Res
     }
     append(&raw_path(vault, id), &line)?;
     let meta = meta(vault, id)?;
-    if meta.crew.is_some() {
-        return Ok(None);
-    }
     let Some(path) = find_origin(vault, &meta) else { return Ok(None) };
     let text = std::fs::read_to_string(&path)?;
     if vault::fm_get(&text, "id").as_deref() != Some(meta.origin.as_str()) {
@@ -401,9 +395,8 @@ pub fn append(path: &Path, value: &Value) -> Result<()> {
 pub fn write_back(vault: &Path, id: &str) -> Result<Option<String>> {
     let events = read_events(vault, id)?;
     let Some(meta) = meta_of(&events) else { return Ok(None) };
-    // A crew member's results go to the crew's timeline, not into the crew note, and an acceptance
-    // check's verdict goes to the session it checks.
-    if meta.crew.is_some() || meta.verifies.is_some() {
+    // An acceptance check's verdict goes to the session it checks.
+    if meta.verifies.is_some() {
         return Ok(None);
     }
     let Some(result) = last_result(&events) else {
@@ -746,7 +739,6 @@ mod tests {
             model: None,
             agent: None,
             worktree: None,
-            crew: None,
             ..Default::default()
         }
     }

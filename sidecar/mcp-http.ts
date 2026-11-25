@@ -8,7 +8,7 @@ import { log } from "./protocol.ts";
 import { vaultServer } from "./tools.ts";
 
 /** Token in the URL → the session its tools act for. */
-const routes = new Map<string, { sessionId: string; crew: boolean }>();
+const routes = new Map<string, { sessionId: string }>();
 let port: Promise<number> | undefined;
 
 /** Starts the server on a free loopback port the first time a session needs it. */
@@ -21,7 +21,7 @@ function listen(): Promise<number> {
         return;
       }
       // Stateless: a server and a transport for each request.
-      const { instance } = vaultServer(route.sessionId, route.crew);
+      const { instance } = vaultServer(route.sessionId);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => {
         void transport.close();
@@ -42,9 +42,9 @@ function listen(): Promise<number> {
 }
 
 /** A URL that serves marq's tools to one session, until `close`. The random token keeps other local processes out. */
-export async function mcpUrl(sessionId: string, crew: boolean): Promise<{ url: string; close: () => void }> {
+export async function mcpUrl(sessionId: string): Promise<{ url: string; close: () => void }> {
   const p = await listen();
   const token = randomBytes(24).toString("hex");
-  routes.set(token, { sessionId, crew });
+  routes.set(token, { sessionId });
   return { url: `http://127.0.0.1:${p}/mcp/${token}`, close: () => routes.delete(token) };
 }

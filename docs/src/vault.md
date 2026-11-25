@@ -12,7 +12,6 @@ The Markdown files in the vault are the source of truth. There is no database to
 ├─ sessions/YYYY-MM-DD-<short-id>.md  # derived from .raw, regenerable
 ├─ sessions/.raw/<id>.jsonl           # raw agent log (source of truth for a session)
 ├─ docs/*.md                          # documents written by agents
-├─ crews/<name>.md, crews/<name>/     # crews: the note, its task list and documents
 ├─ boards/<name>.md                   # kanban boards
 ├─ specs/<slug>.md                    # specs: requirements, design, tasks, acceptance
 ├─ playbooks/<name>.md                # playbooks: the phases a kind of task runs in
@@ -36,7 +35,7 @@ Only `sessions/` and dot folders belong to Marq; `instructions.md` is yours, and
 ```yaml
 ---
 id: 0192f0c4-...            # assigned the first time Marq links something to the file
-type: note                  # note | scratch | request | session | crew | board | doc | schedule | glossary | knowledge
+type: note                  # note | scratch | request | session | board | doc | schedule | glossary | knowledge
 title: ...                  # optional, defaults to the first heading or the filename
 created: 2026-10-27T10:12:00+09:00
 updated: 2026-10-27T11:40:00+09:00
@@ -128,7 +127,7 @@ A search can be narrowed by what the frontmatter says. Pick from the pull-downs 
 
 Giving one filter twice (`type:request type:doc`) keeps either; different filters must all hold. Filters work without any words, so `type:request status:todo project:mq` lists the open requests of a project.
 
-A session records the workspace its request or crew named, as `workspace:` in the session note. Sessions from before that take it from their request.
+A session records the workspace its request named, as `workspace:` in the session note. Sessions from before that take it from their request.
 
 ## Knowledge notes
 

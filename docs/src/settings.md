@@ -54,13 +54,13 @@ kimi = { label = "Kimi", command = "kimi", args = ["acp"] }
 
 `palette` is used until you pick one in the 🎨 menu.
 
-With `sidebar = "rail"` (or **Settings → Appearance → Sidebar**, or the **Icons only** button at the top of the sidebar) only a column of icons shows: Search (full-text, ⇧⌘F), New task, then Inbox, Active, Sessions, Recent, Boards, Crews, Schedules and Notes, with note, terminal, theme and settings below. An icon opens that list over the content; picking an item, clicking outside it or pressing the icon again puts it away. ⌘B hides the icons too, and the button at the bottom of the rail brings the full sidebar back.
+With `sidebar = "rail"` (or **Settings → Appearance → Sidebar**, or the **Icons only** button at the top of the sidebar) only a column of icons shows: Search (full-text, ⇧⌘F), New task, then Inbox, Active, Sessions, Recent, Boards, Workspaces, Schedules and Notes, with note, terminal, theme and settings below. An icon opens that list over the content; picking an item, clicking outside it or pressing the icon again puts it away. ⌘B hides the icons too, and the button at the bottom of the rail brings the full sidebar back.
 
 ## Agents
 
 Tasks run on Claude Code by default. The New task dialog can run one on Codex (`codex app-server`, Codex's own embedding interface) or on another agent that speaks [ACP](https://agentclientprotocol.com) (Agent Client Protocol) instead: Gemini CLI (`gemini --experimental-acp`), OpenCode (`opencode acp`), Qwen Code (`qwen --experimental-acp`) or Goose (`goose acp`). **Settings → Agents** changes an agent's `command` or `args`, or adds another ACP agent; they are saved as `[agents.<id>]`, which you can also edit in the file.
 
-Such a session uses the agent's own model and tools. Marq's tools reach it over MCP (HTTP) when the agent supports that, and its permission requests show up as approval cards. Teams and model choice are Claude only (such an agent can still be one run of a comparison).
+Such a session uses the agent's own model and tools. Marq's tools reach it over MCP (HTTP) when the agent supports that, and its permission requests show up as approval cards. Model choice is Claude only (such an agent can still be one run of a comparison).
 
 ## Keys
 
