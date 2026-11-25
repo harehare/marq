@@ -1104,6 +1104,11 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
   background: var(--bg-raised); border: 1px solid var(--border); box-shadow: var(--shadow);
 }
 .palette input { width: 100%; padding: 12px 14px; font: inherit; font-size: 14px; border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); outline: none; }
+.palette-scopes { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.palette-scopes button { display: inline-flex; align-items: center; gap: 5px; border: none; background: transparent; color: var(--muted); padding: 3px 8px; font-size: 12px; }
+.palette-scopes button.on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.palette-scopes kbd { font-size: 10px; background: var(--bg-hover); }
+.palette-scopes > span { margin-left: auto; padding-right: 6px; font-family: var(--font-mono); }
 .palette-list { max-height: 360px; overflow: auto; padding: 4px; }
 .palette-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
 .palette-item.on { background: var(--accent-soft); color: var(--fg-strong); }

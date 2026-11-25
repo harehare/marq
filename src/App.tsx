@@ -2260,7 +2260,7 @@ export default function App() {
       )}
       {showQuickOpen && (
         <QuickOpen files={files} recent={recentFiles} sessions={sessions} onClose={() => setShowQuickOpen(false)}
-          placeholder="Open a note, board, crew or session…  (⇧↵ searches the text)"
+          placeholder="Open a note, board, crew or session…  (Tab narrows, ⇧↵ searches the text)"
           onOpen={(f) => (f.kind === "crew" ? openCrew(f) : openFile(f.path))}
           onOpenSession={(s) => openSession(s.id, s.title)} onSearch={openSearch} />
       )}
