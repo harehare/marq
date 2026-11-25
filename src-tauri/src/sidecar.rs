@@ -835,6 +835,13 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
                 .collect();
             Ok(json!(list))
         }
+        "related_sessions" => {
+            let runner = app.state::<Runner>();
+            let all = session::list(vault, None);
+            let Some(me) = all.iter().find(|x| x.meta.id == session) else { return Ok(json!([])) };
+            let active = |x: &session::SessionInfo| x.status == "running" || runner.is_alive(&x.meta.id);
+            Ok(json!(session::related(me, &all, active)))
+        }
         "search_sessions" => {
             let opt = |k: &str| p[k].as_str().filter(|v| !v.is_empty());
             let limit = p["limit"].as_u64().unwrap_or(10).clamp(1, 30) as usize;

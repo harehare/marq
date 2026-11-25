@@ -757,6 +757,56 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
     )
 }
 
+/// A session that works on the same thing as another, and why.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Related {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub branch: Option<String>,
+    /// `same branch`, `same origin` and `active in the same repository`, strongest first.
+    pub reasons: Vec<&'static str>,
+}
+
+/// The sessions among `all` that work on the same thing as `me`: the same branch of the same
+/// repository, the same origin note (the card or request they started from), or any session still
+/// at work in the same repository (`active` says which). Sessions with no reason are left out;
+/// the ones with the most reasons come first, then the most recent.
+pub fn related(me: &SessionInfo, all: &[SessionInfo], active: impl Fn(&SessionInfo) -> bool) -> Vec<Related> {
+    fn branch(i: &SessionInfo) -> Option<&str> {
+        i.meta.worktree.as_ref().map(|w| w.branch.as_str()).filter(|b| !b.is_empty())
+    }
+    let mut found: Vec<(&SessionInfo, Vec<&'static str>)> = Vec::new();
+    for other in all.iter().filter(|o| o.meta.id != me.meta.id) {
+        let same_repo = !me.meta.project().is_empty() && other.meta.project() == me.meta.project();
+        let mut reasons = Vec::new();
+        if same_repo && branch(me).is_some() && branch(me) == branch(other) {
+            reasons.push("same branch");
+        }
+        if !me.meta.origin_path.is_empty() && other.meta.origin_path == me.meta.origin_path {
+            reasons.push("same origin");
+        }
+        if same_repo && active(other) {
+            reasons.push("active in the same repository");
+        }
+        if !reasons.is_empty() {
+            found.push((other, reasons));
+        }
+    }
+    // `all` is most recent first, so a stable sort on the number of reasons keeps that order.
+    found.sort_by_key(|(_, r)| std::cmp::Reverse(r.len()));
+    found
+        .into_iter()
+        .map(|(o, reasons)| Related {
+            id: o.meta.id.clone(),
+            title: o.meta.title.clone(),
+            status: o.status.clone(),
+            branch: branch(o).map(String::from),
+            reasons,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,6 +826,72 @@ mod tests {
             worktree: None,
             ..Default::default()
         }
+    }
+
+    fn info(id: &str, origin: &str, repo: &str, branch: Option<&str>, status: &str) -> SessionInfo {
+        let mut m = meta();
+        m.id = id.into();
+        m.title = format!("title {id}");
+        m.origin_path = origin.into();
+        m.cwd = repo.into();
+        m.worktree = branch.map(|b| git::Worktree {
+            repo: repo.into(),
+            path: format!("{repo}-wt"),
+            branch: b.into(),
+            base: String::new(),
+            base_branch: "main".into(),
+        });
+        SessionInfo {
+            meta: m,
+            status: status.into(),
+            path: String::new(),
+            additions: None,
+            deletions: None,
+            review: None,
+            pr_url: None,
+            context: None,
+        }
+    }
+
+    #[test]
+    fn finds_related_sessions() {
+        let me = info("me", "boards/a.md", "/work/app", Some("feat/x"), "running");
+        let all = vec![
+            info("me", "boards/a.md", "/work/app", Some("feat/x"), "running"),
+            info("branch", "boards/b.md", "/work/app", Some("feat/x"), "done"),
+            info("origin", "boards/a.md", "/elsewhere", None, "done"),
+            info("busy", "boards/c.md", "/work/app", Some("feat/y"), "running"),
+            info("idle", "boards/d.md", "/work/app", Some("feat/z"), "done"),
+            info("other", "boards/e.md", "/other", Some("feat/x"), "running"),
+        ];
+        let got = related(&me, &all, |i| i.status == "running");
+        let ids: Vec<_> = got.iter().map(|r| r.id.as_str()).collect();
+        // Itself, a finished session on another branch and another repository's "feat/x" are left out.
+        assert_eq!(ids, ["branch", "origin", "busy"]);
+        assert_eq!(got[0].reasons, ["same branch"]);
+        assert_eq!(got[1].reasons, ["same origin"]);
+        assert_eq!(got[2].reasons, ["active in the same repository"]);
+        assert_eq!(got[0].branch.as_deref(), Some("feat/x"));
+    }
+
+    #[test]
+    fn ranks_by_number_of_reasons() {
+        let me = info("me", "boards/a.md", "/work/app", Some("feat/x"), "running");
+        let all = vec![
+            info("a", "boards/z.md", "/work/app", Some("feat/y"), "running"),
+            info("b", "boards/a.md", "/work/app", Some("feat/x"), "running"),
+        ];
+        let got = related(&me, &all, |i| i.status == "running");
+        assert_eq!(got[0].id, "b");
+        assert_eq!(got[0].reasons, ["same branch", "same origin", "active in the same repository"]);
+        assert_eq!(got[1].id, "a");
+    }
+
+    #[test]
+    fn empty_origin_and_branch_do_not_match() {
+        let me = info("me", "", "/work/app", None, "done");
+        let all = vec![info("a", "", "/work/app", None, "done"), info("b", "", "/work/app", Some(""), "done")];
+        assert!(related(&me, &all, |_| false).is_empty());
     }
 
     #[test]

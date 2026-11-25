@@ -122,6 +122,10 @@ export function vaultServer(sessionId: string) {
         { path: z.string() }, async (a) => text(await rpc("trash_note", { ...a, session: sessionId }))),
       tool("list_sessions", "List the user's other sessions in Marq (id, title, status, working directory), most recent first.",
         {}, async () => text(await rpc("list_sessions", { session: sessionId }))),
+      tool("related_sessions",
+        "List the user's other sessions that work on the same thing as this one: on the same branch, started from the same note or card, or still at work in the same repository, with the reasons. " +
+          "Use it when your work may affect another session's (shared files, a branch, a change of plan) or may depend on its findings; then read_session or send_to_session.",
+        {}, async () => text(await rpc("related_sessions", { session: sessionId }))),
       tool("search_sessions", "Search past sessions by text (words also match their glossary synonyms): sessions whose log mentions every word, best matches first, each with its note path and best lines. project narrows it to a directory or repository (part of its path), since to sessions started on or after a YYYY-MM-DD date. status:, project:, workspace:, since: and before: can also be written in text, with or without words. Read a hit with read_note on its note path.",
         { text: z.string(), project: z.string().optional(), since: z.string().optional(), limit: z.number().optional() },
         async (a) => text(await rpc("search_sessions", { ...a, session: sessionId }))),
@@ -140,7 +144,7 @@ export function vaultServer(sessionId: string) {
 // Pre-approved: they only read the vault and sessions, or write Marq's own files in the vault.
 // send_to_session is left out so each send goes through the approval card.
 // move_note, trash_note and tag_note change the user's notes, so they ask too.
-export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "list_comments", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_tags", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
+export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "list_comments", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_tags", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "related_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder",
   "list_boards", "read_board", "search_cards", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);
