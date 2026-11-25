@@ -2400,6 +2400,11 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 /* The session's composer: the text on top, its options and the send buttons in a row under it, all inside the one frame. */
 .composer-box.stacked { flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 8px 8px 14px; }
 .composer-box.stacked > .slash-wrap { flex: none; }
+.composer-to { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); }
+.composer-to > svg { flex: none; color: var(--info); }
+.composer-to > b { color: var(--fg-strong); min-width: 0; }
+.composer-to > .check { flex: none; margin-left: 8px; }
+.composer-to > .icon { flex: none; margin-left: auto; padding: 2px; }
 .composer-bar { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: -7px; }
 .composer-bar-gap { flex: 1; }
 .composer-bar > button { flex: none; }

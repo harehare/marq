@@ -267,6 +267,8 @@ Select text in a note or a session and choose **Send to session** (⌘⇧↵ in 
 
 The ↪ button next to Send in a session's message box sends what you typed, with that session's latest answer, to another session. When the text comes from a session (this button or a selection in it), **Send its answer back** returns the other session's answer to the first one when it finishes that turn, so two sessions can work on something together. Both sessions show where a message came from and went; click it to open the other session.
 
+To send a message straight to another session, type `@` at the start of a line in a session's message box and pick the session (those at work first, then those on the same project), or choose `/send` from the `/` list. The message box then shows who it is for, and the next message goes there instead of to the session you are in; a stopped session is resumed. Its answer comes back as a message when it finishes the turn. Untick **answer comes back here**, or use `/tell` instead of `/send`, to send without one. Backspace in an empty message, or the ✕, goes back to the session you are in.
+
 Agents can also coordinate with each other through `list_sessions`, `read_session` and `send_to_session`; every send needs your approval. A message sent with `send_to_session` gets its answer back the same way unless the agent passes `reply: false`. See [Vault tools for agents](tools.md).
 
 ## Learnings

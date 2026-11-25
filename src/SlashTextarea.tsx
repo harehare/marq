@@ -1,5 +1,5 @@
 import { forwardRef, KeyboardEvent, TextareaHTMLAttributes, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { FileText, ListOrdered, Loader2 } from "lucide-react";
+import { FileText, Forward, ListOrdered, Loader2 } from "lucide-react";
 import { api, FileEntry, Playbook, SlashCommand } from "./api";
 import { useVaultFiles } from "./wikilinks";
 import { composing } from "./keys";
@@ -31,6 +31,26 @@ function slashToken(text: string, cursor: number) {
 function wikiToken(text: string, cursor: number) {
   const m = text.slice(0, cursor).match(/\[\[([^[\]|#\n]*)$/);
   return m ? { query: m[1].toLowerCase(), start: cursor - m[1].length - 2 } : null;
+}
+
+/** The `@word` being typed at the start of a line, ending at the cursor: another session to send to. */
+function atToken(text: string, cursor: number) {
+  const m = text.slice(0, cursor).match(/(^|\n)@([^\s@]*)$/);
+  return m ? { query: m[2].toLowerCase(), start: cursor - m[2].length - 1 } : null;
+}
+
+/** Another session a message can be sent to; `detail` says where it works. */
+export type SessionTarget = { id: string; title: string; status: string; detail: string };
+
+/** Marq's own commands under `/`: both go on to pick a session, as `@` does. */
+const SEND_COMMANDS = [
+  { name: "send", reply: true, description: "Send this message to another session; its answer comes back here" },
+  { name: "tell", reply: false, description: "Send this message to another session, without an answer coming back" },
+];
+
+/** Sessions for `@`, in the order given, by every part of the query in the title or where it works. */
+function rankSessions(sessions: SessionTarget[], q: string) {
+  return sessions.filter((s) => `${s.title} ${s.detail}`.toLowerCase().includes(q)).slice(0, 30);
 }
 
 const stem = (rel: string) => rel.split("/").pop()!.replace(/\.md$/, "");
@@ -101,17 +121,27 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
   /** Playbooks offered under `/`, before the commands. Picking one takes the `/word` out of the text and calls `onPlaybook`. */
   playbooks?: Playbook[];
   onPlaybook?: (playbook: Playbook) => void;
+  /**
+   * Other sessions offered under `@` at the start of a line, and through `/send` and `/tell`. Picking one takes
+   * the `@word` out of the text and calls `onSession`; `reply` is whether its answer should come back.
+   */
+  sessions?: SessionTarget[];
+  onSession?: (session: SessionTarget, reply: boolean) => void;
 };
 
-/** A textarea that completes `/` commands and skills from Claude Code (and playbooks, when given), and `[[` with notes from the vault. */
+/** A textarea that completes `/` commands and skills from Claude Code (and playbooks, when given), `[[` with notes from the vault, and `@` with other sessions (when given). */
 export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function SlashTextarea(
-  { value, onChange, vault, cwd, sessionId, placement = "above", pastes, playbooks, onPlaybook, onKeyDown, onPaste, ...rest },
+  { value, onChange, vault, cwd, sessionId, placement = "above", pastes, playbooks, onPlaybook, sessions, onSession, onKeyDown, onPaste, ...rest },
   outer,
 ) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(outer, () => ref.current!);
   const [token, setToken] = useState<{ query: string; start: number } | null>(null);
   const [wiki, setWiki] = useState<{ query: string; start: number } | null>(null);
+  const [at, setAt] = useState<{ query: string; start: number } | null>(null);
+  // Whether the session being picked should answer back: `/tell` turns it off for that one pick.
+  const reply = useRef(true);
+  const canSend = !!sessions && !!onSession;
   const files = useVaultFiles();
   const [cmds, setCmds] = useState<SlashCommand[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -133,22 +163,60 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
   const books = token && playbooks && onPlaybook ? rankPlaybooks(playbooks, token.query) : [];
   const notes = wiki ? rankNotes(files, wiki.query) : [];
   const wikiOpen = !!wiki && notes.length > 0;
-  const open = wikiOpen || (!!token && (books.length > 0 || matches.length > 0 || !cmds || !!error));
-  const count = wikiOpen ? notes.length : books.length + matches.length;
+  const targets = at && canSend ? rankSessions(sessions, at.query) : [];
+  const atOpen = !!at && canSend;
+  const sends = token && canSend ? SEND_COMMANDS.filter((c) => c.name.startsWith(token.query)) : [];
+  const open = wikiOpen || atOpen || (!!token && (sends.length > 0 || books.length > 0 || matches.length > 0 || !cmds || !!error));
+  const count = wikiOpen ? notes.length : atOpen ? targets.length : sends.length + books.length + matches.length;
 
-  useEffect(() => setIndex(0), [token?.query, wiki?.query]);
+  useEffect(() => setIndex(0), [token?.query, wiki?.query, at?.query]);
   useEffect(() => {
     listRef.current?.querySelector(".slash-item.on")?.scrollIntoView({ block: "nearest" });
   }, [index]);
 
   const update = (text: string, cursor: number) => {
     const w = wikiToken(text, cursor);
+    const a = w || !canSend ? null : atToken(text, cursor);
     setWiki(w);
-    setToken(w ? null : slashToken(text, cursor));
+    setAt(a);
+    // Typing `@` by hand asks for the answer back; only `/tell` goes on without it.
+    if (!a) reply.current = true;
+    setToken(w || a ? null : slashToken(text, cursor));
   };
   const close = () => {
     setToken(null);
     setWiki(null);
+    setAt(null);
+  };
+
+  /** Takes the `@word` out of the text and hands the session to the owner. */
+  const pickSession = (s: SessionTarget) => {
+    if (!at) return;
+    const el = ref.current!;
+    onChange(`${value.slice(0, at.start)}${value.slice(el.selectionStart)}`);
+    const pos = at.start;
+    onSession?.(s, reply.current);
+    close();
+    reply.current = true;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  /** `/send` and `/tell` become an `@`, so the same list of sessions opens. */
+  const pickSend = (c: (typeof SEND_COMMANDS)[number]) => {
+    if (!token) return;
+    const el = ref.current!;
+    onChange(`${value.slice(0, token.start)}@${value.slice(el.selectionStart)}`);
+    const pos = token.start + 1;
+    setToken(null);
+    setAt({ query: "", start: token.start });
+    reply.current = c.reply;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
   };
 
   const insertNote = (f: FileEntry) => {
@@ -206,8 +274,10 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
       if ((e.key === "Enter" && !e.metaKey && !e.ctrlKey) || e.key === "Tab") {
         e.preventDefault();
         if (wikiOpen) insertNote(notes[index]);
-        else if (index < books.length) pickPlaybook(books[index]);
-        else insert(matches[index - books.length]);
+        else if (atOpen) pickSession(targets[index]);
+        else if (index < sends.length) pickSend(sends[index]);
+        else if (index < sends.length + books.length) pickPlaybook(books[index - sends.length]);
+        else insert(matches[index - sends.length - books.length]);
         return;
       }
     }
@@ -268,10 +338,50 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
           ))}
         </div>
       )}
-      {open && !wikiOpen && (
+      {atOpen && !wikiOpen && (
+        <div ref={listRef} className={`slash-list ${placement}`} role="listbox">
+          {targets.length === 0 && <div className="slash-empty">No other session matches.</div>}
+          {targets.map((s, i) => (
+            <button
+              key={s.id}
+              className={`slash-item ${i === index ? "on" : ""}`}
+              role="option"
+              aria-selected={i === index}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pickSession(s);
+              }}
+              onMouseEnter={() => setIndex(i)}
+            >
+              <span className={`dot ${s.status}`} />
+              <span className="slash-name">{s.title}</span>
+              <span className="slash-desc">{s.detail}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && !wikiOpen && !atOpen && (
         <div ref={listRef} className={`slash-list ${placement}`} role="listbox">
           {error && <div className="slash-empty err">{error}</div>}
-          {books.map((b, i) => (
+          {sends.map((c, i) => (
+            <button
+              key={`send-${c.name}`}
+              className={`slash-item ${i === index ? "on" : ""}`}
+              role="option"
+              aria-selected={i === index}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pickSend(c);
+              }}
+              onMouseEnter={() => setIndex(i)}
+            >
+              <Forward size={12} className="muted" />
+              <span className="slash-name">/{c.name}</span>
+              <span className="slash-badge">marq</span>
+              <span className="slash-desc">{c.description}</span>
+            </button>
+          ))}
+          {books.map((b, n) => [b, n + sends.length] as const).map(([b, i]) => (
             <button
               key={`playbook-${b.name}`}
               className={`slash-item ${i === index ? "on" : ""}`}
@@ -290,7 +400,7 @@ export const SlashTextarea = forwardRef<HTMLTextAreaElement, Props>(function Sla
             </button>
           ))}
           {!cmds && !error && <div className="slash-empty"><Loader2 size={13} className="spin" /> Loading skills and commands…</div>}
-          {matches.map((c, n) => [c, n + books.length] as const).map(([c, i]) => (
+          {matches.map((c, n) => [c, n + sends.length + books.length] as const).map(([c, i]) => (
             <button
               key={`${c.name}-${i}`}
               className={`slash-item ${i === index ? "on" : ""}`}

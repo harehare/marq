@@ -417,7 +417,12 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const [approvals, setApprovals] = useState<Approval[]>([]);
   // Review state lives in the session list, not in the streamed events.
   const [info, setInfo] = useState<SessionInfo | null>(null);
-  const loadInfo = () => api.listSessions(vault).then((l) => setInfo(l.find((x) => x.id === sessionId) ?? null));
+  // The other sessions, for sending this one's message to one of them.
+  const [others, setOthers] = useState<SessionInfo[]>([]);
+  const loadInfo = () => api.listSessions(vault).then((l) => {
+    setInfo(l.find((x) => x.id === sessionId) ?? null);
+    setOthers(l.filter((x) => x.id !== sessionId));
+  });
   const setReview = async (state: "done" | "open") => {
     try {
       await api.setSessionReview(vault, sessionId, state);
@@ -628,11 +633,28 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
     return () => document.removeEventListener("keydown", onKey);
   }, [sessionId]);
 
+  // Where the message goes instead of this session, picked with `@`, `/send` or `/tell`. One message only.
+  const [target, setTarget] = useState<{ id: string; title: string; reply: boolean } | null>(null);
+  // Sessions at work first, then those on the same project, each newest first.
+  const targets = useMemo(() => {
+    const project = info?.worktree?.repo ?? info?.cwd;
+    const rank = (s: SessionInfo) => (s.status === "running" || s.status === "waiting" ? 0 : (s.worktree?.repo ?? s.cwd) === project ? 1 : 2);
+    return others
+      .map((s, i) => ({ s, i }))
+      .sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i)
+      .map(({ s }) => ({
+        id: s.id, title: s.title, status: s.status,
+        detail: [s.status, s.worktree?.branch ?? (s.worktree?.repo ?? s.cwd).split("/").filter(Boolean).pop(), s.started.slice(0, 10)].filter(Boolean).join(" · "),
+      }));
+  }, [others, info]);
+
   const send = async () => {
     const text = pastes.expand(input);
     if (!text) return;
     try {
-      await api.sendMessage(vault, sessionId, text);
+      if (target) await api.forwardMessage(vault, sessionId, target.id, text, target.reply);
+      else await api.sendMessage(vault, sessionId, text);
+      setTarget(null);
       saveHistory(text);
       recall.current = null;
       setInput("");
@@ -752,6 +774,15 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
         )}
         <Resizer axis="y" sign={-1} pane={composerHeight} />
         <div className="composer-box stacked">
+          {target && (
+            <div className="composer-to small">
+              <Forward size={12} /> To <b className="ellipsis" title={target.title}>{target.title}</b>
+              <label className="check" title="When that session finishes its turn, its answer arrives here as a message">
+                <input type="checkbox" checked={target.reply} onChange={(e) => setTarget({ ...target, reply: e.target.checked })} /> answer comes back here
+              </label>
+              <button className="icon" title="Send to this session instead (Backspace in an empty message)" onClick={() => setTarget(null)}><X size={12} /></button>
+            </div>
+          )}
           <SlashTextarea
             ref={composerRef}
             value={input}
@@ -759,9 +790,13 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             vault={vault}
             sessionId={sessionId}
             pastes={pastes}
-            placeholder={running ? `Queue a follow-up for after this turn…  (${sendHint(sendKey)}, Esc to interrupt)` : `Follow up… / for skills and commands  (${sendHint(sendKey)} to send)`}
+            sessions={targets}
+            onSession={(s, reply) => setTarget({ id: s.id, title: s.title, reply })}
+            placeholder={target ? `Message for ${target.title}…  (${sendHint(sendKey)} to send)`
+              : running ? `Queue a follow-up for after this turn…  (${sendHint(sendKey)}, Esc to interrupt)` : `Follow up… / for skills and commands, @ for another session  (${sendHint(sendKey)} to send)`}
             onKeyDown={(e) => {
               if (isSendKey(e, sendKey)) { e.preventDefault(); send(); }
+              else if (e.key === "Backspace" && target && !input) setTarget(null);
               else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey) recallKey(e);
             }}
           />
@@ -772,7 +807,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
               title="Send to another session: what you typed, with this session's latest answer. Its answer can come back here.">
               <Forward size={15} />
             </button>
-            <button className="send" onClick={send} disabled={!input.trim() && !pastes.items.length} title="Send">
+            <button className="send" onClick={send} disabled={!input.trim() && !pastes.items.length} title={target ? `Send to ${target.title}` : "Send"}>
               <ArrowUp size={16} />
             </button>
           </div>
