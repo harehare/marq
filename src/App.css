@@ -2404,6 +2404,13 @@ button.link:hover:not(:disabled) { color: var(--accent); background: transparent
 .composer-to > svg { flex: none; color: var(--info); }
 .composer-to > b { color: var(--fg-strong); min-width: 0; }
 .composer-to > .check { flex: none; margin-left: 8px; }
+.composer-related { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.composer-related > .muted { flex: none; }
+.related-chip { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 220px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-hover); color: var(--fg); font-size: 12px; cursor: pointer; }
+.related-chip:hover { border-color: var(--border-strong); }
+.related-chip .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.related-chip .dot.status-running, .related-chip .dot.status-waiting { background: var(--run); }
+.related-chip > .muted { flex: none; max-width: 90px; }
 .composer-to > .icon { flex: none; margin-left: auto; padding: 2px; }
 .composer-bar { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: -7px; }
 .composer-bar-gap { flex: 1; }

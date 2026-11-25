@@ -25,6 +25,7 @@ Moving never overwrites, never leaves the vault, and refuses `sessions/` and dot
 | Tool | Approval | Description |
 | --- | --- | --- |
 | `list_sessions()` | no | Other sessions: id, title, status, working directory, branch |
+| `related_sessions()` | no | Other sessions working on the same thing as this one, with the reasons: `same branch`, `same origin` (started from the same note or card) and `active in the same repository`. Most reasons first |
 | `search_sessions(text, project?, since?, limit?)` | no | Past sessions whose note mentions every word (glossary synonyms too, anywhere in the note), best matches first, each with its note path and three best lines. `project` is part of a directory or repository path, `since` a `YYYY-MM-DD` date; the [search filters](vault.md#search-filters) work in `text` too. Read a hit with `read_note` |
 | `read_session(session_id)` | no | Another session's status, first prompt and latest result |
 | `send_to_session(session_id, text, reply?)` | yes | Send a message to another session. Messages start with "Message from another Marq session". With `reply` (default true), the answer to it comes back as a new message when that session finishes the turn |

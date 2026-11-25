@@ -835,6 +835,7 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
                 .collect();
             Ok(json!(list))
         }
+        "related_sessions" => Ok(json!(related_of(app, vault, session))),
         "search_sessions" => {
             let opt = |k: &str| p[k].as_str().filter(|v| !v.is_empty());
             let limit = p["limit"].as_u64().unwrap_or(10).clamp(1, 30) as usize;
@@ -859,6 +860,15 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
         }
         _ => Err(Error::Other(format!("unknown method: {method}"))),
     }
+}
+
+/// The sessions working on the same thing as `session`; a session is at work when it is running
+/// or its process is alive.
+pub fn related_of(app: &AppHandle, vault: &Path, session: &str) -> Vec<session::Related> {
+    let runner = app.state::<Runner>();
+    let all = session::list(vault, None);
+    let Some(me) = all.iter().find(|x| x.meta.id == session) else { return Vec::new() };
+    session::related(me, &all, |x| x.status == "running" || runner.is_alive(&x.meta.id))
 }
 
 /// Case-insensitive line search over the vault, at most 40 hits.
