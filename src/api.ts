@@ -75,6 +75,9 @@ export type FileEntry = {
 };
 export type Anchor = { id: string; line: number };
 export type FileResult = { file: string | null; items: string[] };
+/** A session working on the same thing as another, and why (`same branch`, `same origin`, `active in the same repository`). */
+export type RelatedSession = { id: string; title: string; status: string; branch: string | null; reasons: string[] };
+
 export type SessionInfo = {
   id: string;
   title: string;
@@ -174,6 +177,7 @@ export const api = {
   stopSession: (sessionId: string) => invoke<boolean>("stop_session", { sessionId }),
   resumeSession: (vault: string, sessionId: string) => invoke<void>("resume_session", { vault, sessionId }),
   sessionEvents: (vault: string, sessionId: string) => invoke<SessionEvent[]>("session_events", { vault, sessionId }),
+  relatedSessions: (vault: string, sessionId: string) => invoke<RelatedSession[]>("related_sessions", { vault, sessionId }),
   listSessions: (vault: string, origin?: string) => invoke<SessionInfo[]>("list_sessions", { vault, origin }),
   /** With `autoTitle`, a small model names the task and `title` is the fallback. */
   newTask: (vault: string, task: {

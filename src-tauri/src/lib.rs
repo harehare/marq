@@ -1485,6 +1485,12 @@ fn session_events(vault: String, session_id: String) -> Result<Vec<serde_json::V
     session::read_events(Path::new(&vault), &session_id)
 }
 
+/// The sessions working on the same thing as `session_id`, with why (see `session::related`).
+#[tauri::command]
+async fn related_sessions(app: AppHandle, vault: String, session_id: String) -> Result<Vec<session::Related>> {
+    blocking(move || Ok(sidecar::related_of(&app, Path::new(&vault), &session_id))).await
+}
+
 /// Lists sessions. One still marked running without a live process (e.g. after a crash) is
 /// recorded as interrupted, so it can be resumed or deleted.
 #[tauri::command]
@@ -1910,6 +1916,7 @@ pub fn run() {
             list_commands,
             session_events,
             list_sessions,
+            related_sessions,
             session_origin,
             new_task,
             save_task,

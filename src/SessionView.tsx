@@ -7,7 +7,7 @@ import {
   Folder, FolderGit2, AlertCircle, GitBranch, PanelRight, ShieldQuestion, Check, X, FileOutput, RotateCw, CircleCheck, GitPullRequest, Upload,
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
-import { api, Approval, SessionEvent, SessionInfo, Worktree } from "./api";
+import { api, Approval, SessionEvent, RelatedSession, SessionInfo, Worktree } from "./api";
 import { Md } from "./markdown/Md";
 import { stepsOf } from "./progress";
 import { splitNext, type NextAction } from "./nextActions";
@@ -419,9 +419,12 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const [info, setInfo] = useState<SessionInfo | null>(null);
   // The other sessions, for sending this one's message to one of them.
   const [others, setOthers] = useState<SessionInfo[]>([]);
+  // Sessions on the same branch, from the same note or at work in the same repository.
+  const [related, setRelated] = useState<RelatedSession[]>([]);
   const loadInfo = () => api.listSessions(vault).then((l) => {
     setInfo(l.find((x) => x.id === sessionId) ?? null);
     setOthers(l.filter((x) => x.id !== sessionId));
+    api.relatedSessions(vault, sessionId).then(setRelated).catch(() => setRelated([]));
   });
   const setReview = async (state: "done" | "open") => {
     try {
@@ -781,6 +784,19 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
                 <input type="checkbox" checked={target.reply} onChange={(e) => setTarget({ ...target, reply: e.target.checked })} /> answer comes back here
               </label>
               <button className="icon" title="Send to this session instead (Backspace in an empty message)" onClick={() => setTarget(null)}><X size={12} /></button>
+            </div>
+          )}
+          {!target && related.length > 0 && (
+            <div className="composer-related small">
+              <span className="muted">Related</span>
+              {related.slice(0, 4).map((r) => (
+                <button key={r.id} className="related-chip" title={`${r.reasons.join(", ")}. Send your next message to it.`}
+                  onClick={() => { setTarget({ id: r.id, title: r.title, reply: true }); composerRef.current?.focus(); }}>
+                  <span className={`dot status-${r.status}`} />
+                  <span className="ellipsis">{r.title}</span>
+                  <span className="muted ellipsis">{r.reasons[0]}</span>
+                </button>
+              ))}
             </div>
           )}
           <SlashTextarea
