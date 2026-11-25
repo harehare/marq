@@ -1006,6 +1006,13 @@ textarea, input {
   border: 1px solid var(--border); border-radius: 0; padding: 7px 9px; outline: none;
 }
 textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* Every pull-down starts from the same look; the compact ones (boards, the composer) restyle it. */
+select {
+  font: inherit; color: var(--fg); background: var(--bg-raised);
+  border: 1px solid var(--border); border-radius: 0; padding: 6px 8px; outline: none; min-width: 0;
+}
+select:hover { border-color: var(--border-strong); }
+select:focus-visible { border-color: var(--accent); }
 .check { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
 .check input { margin: 0; }
 
@@ -1064,10 +1071,7 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
   display: flex; align-items: center; gap: 9px; padding: 14px 14px 10px;
   font-weight: 650; font-size: 14px; cursor: pointer; color: var(--fg-strong);
 }
-.model-select {
-  flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 0;
-  border: 1px solid var(--border); background: var(--bg-raised); color: var(--fg);
-}
+.model-select, .project-row > select { flex: 1; }
 .terminal-view { position: relative; height: 100%; background: var(--bg); overflow: hidden; }
 .terminal-pane { position: absolute; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
 /* A frame between split panes; the focused one takes the accent. */
@@ -1129,7 +1133,7 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .seg button + button { border-left: 1px solid var(--border); }
 .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 .search-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: -2px 0 10px; }
-.search-filters select { font: inherit; font-size: 12.5px; padding: 4px 6px; max-width: 220px; color: var(--muted); background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.search-filters select { font-size: 12.5px; padding: 4px 6px; max-width: 220px; color: var(--muted); }
 .search-filters select.on { color: var(--accent); border-color: var(--accent); }
 .search-filters > a { cursor: pointer; margin-left: 4px; }
 .search-file { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 8px 4px 6px; }
