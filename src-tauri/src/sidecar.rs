@@ -103,7 +103,8 @@ const SYSTEM_APPEND: &str = "You are running inside marq, the user's Markdown kn
 The MCP server \"marq\" can search_notes, query_notes (mq queries) and read_note to look up the user's notes, \
 earlier sessions and their learnings for background; search_sessions finds past sessions by what was said or done in them. \
 search_notes also finds synonyms from the vault's glossary (glossary.md: preferred terms with aliases, broader and \
-narrower terms) and notes' aliases, and tag:<name> narrows it to notes with that tag. When you write documents or \
+narrower terms) and notes' aliases, and tag:<name> narrows it to notes with that tag. Both searches take \
+type:, status:, project:, workspace:, since: and before: in the text to narrow by frontmatter, with or without words. When you write documents or \
 learnings, use the glossary's preferred terms rather than synonyms, and give documents a few tags. \
 Link notes with [[Title]] (a note's title, file name or alias); read_note accepts the same names, and note_links \
 shows what links to a note and where it is mentioned without a link. \
@@ -890,15 +891,21 @@ fn search_sessions(vault: &Path, text: &str, project: Option<&str>, since: Optio
 }
 
 /// [`search_sessions`] for a parsed query, so a caller can also show how its words were expanded.
+/// The query's own `status:`, `project:`, `workspace:`, `since:` and `before:` narrow it too, and
+/// with no words at all they list the sessions that pass, newest first.
 pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since: Option<&str>, limit: usize, exclude: &str) -> Vec<Value> {
-    if q.words.is_empty() {
+    let fl = &q.filters;
+    if q.words.is_empty() && fl.is_empty() {
         return vec![];
     }
+    let files = if fl.workspaces.is_empty() { vec![] } else { vault::list_files(vault) };
     let mut hits: Vec<(usize, Value)> = session::list(vault, None)
         .into_iter()
         .filter(|x| x.meta.id != exclude)
         .filter(|x| project.is_none_or(|p| x.meta.project().contains(p)))
         .filter(|x| since.is_none_or(|d| x.meta.started.as_str() >= d))
+        .filter(|x| fl.matches_status(Some(&x.status)) && fl.matches_project(Some(x.meta.project())) && fl.matches_date(&x.meta.started))
+        .filter(|x| fl.workspaces.is_empty() || fl.matches_workspace(&vault::workspace_names(&files, x.meta.workspace.as_deref(), None)))
         .filter_map(|x| {
             let content = std::fs::read_to_string(&x.path).ok()?;
             if !q.matches_text(&content) {
@@ -1034,6 +1041,12 @@ mod tests {
         assert!(super::search_sessions(v, "hover", None, Some("2026-10-10"), 10, "").iter().all(|h| h["id"] == "s-bbbbbbbb"));
         assert!(super::search_sessions(v, "hover", Some("/elsewhere"), None, 10, "").is_empty());
         assert_eq!(super::search_sessions(v, "hover", None, None, 10, "s-aaaaaaaa").len(), 1);
+        // Filters in the query narrow it, and work without words: newest first.
+        assert_eq!(super::search_sessions(v, "hover before:2026-10-10", None, None, 10, "")[0]["id"], "s-aaaaaaaa");
+        assert!(super::search_sessions(v, "hover project:elsewhere", None, None, 10, "").is_empty());
+        let all = super::search_sessions(v, "project:/work", None, None, 10, "");
+        assert_eq!((all.len(), &all[0]["id"]), (2, &json!("s-bbbbbbbb")));
+        assert!(super::search_sessions(v, "workspace:docs", None, None, 10, "").is_empty());
     }
 
     #[test]

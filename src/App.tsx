@@ -2066,7 +2066,7 @@ export default function App() {
               {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
                 onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel, "note")}
                 onStartTask={(prompt, after) => { taskAfter.current = after ?? null; setTaskPrompt(prompt); setShowNewTask(true); }} />}
-              {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active}
+              {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active} files={files} sessions={sessions}
                 onOpen={(p, line) => (files.find((f) => f.path === p)?.kind === "board" ? openBoard(p) : openNote(p, line))}
                 onOpenSession={openSession} />}
               {t.kind === "query" && <QueryView vault={vault} saved={files.filter((f) => f.kind === "query")} onOpenNote={(p) => openNote(p)} />}

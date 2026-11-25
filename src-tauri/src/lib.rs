@@ -379,6 +379,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         verifies: None,
         phase,
         dirs,
+        workspace: ws.workspace,
     };
     progress(&app, "Starting the session…");
     runner.start(app.clone(), v, meta, prompt, Turn::New)?;

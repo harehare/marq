@@ -24,6 +24,45 @@ pub struct FileEntry {
     pub aliases: Vec<String>,
     /// When the file was last changed, in milliseconds since the epoch; the sidebar can sort by it.
     pub modified: u64,
+    /// The frontmatter `project:` as written: a request's, a session's, a workspace's.
+    pub project: Option<String>,
+    /// The frontmatter `workspace:` as written (a path, id or title); see [`workspace_names`].
+    pub workspace: Option<String>,
+    /// When it was started or created, from `started:` or `created:`.
+    pub created: Option<String>,
+}
+
+impl FileEntry {
+    /// The date `since:` and `before:` compare: when it was started or created, else last changed.
+    pub fn date(&self) -> String {
+        self.created.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| {
+            chrono::DateTime::from_timestamp_millis(self.modified as i64)
+                .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+                .unwrap_or_default()
+        })
+    }
+}
+
+/// What the workspace of a note or session goes by, lowercased, for the `workspace:` filter:
+/// `value` as written and, when it names a workspace note among `files`, that note's path and
+/// title. A workspace note goes by its own.
+pub fn workspace_names(files: &[FileEntry], value: Option<&str>, own: Option<&FileEntry>) -> Vec<String> {
+    let title_of = |f: &FileEntry| f.title.clone().unwrap_or_default();
+    let mut names = vec![];
+    if let Some(f) = own.filter(|f| f.kind.as_deref() == Some("workspace")) {
+        names.extend([f.rel.clone(), title_of(f)]);
+    }
+    if let Some(v) = value.map(str::trim).filter(|v| !v.is_empty()) {
+        names.push(v.to_string());
+        let stem = v.trim_end_matches(".md");
+        let named = files.iter().filter(|f| f.kind.as_deref() == Some("workspace")).find(|f| {
+            f.rel.trim_end_matches(".md").ends_with(stem) || title_of(f).eq_ignore_ascii_case(v) || f.id.as_deref() == Some(v)
+        });
+        if let Some(f) = named {
+            names.extend([f.rel.clone(), title_of(f)]);
+        }
+    }
+    names.iter().map(|n| n.to_lowercase()).filter(|n| !n.is_empty()).collect()
 }
 
 /// What a file says about itself, kept until the file changes.
@@ -56,6 +95,9 @@ fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scann
         tags: fm_list(&text, "tags"),
         aliases: fm_list(&text, "aliases"),
         modified: stamp.0.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
+        project: fm_get(&text, "project").filter(|s| !s.is_empty()),
+        workspace: fm_get(&text, "workspace").filter(|s| !s.is_empty()),
+        created: fm_get(&text, "started").or_else(|| fm_get(&text, "created")).filter(|s| !s.is_empty()),
     };
     let doc = entry.kind.as_deref() == Some("doc");
     Scanned {
@@ -131,6 +173,9 @@ fn other_files(vault: &Path) -> Vec<FileEntry> {
                 tags: vec![],
                 aliases: vec![],
                 modified: modified.map_or(0, |d| d.as_millis() as u64),
+                project: None,
+                workspace: None,
+                created: None,
             }
         })
         .collect()
@@ -640,27 +685,46 @@ pub fn grep(vault: &Path, query: &str, include_sessions: bool, max_files: usize,
     search(vault, query, include_sessions, max_files, per_file).0
 }
 
-/// Lines with every word of `query` (or a synonym from the thesaurus), in notes with its `tag:`s.
+/// Lines with every word of `query` (or a synonym from the thesaurus), in notes with its `tag:`s
+/// that pass its filters (`type:`, `status:`, `project:`, `workspace:`, `since:`, `before:`).
+/// A query of tags and filters alone lists the notes, with one line each.
 /// Also returns the parsed query, to show what the words were expanded to.
 pub fn search(vault: &Path, query: &str, include_sessions: bool, max_files: usize, per_file: usize) -> (Vec<SearchHit>, Query) {
     let files = list_files(vault);
     let q = Query::parse(query, &Thesaurus::load(&files));
-    if q.words.is_empty() && q.tags.is_empty() {
+    if q.is_empty() {
         return (vec![], q);
     }
+    let fl = &q.filters;
+    // Asking for sessions by type includes them.
+    let include_sessions = include_sessions || fl.kinds.iter().any(|k| k == "session");
     let mut out = vec![];
-    for f in files {
+    for f in &files {
         if !include_sessions && f.rel.starts_with("sessions/") {
             continue;
         }
-        if !q.matches_tags(&f.tags) {
+        // Text files beside the notes have no frontmatter to filter by.
+        let kind = f.kind.as_deref().filter(|k| *k != "file");
+        if !q.matches_tags(&f.tags)
+            || !fl.matches_kind(kind)
+            || !fl.matches_status(f.status.as_deref())
+            || !fl.matches_project(f.project.as_deref())
+            || !((fl.since.is_none() && fl.before.is_none()) || fl.matches_date(&f.date()))
+            || !(fl.workspaces.is_empty() || fl.matches_workspace(&workspace_names(&files, f.workspace.as_deref(), Some(f))))
+        {
             continue;
         }
         let Ok(content) = std::fs::read_to_string(&f.path) else { continue };
         let (mut lines, mut more) = (vec![], 0);
-        // Tags alone: the note matches as a whole; show its tags line.
+        // No words: the note matches as a whole. Show its tags line, or where its text starts.
         if q.words.is_empty() {
-            let at = content.lines().position(|l| l.starts_with("tags:")).unwrap_or(0);
+            let at = if q.tags.is_empty() {
+                let body = split_frontmatter(&content).1;
+                let skipped = content[..content.len() - body.len()].lines().count();
+                body.lines().position(|l| !l.trim().is_empty()).map_or(0, |i| skipped + i)
+            } else {
+                content.lines().position(|l| l.starts_with("tags:")).unwrap_or(0)
+            };
             lines.push((at + 1, content.lines().nth(at).unwrap_or_default().trim().chars().take(240).collect()));
         }
         for (i, line) in content.lines().enumerate().filter(|_| !q.words.is_empty()) {
@@ -673,7 +737,7 @@ pub fn search(vault: &Path, query: &str, include_sessions: bool, max_files: usiz
             }
         }
         if !lines.is_empty() {
-            out.push(SearchHit { path: f.path, rel: f.rel, title: f.title, lines, more });
+            out.push(SearchHit { path: f.path.clone(), rel: f.rel.clone(), title: f.title.clone(), lines, more });
             if out.len() >= max_files {
                 break;
             }
@@ -862,5 +926,34 @@ mod tests {
         let (hits, _) = search(v, "tag:security", false, 10, 10);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].lines[0].1, "tags: [security]");
+    }
+
+    #[test]
+    fn search_filters_by_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path();
+        for d in ["requests", "workspaces", "sessions", "notes"] {
+            std::fs::create_dir_all(v.join(d)).unwrap();
+        }
+        std::fs::write(v.join("workspaces/mq-docs.md"), "---\ntype: workspace\ntitle: \"mq + docs\"\nproject: ~/dev/mq\n---\n# mq + docs\n").unwrap();
+        std::fs::write(v.join("requests/a.md"), "---\ntype: request\nstatus: todo\ncreated: 2026-11-10T10:00:00+09:00\nproject: ~/dev/mq\nworkspace: mq + docs\n---\n# Hover\n\nShow types on hover\n").unwrap();
+        std::fs::write(v.join("requests/b.md"), "---\ntype: request\nstatus: done\ncreated: 2026-10-01T10:00:00+09:00\nproject: ~/dev/other\n---\n# Other\n\nhover elsewhere\n").unwrap();
+        std::fs::write(v.join("sessions/s.md"), "---\ntype: session\nstatus: done\nstarted: 2026-11-11T10:00:00+09:00\nproject: \"/home/u/dev/mq\"\nworkspace: \"workspaces/mq-docs.md\"\n---\nhover in a session\n").unwrap();
+        std::fs::write(v.join("notes/n.md"), "plain hover note\n").unwrap();
+        let rels = |query: &str| search(v, query, false, 10, 10).0.into_iter().map(|h| h.rel).collect::<Vec<_>>();
+        assert_eq!(rels("hover type:request"), ["requests/a.md", "requests/b.md"]);
+        assert_eq!(rels("hover type:note"), ["notes/n.md"]);
+        assert_eq!(rels("hover status:todo"), ["requests/a.md"]);
+        assert_eq!(rels("hover project:other"), ["requests/b.md"]);
+        assert_eq!(rels("hover type:request since:2026-11"), ["requests/a.md"]);
+        assert_eq!(rels("hover type:request before:2026-11"), ["requests/b.md"]);
+        // Sessions are left out unless asked for by type; a workspace goes by its title and its path.
+        assert_eq!(rels("hover project:dev/mq"), ["requests/a.md"]);
+        assert_eq!(rels("hover type:session"), ["sessions/s.md"]);
+        assert_eq!(rels(r#"workspace:"mq + docs" type:request type:session type:workspace"#), ["requests/a.md", "sessions/s.md", "workspaces/mq-docs.md"]);
+        assert_eq!(rels("workspace:mq-docs type:session"), ["sessions/s.md"]);
+        // Filters alone list the notes, at the first line of their text.
+        let (hits, _) = search(v, "status:todo", false, 10, 10);
+        assert_eq!((hits.len(), &hits[0].lines[0]), (1, &(8, "# Hover".to_string())));
     }
 }

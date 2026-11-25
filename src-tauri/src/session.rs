@@ -59,6 +59,9 @@ pub struct SessionMeta {
     /// Directories beyond `cwd` the agent may read and edit, from a workspace or the request.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirs: Vec<crate::workspace::ExtraDir>,
+    /// The workspace note the session's request or crew named, relative to the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
 }
 
 impl SessionMeta {
@@ -272,9 +275,23 @@ fn list_cache() -> &'static Mutex<HashMap<PathBuf, Cached>> {
     CACHE.get_or_init(Default::default)
 }
 
+/// The session's workspace: the one it recorded, else the one its origin note names now (sessions
+/// from before workspaces were recorded).
+pub fn workspace_of(vault: &Path, meta: &SessionMeta) -> Option<String> {
+    meta.workspace.clone().or_else(|| {
+        if meta.origin_path.is_empty() {
+            return None;
+        }
+        let text = std::fs::read_to_string(vault.join(&meta.origin_path)).ok()?;
+        let name = vault::fm_get(&text, "workspace").filter(|w| !w.trim().is_empty())?;
+        Some(crate::workspace::find(vault, &name).map_or(name, |w| w.rel))
+    })
+}
+
 /// A list entry without worktree data.
 fn info_of(vault: &Path, events: &[Value]) -> Option<SessionInfo> {
-    let meta = meta_of(events)?;
+    let mut meta = meta_of(events)?;
+    meta.workspace = workspace_of(vault, &meta);
     let (review, pr_url) = review_of(events);
     Some(SessionInfo {
         status: status_of(events),
@@ -542,7 +559,8 @@ pub fn append_learning(vault: &Path, id: &str, text: &str) -> Result<()> {
 /// Rewrites the session Markdown from the raw log, keeping hand-edited Summary and Learnings.
 pub fn rerender(vault: &Path, id: &str) -> Result<()> {
     let events = read_events(vault, id)?;
-    let meta = meta_of(&events).ok_or_else(|| Error::SessionNotFound(id.to_string()))?;
+    let mut meta = meta_of(&events).ok_or_else(|| Error::SessionNotFound(id.to_string()))?;
+    meta.workspace = workspace_of(vault, &meta);
     let path = md_path(vault, &meta);
     let kept = std::fs::read_to_string(&path)
         .ok()
@@ -690,13 +708,14 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
     };
     let q = |s: &str| serde_json::to_string(s).unwrap();
     format!(
-        "---\nid: {}\ntype: session\ntitle: {}\norigin: {}\norigin_path: {}\ncwd: {}\nproject: {}\nbranch: {}\nmodel: {}\nstatus: {}\nstarted: {}\nended: {}\ncost_usd: {:.4}\nfiles_changed: [{}]\ndocs: [{}]\n---\n{}\n\n## Transcript\n{}",
+        "---\nid: {}\ntype: session\ntitle: {}\norigin: {}\norigin_path: {}\ncwd: {}\nproject: {}\n{}branch: {}\nmodel: {}\nstatus: {}\nstarted: {}\nended: {}\ncost_usd: {:.4}\nfiles_changed: [{}]\ndocs: [{}]\n---\n{}\n\n## Transcript\n{}",
         meta.id,
         q(&meta.title),
         meta.origin,
         q(&meta.origin_path),
         q(&meta.cwd),
         q(meta.project()),
+        meta.workspace.as_ref().map(|w| format!("workspace: {}\n", q(w))).unwrap_or_default(),
         meta.worktree.as_ref().map(|w| w.branch.as_str()).unwrap_or(""),
         model,
         status,

@@ -6,7 +6,7 @@ Marq exposes the vault to agents as an MCP server. The tools run in the sidecar 
 
 | Tool | Approval | Description |
 | --- | --- | --- |
-| `search_notes(text)` | no | Full-text line search over the vault (the same search as ⇧⌘F) |
+| `search_notes(text)` | no | Full-text line search over the vault (the same search as ⇧⌘F, with its [filters](vault.md#search-filters)) |
 | `query_notes(query, glob)` | no | Run mq over vault files, read only |
 | `read_note(id)` | no | Read a note by id |
 | `list_notes(folder?)` | no | Folders and notes with title, type and status |
@@ -23,7 +23,7 @@ Moving never overwrites, never leaves the vault, and refuses `sessions/` and dot
 | Tool | Approval | Description |
 | --- | --- | --- |
 | `list_sessions()` | no | Other sessions: id, title, status, working directory, branch |
-| `search_sessions(text, project?, since?, limit?)` | no | Past sessions whose note mentions every word (glossary synonyms too, anywhere in the note), best matches first, each with its note path and three best lines. `project` is part of a directory or repository path, `since` a `YYYY-MM-DD` date. Read a hit with `read_note` |
+| `search_sessions(text, project?, since?, limit?)` | no | Past sessions whose note mentions every word (glossary synonyms too, anywhere in the note), best matches first, each with its note path and three best lines. `project` is part of a directory or repository path, `since` a `YYYY-MM-DD` date; the [search filters](vault.md#search-filters) work in `text` too. Read a hit with `read_note` |
 | `read_session(session_id)` | no | Another session's status, first prompt and latest result |
 | `send_to_session(session_id, text, reply?)` | yes | Send a message to another session. Messages start with "Message from another Marq session". With `reply` (default true), the answer to it comes back as a new message when that session finishes the turn |
 

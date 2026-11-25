@@ -165,17 +165,134 @@ pub struct Query {
     pub words: Vec<Vec<String>>,
     /// `tag:x` or `#x`: notes must carry one of these tags (or a word of their group).
     pub tags: Vec<Vec<String>>,
+    /// `type:`, `status:`, `project:`, `workspace:`, `since:` and `before:`.
+    pub filters: Filters,
+}
+
+/// What a note or session must be, from the `key:value` parts of a query. Lowercased. Several
+/// values for one key are alternatives; different keys must all hold.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct Filters {
+    /// `type:request`: the frontmatter `type` (a file without one is a `note`).
+    pub kinds: Vec<String>,
+    /// `status:todo`: a request's or a session's status.
+    pub statuses: Vec<String>,
+    /// `project:mq`: part of the project's path.
+    pub projects: Vec<String>,
+    /// `workspace:docs`: part of the workspace's title or path.
+    pub workspaces: Vec<String>,
+    /// `since:2026-11-01` or `since:7d`: started or created on or after this date.
+    pub since: Option<String>,
+    /// `before:2026-11-01`: started or created before this date.
+    pub before: Option<String>,
+}
+
+/// A path as filters compare it: `~` expanded, lowercased, without a trailing slash.
+fn norm_path(p: &str) -> String {
+    vault::expand_home(p.trim()).to_string_lossy().trim_end_matches('/').to_lowercase()
+}
+
+/// A filter's date: `7d`, `2w` and `3m` count back from today, `today` is today, anything else
+/// is taken as written (`2026-11-01`, or just `2026-11`).
+fn date_of(value: &str) -> String {
+    let today = chrono::Local::now().date_naive();
+    let ago = |days: i64| (today - chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+    if value == "today" {
+        return ago(0);
+    }
+    let (n, unit) = value.split_at(value.len().saturating_sub(1));
+    match (n.parse::<i64>(), unit) {
+        (Ok(n), "d") => ago(n),
+        (Ok(n), "w") => ago(n * 7),
+        (Ok(n), "m") => ago(n * 30),
+        _ => value.to_string(),
+    }
+}
+
+impl Filters {
+    pub fn is_empty(&self) -> bool {
+        *self == Filters::default()
+    }
+
+    pub fn matches_kind(&self, kind: Option<&str>) -> bool {
+        self.kinds.is_empty() || self.kinds.contains(&kind.unwrap_or("note").to_lowercase())
+    }
+
+    pub fn matches_status(&self, status: Option<&str>) -> bool {
+        self.statuses.is_empty() || status.is_some_and(|s| self.statuses.contains(&s.to_lowercase()))
+    }
+
+    pub fn matches_project(&self, project: Option<&str>) -> bool {
+        if self.projects.is_empty() {
+            return true;
+        }
+        let Some(project) = project.map(norm_path) else { return false };
+        self.projects.iter().any(|p| project.contains(&norm_path(p)))
+    }
+
+    /// Takes `part` if it is one of the filters (`type:request`). False leaves it a search word.
+    fn take(&mut self, part: &str) -> bool {
+        let Some((key, value)) = part.split_once(':') else { return false };
+        let value = value.trim().to_lowercase();
+        if value.is_empty() {
+            return false;
+        }
+        match key {
+            "type" | "kind" => self.kinds.push(value),
+            "status" => self.statuses.push(value),
+            "project" => self.projects.push(value),
+            "workspace" | "ws" => self.workspaces.push(value),
+            "since" | "after" => self.since = Some(date_of(&value)),
+            "before" => self.before = Some(date_of(&value)),
+            _ => return false,
+        }
+        true
+    }
+
+    /// `names`: what the workspace goes by, lowercased (see `vault::workspace_names`).
+    pub fn matches_workspace(&self, names: &[String]) -> bool {
+        self.workspaces.is_empty() || self.workspaces.iter().any(|w| names.iter().any(|n| n.contains(w.as_str())))
+    }
+
+    /// `date` starts with `YYYY-MM-DD`.
+    pub fn matches_date(&self, date: &str) -> bool {
+        self.since.as_deref().is_none_or(|s| date >= s) && self.before.as_deref().is_none_or(|b| date < b)
+    }
+}
+
+/// The parts of a query: split at whitespace, except that `key:"two words"` is one part.
+fn parts_of(query: &str) -> Vec<String> {
+    let (mut out, mut cur, mut quoted) = (vec![], String::new(), false);
+    for c in query.chars() {
+        match c {
+            '"' if quoted => quoted = false,
+            '"' if cur.ends_with(':') => quoted = true,
+            c if c.is_whitespace() && !quoted => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 impl Query {
     pub fn parse(query: &str, th: &Thesaurus) -> Self {
-        let parts: Vec<&str> = query.split_whitespace().collect();
+        let owned = parts_of(query);
+        let parts: Vec<&str> = owned.iter().map(String::as_str).collect();
         let mut q = Query::default();
         let mut i = 0;
         while i < parts.len() {
             let p = parts[i];
             if let Some(tag) = p.strip_prefix("tag:").or_else(|| p.strip_prefix('#').filter(|t| !t.is_empty())) {
                 q.tags.push(th.expand(tag));
+                i += 1;
+            } else if q.filters.take(p) {
                 i += 1;
             } else if let Some((n, term)) = th.term_at(&parts[i..]) {
                 q.words.push(th.expand(&term));
@@ -186,6 +303,11 @@ impl Query {
             }
         }
         q
+    }
+
+    /// Whether the query asks for nothing at all.
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty() && self.tags.is_empty() && self.filters.is_empty()
     }
 
     /// What the expansion added, for showing "also matching".
@@ -276,5 +398,30 @@ mod tests {
         assert!(!q.matches_line("トークン only"));
         assert!(q.matches_tags(&["認証".into()]));
         assert!(!q.matches_tags(&["db".into()]));
+    }
+
+    #[test]
+    fn parses_filters() {
+        let th = th();
+        let q = Query::parse(r#"hover type:request type:doc status:Todo project:~/dev/MQ workspace:"mq + docs" since:2026-11 before:2026-11-20 http://x"#, &th);
+        assert_eq!(q.words, vec![vec!["hover".to_string()], vec!["http://x".to_string()]]);
+        let f = &q.filters;
+        assert_eq!((f.kinds.len(), f.statuses[0].as_str(), f.workspaces[0].as_str()), (2, "todo", "mq + docs"));
+        assert!(f.matches_kind(Some("doc")) && !f.matches_kind(None));
+        assert!(f.matches_status(Some("todo")) && !f.matches_status(Some("done")) && !f.matches_status(None));
+        let home = vault::expand_home("~/dev/mq").to_string_lossy().into_owned();
+        assert!(f.matches_project(Some(&format!("{home}/"))) && f.matches_project(Some("~/dev/mq/sub")));
+        assert!(!f.matches_project(Some("/elsewhere")) && !f.matches_project(None));
+        assert!(f.matches_workspace(&["workspaces/x.md".into(), "mq + docs".into()]) && !f.matches_workspace(&[]));
+        assert!(f.matches_date("2026-11-01T10:00:00+09:00") && f.matches_date("2026-11-19"));
+        assert!(!f.matches_date("2026-10-31") && !f.matches_date("2026-11-20T00:00:00"));
+        // Relative dates count back from today; a key without a value stays a word.
+        let q = Query::parse("since:7d type:", &th);
+        assert_eq!(q.filters.since.as_ref().unwrap().len(), 10);
+        assert_eq!(q.words, vec![vec!["type:".to_string()]]);
+        assert!(Query::parse("", &th).is_empty() && !Query::parse("type:note", &th).is_empty());
+        // Without filters everything passes.
+        let none = Filters::default();
+        assert!(none.matches_kind(None) && none.matches_status(None) && none.matches_project(None) && none.matches_workspace(&[]) && none.matches_date(""));
     }
 }

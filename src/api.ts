@@ -64,6 +64,8 @@ export type FileEntry = {
   tags: string[]; aliases: string[];
   /** Last change, in milliseconds since the epoch. */
   modified: number;
+  /** The frontmatter `project:` and `workspace:` as written, and `started:` or `created:`. */
+  project?: string | null; workspace?: string | null; created?: string | null;
 };
 export type Anchor = { id: string; line: number };
 export type FileResult = { file: string | null; items: string[] };
@@ -79,6 +81,8 @@ export type SessionInfo = {
   worktree: Worktree | null;
   /** Directories beyond `cwd`, from a workspace or the request. */
   dirs?: ExtraDir[];
+  /** The workspace note its request or crew named, relative to the vault. */
+  workspace?: string | null;
   additions: number | null;
   deletions: number | null;
   /** `done` or `pr` once reviewed. */

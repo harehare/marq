@@ -82,6 +82,8 @@ pub struct Crew {
     /// The workspace note's text for the members, with its path.
     #[serde(skip)]
     pub workspace_notes: Option<(String, String)>,
+    /// The workspace note the crew names, relative to the vault.
+    pub workspace: Option<String>,
 }
 
 impl Crew {
@@ -105,6 +107,7 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
         project: vault::fm_get(text, "project").filter(|s| !s.is_empty()),
         dirs: vec![],
         notes: None,
+        workspace: None,
     });
     let section = |h2: &str, h3: Option<&str>| {
         sections
@@ -140,6 +143,7 @@ pub fn parse(text: &str, path: &Path, vault: &Path) -> Option<Crew> {
         project: ws.project.filter(|s| !s.is_empty()),
         dirs: ws.dirs,
         workspace_notes: ws.notes,
+        workspace: ws.workspace,
         max_hops: doc["max_hops"].as_i64().map(|n| n.max(1) as u64).unwrap_or(DEFAULT_MAX_HOPS),
         model: doc["model"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
         members,
@@ -951,6 +955,7 @@ fn new_member(app: &AppHandle, crew: &Crew, member: &Member) -> Result<SessionMe
         crew: Some(CrewRef { id: crew.id.clone(), role: member.role.clone() }),
         sandbox: member.sandbox.clone().or_else(|| crew.sandbox.clone()),
         dirs,
+        workspace: crew.workspace.clone(),
         ..Default::default()
     })
 }

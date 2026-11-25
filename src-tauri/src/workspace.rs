@@ -188,13 +188,15 @@ pub struct Resolved {
     pub project: Option<String>,
     pub dirs: Vec<DirSpec>,
     pub notes: Option<(String, String)>,
+    /// The workspace note it names, relative to the vault.
+    pub workspace: Option<String>,
 }
 
 pub fn resolve(vault: &Path, text: &str) -> Result<Resolved> {
     let own = dirs_of(text);
     let project = vault::fm_get(text, "project").filter(|p| !p.trim().is_empty());
     let Some(name) = vault::fm_get(text, "workspace").filter(|w| !w.trim().is_empty()) else {
-        return Ok(Resolved { project, dirs: own, notes: None });
+        return Ok(Resolved { project, dirs: own, notes: None, workspace: None });
     };
     let ws = find(vault, &name)?;
     let notes = (!ws.notes.is_empty() && !ws.notes.starts_with("<!--")).then(|| (ws.rel.clone(), ws.notes.clone()));
@@ -202,6 +204,7 @@ pub fn resolve(vault: &Path, text: &str) -> Result<Resolved> {
         project: project.or(ws.project),
         dirs: if own.is_empty() { ws.directories } else { own },
         notes,
+        workspace: Some(ws.rel),
     })
 }
 
@@ -312,6 +315,7 @@ mod tests {
         assert_eq!(r.project.as_deref(), Some("~/dev/mq"));
         assert_eq!(r.dirs, [DirSpec { path: "~/dev/docs".into(), worktree: true }]);
         assert_eq!(r.notes.unwrap().1, "docs live here");
+        assert!(r.workspace.is_some_and(|w| w.starts_with("workspaces/") && w.ends_with("mq-docs.md")));
         // The request's own project and directories win.
         let r = resolve(&dir, "---\nworkspace: mq + docs\nproject: ~/x\ndirectories:\n  - ~/y\n---\n").unwrap();
         assert_eq!((r.project.as_deref(), r.dirs[0].path.as_str()), (Some("~/x"), "~/y"));

@@ -1123,8 +1123,10 @@ textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .seg button { border: none; border-radius: 0; background: transparent; color: var(--muted); padding: 5px 11px; font-size: 12.5px; }
 .seg button + button { border-left: 1px solid var(--border); }
 .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
-.search-filter { margin: -2px 0 10px; }
-.search-filter input { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 6px 10px; }
+.search-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: -2px 0 10px; }
+.search-filters select { font: inherit; font-size: 12.5px; padding: 4px 6px; max-width: 220px; color: var(--muted); background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.search-filters select.on { color: var(--accent); border-color: var(--accent); }
+.search-filters > a { cursor: pointer; margin-left: 4px; }
 .search-file { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 8px 4px 6px; }
 .search-file .query-file { padding: 0 8px 4px; }
 .search-file .query-file strong { color: var(--fg-strong); font-family: var(--font); font-size: 13px; }

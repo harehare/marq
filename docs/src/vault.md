@@ -113,6 +113,23 @@ Checking who the user is. Not authorization (認可).
 
 Search lists what each word was widened to. `tag:name` (or `#name`) keeps notes with that tag, and tags are widened the same way. Agents search the same way, are told to write with the preferred terms, and can tag the documents they save.
 
+### Search filters
+
+A search can be narrowed by what the frontmatter says. Pick from the pull-downs under the search box (⇧⌘F), or type the filter yourself; either way it is part of the query:
+
+| Filter | Keeps |
+| --- | --- |
+| `type:request` | Notes of that `type:` (a file without one is a `note`). `type:session` brings session notes into a notes search |
+| `status:todo` | Requests, or sessions, with that status |
+| `project:git/mq` | Requests and sessions whose project path contains the text (`~` is expanded) |
+| `workspace:docs` | Requests and sessions of a workspace, by part of its title or path. Quote a name with spaces: `workspace:"mq + docs"` |
+| `since:2026-11-01`, `since:7d` | Started or created on or after the date (`7d`, `2w`, `3m` and `today` count back from today). Notes without `created:` go by when they were last changed |
+| `before:2026-11-01` | Started or created before the date |
+
+Giving one filter twice (`type:request type:doc`) keeps either; different filters must all hold. Filters work without any words, so `type:request status:todo project:mq` lists the open requests of a project.
+
+A session records the workspace its request or crew named, as `workspace:` in the session note. Sessions from before that take it from their request.
+
 ## Knowledge notes
 
 Sessions write what they learn under their own `## Learnings`, so the same lesson ends up in many places and old ones never go away. Knowledge notes in `knowledge/` gather it by topic instead:

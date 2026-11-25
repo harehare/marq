@@ -116,7 +116,7 @@ export function vaultServer(sessionId: string, crew: boolean) {
     tools: [
       ...(crew ? crewTools(sessionId) : [startCrew(sessionId)]),
       ...boardTools(sessionId),
-      tool("search_notes", "Search the user's notes (Markdown knowledge base) by text. Words also match their synonyms and narrower terms from the vault's glossary and notes' aliases; tag:<name> (or #name) keeps notes with that tag. Returns matching paths and lines.",
+      tool("search_notes", "Search the user's notes (Markdown knowledge base) by text. Words also match their synonyms and narrower terms from the vault's glossary and notes' aliases; tag:<name> (or #name) keeps notes with that tag; type:<request|doc|note|session|…>, status:<todo|review|done|…>, project:<part of its path>, workspace:<name> and since:/before:<YYYY-MM-DD or 7d> narrow by frontmatter, and work without any words to list notes. Returns matching paths and lines.",
         { text: z.string() }, async (a) => text(await rpc("search_notes", { ...a, session: sessionId }))),
       tool("query_notes", "Run an mq query (jq-like language for Markdown) over notes matching a glob relative to the vault, e.g. glob 'sessions/*.md' and query 'section::find(\"Learnings\") | section::body()'. aggregate defaults to true (mq -A).",
         { query: z.string(), glob: z.string(), aggregate: z.boolean().optional() }, async (a) => text(await rpc("query_notes", { ...a, session: sessionId }))),
@@ -166,7 +166,7 @@ export function vaultServer(sessionId: string, crew: boolean) {
         { path: z.string() }, async (a) => text(await rpc("trash_note", { ...a, session: sessionId }))),
       tool("list_sessions", "List the user's other sessions in Marq (id, title, status, working directory), most recent first.",
         {}, async () => text(await rpc("list_sessions", { session: sessionId }))),
-      tool("search_sessions", "Search past sessions by text (words also match their glossary synonyms): sessions whose log mentions every word, best matches first, each with its note path and best lines. project narrows it to a directory or repository (part of its path), since to sessions started on or after a YYYY-MM-DD date. Read a hit with read_note on its note path.",
+      tool("search_sessions", "Search past sessions by text (words also match their glossary synonyms): sessions whose log mentions every word, best matches first, each with its note path and best lines. project narrows it to a directory or repository (part of its path), since to sessions started on or after a YYYY-MM-DD date. status:, project:, workspace:, since: and before: can also be written in text, with or without words. Read a hit with read_note on its note path.",
         { text: z.string(), project: z.string().optional(), since: z.string().optional(), limit: z.number().optional() },
         async (a) => text(await rpc("search_sessions", { ...a, session: sessionId }))),
       tool("read_session", "Read another session's latest result and status, to coordinate with it or reuse its findings.",
