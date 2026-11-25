@@ -182,6 +182,47 @@ function buildTree(files: FileEntry[], dirs: string[], sort: NoteSort): Tree {
   return root;
 }
 
+/** How the Notes list is divided: by folder as on disk, or by what the frontmatter says, without moving a file. */
+type NoteView = "folder" | "tag" | "type" | "project";
+const NOTE_VIEWS: { value: NoteView; label: string; none: string }[] = [
+  { value: "folder", label: "By folder", none: "" },
+  { value: "tag", label: "By tag", none: "Untagged" },
+  { value: "type", label: "By type", none: "note" },
+  { value: "project", label: "By project", none: "No project" },
+];
+const VIEW_KEY = "marq.noteView";
+
+/** Where a view's groups are kept apart from folders of the same name, among the collapsed paths. */
+const viewPrefix = (view: NoteView) => (view === "folder" ? "" : `@${view}:`);
+
+/**
+ * Notes under a group each instead of their folder: one per tag (a note with several is under each),
+ * per type or per project. Session logs are left out (Recent lists sessions), and so are plain text
+ * files where they could only land in the group for notes without the property. That group is last.
+ */
+function buildGroupTree(files: FileEntry[], view: Exclude<NoteView, "folder">, sort: NoteSort): Tree {
+  const none = NOTE_VIEWS.find((v) => v.value === view)!.none;
+  const root: Tree = { dirs: new Map(), files: [] };
+  const add = (label: string, f: FileEntry) => {
+    if (!root.dirs.has(label)) root.dirs.set(label, { dirs: new Map(), files: [] });
+    root.dirs.get(label)!.files.push(f);
+  };
+  for (const f of files) {
+    if (f.rel.startsWith("sessions/") || (f.kind === "file" && view !== "type")) continue;
+    const labels = view === "tag" ? f.tags
+      : view === "type" ? [f.kind ?? none]
+      : f.project ? [f.project.split("/").filter(Boolean).slice(-2).join("/")] : [];
+    for (const l of labels.length ? labels : [none]) add(l, f);
+  }
+  sortTree(root, sort);
+  if (view !== "type" && root.dirs.has(none)) {
+    const last = root.dirs.get(none)!;
+    root.dirs.delete(none);
+    root.dirs.set(none, last);
+  }
+  return root;
+}
+
 const fileLabel = (f: FileEntry) => f.title ?? f.rel.split("/").pop()!.replace(/\.md$/, "");
 /** A file name from a title: words joined by `-`, like the vault's own slugs. */
 const slugOf = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "note";
@@ -203,9 +244,14 @@ type TreeProps = {
   onDirMenu: (e: React.MouseEvent, dir: string) => void;
   /** Moves the note or folder at `from` (relative) into folder `to` ("" for the vault root). */
   onDrop: (from: string, to: string) => void;
-  /** Keyboard cursor: a folder's relative path or a file's path. */
+  /** Keyboard cursor: a folder's relative path or a file's row key. */
   cursor?: string | null;
+  /** The groups are not folders: nothing can be moved into them or created in them. */
+  virtual?: boolean;
 };
+
+/** A file's row: its path, or under a view's groups its group too, since a note can be under several. */
+const fileRowKey = (prefix: string, path: string, virtual?: boolean) => (virtual ? `${prefix}\t${path}` : path);
 
 /** Drop target behavior for a folder row or the tree's root. */
 function useDropTarget(dir: string, onDrop: (from: string, to: string) => void) {
@@ -240,6 +286,15 @@ function DirRow({ name, path, depth, open, count, hasActive, toggle, props }: {
   name: string; path: string; depth: number; open: boolean; count: number; hasActive: boolean; toggle: (deep: boolean) => void; props: TreeProps;
 }) {
   const drop = useDropTarget(path, props.onDrop);
+  if (props.virtual) {
+    return (
+      <a className={`tree-row dir ${hasActive ? "has-active" : ""} ${props.cursor === path ? "cursor" : ""}`} style={{ paddingLeft: indent(depth) }} onClick={() => toggle(false)}>
+        <ChevronRight size={12} className={`chev ${open ? "open" : ""}`} />
+        <Layers size={13} /> <span className="ellipsis">{name}</span>
+        <span className="tree-count">{count}</span>
+      </a>
+    );
+  }
   return (
     <a className={`tree-row dir ${hasActive ? "has-active" : ""} ${drop.over ? "drop" : ""} ${props.cursor === path ? "cursor" : ""}`} style={{ paddingLeft: indent(depth) }} onClick={(e) => toggle(e.altKey)}
       draggable onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, path); e.dataTransfer.effectAllowed = "move"; }}
@@ -309,9 +364,9 @@ function TreeView(props: TreeProps) {
         );
       })}
       {tree.files.map((f) => (
-        <a key={f.path} className={`tree-row ${activePath === f.path ? "on" : ""} ${props.cursor === f.path ? "cursor" : ""}`}
+        <a key={f.path} className={`tree-row ${activePath === f.path ? "on" : ""} ${props.cursor === fileRowKey(prefix, f.path, props.virtual) ? "cursor" : ""}`}
           style={{ paddingLeft: indent(depth) }} onClick={() => onOpen(f.path)} title={f.rel}
-          draggable={!f.rel.startsWith("sessions/")}
+          draggable={!props.virtual && !f.rel.startsWith("sessions/")}
           onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, f.rel); e.dataTransfer.effectAllowed = "move"; }}
           onContextMenu={(e) => onFileMenu(e, f)}>
           <span className="chev-slot" />
@@ -349,28 +404,28 @@ function useClosedDirs() {
   return [closed, setClosed] as const;
 }
 
-type Row = { key: string; dir: boolean; parent: string | null };
+type Row = { key: string; dir: boolean; parent: string | null; /** A file's path. */ path?: string };
 
 /** Rows in display order, skipping collapsed folders' contents. */
-function visibleRows(tree: Tree, closed: Set<string>, prefix = "", parent: string | null = null): Row[] {
+function visibleRows(tree: Tree, closed: Set<string>, virtual: boolean, prefix = "", parent: string | null = null): Row[] {
   const out: Row[] = [];
   for (const [name, sub] of tree.dirs) {
     const path = `${prefix}${name}`;
     out.push({ key: path, dir: true, parent });
-    if (!closed.has(path)) out.push(...visibleRows(sub, closed, `${path}/`, path));
+    if (!closed.has(path)) out.push(...visibleRows(sub, closed, virtual, `${path}/`, path));
   }
-  for (const f of tree.files) out.push({ key: f.path, dir: false, parent });
+  for (const f of tree.files) out.push({ key: fileRowKey(prefix, f.path, virtual), dir: false, parent, path: f.path });
   return out;
 }
 
-const NotesTree = forwardRef<HTMLDivElement, Omit<TreeProps, "depth" | "prefix"> & { onBlur: () => void }>(function NotesTree(
+const NotesTree = forwardRef<HTMLDivElement, Omit<TreeProps, "depth"> & { onBlur: () => void }>(function NotesTree(
   { onBlur, ...props },
   ref,
 ) {
   const drop = useDropTarget("", props.onDrop);
   return (
-    <div ref={ref} tabIndex={-1} onBlur={onBlur} className={`notes-tree ${drop.over ? "drop" : ""}`} {...drop.props}>
-      <TreeView {...props} depth={0} prefix="" />
+    <div ref={ref} tabIndex={-1} onBlur={onBlur} className={`notes-tree ${!props.virtual && drop.over ? "drop" : ""}`} {...(props.virtual ? {} : drop.props)}>
+      <TreeView {...props} depth={0} />
     </div>
   );
 });
@@ -786,7 +841,22 @@ export default function App() {
   // Requests already queued show as their event, not twice.
   const waitingFiles = useMemo(() => inboxFiles.filter((f) => !openEvents.some((e) => e.kind === "request" && e.source === f.path)), [inboxFiles, openEvents]);
   const inboxCount = openEvents.length + waitingFiles.length;
-  const tree = useMemo(() => buildTree(files, dirs, noteSort), [files, dirs, noteSort]);
+  const [noteView, setNoteViewState] = useState<NoteView>(() => {
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      return NOTE_VIEWS.some((x) => x.value === v) ? (v as NoteView) : "folder";
+    } catch {
+      return "folder";
+    }
+  });
+  const setNoteView = (v: NoteView) => {
+    setNoteViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch { /* not remembered */ }
+  };
+  const treePrefix = viewPrefix(noteView);
+  const tree = useMemo(() => (noteView === "folder" ? buildTree(files, dirs, noteSort) : buildGroupTree(files, noteView, noteSort)), [files, dirs, noteSort, noteView]);
   const crews = useMemo(() => files.filter((f) => f.kind === "crew"), [files]);
   // Newest first: their names are the time they were made.
   // Untitled notes are named by what they say, so their tabs follow as the text changes.
@@ -810,7 +880,7 @@ export default function App() {
   // Workspaces with how many sessions ran on each.
   const workspaces = useMemo(() => files.filter((f) => f.kind === "workspace").map((f) => ({ f, count: sessions.filter((s) => namesWorkspace(s.workspace, f)).length })), [files, sessions]);
   const [closedDirs, setClosedDirs] = useClosedDirs();
-  const allDirs = useMemo(() => dirPaths(tree), [tree]);
+  const allDirs = useMemo(() => dirPaths(tree, treePrefix), [tree, treePrefix]);
 
   // Reveal the open note in the tree, once it is listed.
   const activeTab = tabs.find((t) => t.key === active);
@@ -1384,7 +1454,7 @@ export default function App() {
     return () => window.removeEventListener("focus", loadConfig);
   }, []);
 
-  const rows = useMemo(() => visibleRows(tree, closedDirs), [tree, closedDirs]);
+  const rows = useMemo(() => visibleRows(tree, closedDirs, noteView !== "folder", treePrefix), [tree, closedDirs, noteView, treePrefix]);
 
   const focusTree = () => {
     if (railOn) {
@@ -1398,7 +1468,7 @@ export default function App() {
       requestAnimationFrame(() => treeRef.current?.focus());
     }
     const keys = rows.map((r) => r.key);
-    setTreeCursor((c) => (c && keys.includes(c) ? c : activeNote && keys.includes(activeNote) ? activeNote : keys[0] ?? null));
+    setTreeCursor((c) => (c && keys.includes(c) ? c : rows.find((r) => activeNote && r.path === activeNote)?.key ?? keys[0] ?? null));
     setTreeFocus(true);
     treeRef.current?.focus();
   };
@@ -1528,7 +1598,7 @@ export default function App() {
         const row = rows.find((r) => r.key === treeCursor);
         if (row?.dir && closedDirs.has(row.key)) toggleDir(row.key, false);
         else if (row?.dir) moveTree(1);
-        else if (row) openNote(row.key);
+        else if (row) openNote(row.path ?? row.key);
       },
     },
     "tree.close": {
@@ -1757,7 +1827,7 @@ export default function App() {
             ["recent", "Recent", History, 0],
             ["boards", "Boards", Columns3, 0],
             ["crews", "Crews", Users, 0],
-            ...(workspaces.length ? [["workspaces", "Workspaces", FolderGit2, 0] as [string, string, LucideIcon, number]] : []),
+            ["workspaces", "Workspaces", FolderGit2, 0],
             ["schedules", "Schedules", Timer, 0],
             ["notes", "Notes", FileText, 0],
           ] as [string, string, LucideIcon, number][]).map(([id, label, Icon, n]) => (
@@ -1966,7 +2036,7 @@ export default function App() {
               </div>
             )}
           </Collapsible>
-          {workspaces.length > 0 && (
+          {(
             <Collapsible title="Workspaces" panel="workspaces" icon={<FolderGit2 size={11} />} count={workspaces.length} defaultOpen={false}
               action={<button className="section-action" title="New workspace" onClick={() => setNaming({ kind: "workspace", initial: "" })}><Plus size={13} /></button>}>
               {workspaces.map(({ f, count }) => (
@@ -1980,6 +2050,11 @@ export default function App() {
                     onClick={(e) => { e.stopPropagation(); setRecentOpen(true); setRecentFilter(fileLabel(f)); if (railOn) setRailPanel("recent"); }}><ListFilter size={11} /></button>
                 </a>
               ))}
+              {workspaces.length === 0 && (
+                <div className="muted small" style={{ padding: "2px 12px 6px" }}>
+                  A project and the other directories its tasks work on, saved to pick again. <a onClick={() => setNaming({ kind: "workspace", initial: "" })}>New workspace</a>
+                </div>
+              )}
             </Collapsible>
           )}
           <Collapsible title="Schedules" panel="schedules" icon={<Timer size={11} />} count={schedules.length} defaultOpen={false}
@@ -2007,10 +2082,20 @@ export default function App() {
           </Collapsible>
           <Collapsible title="Notes" panel="notes" icon={<FileText size={11} />} fill
             action={<>
-              <button className="section-action" title="Expand all folders" onClick={() => setClosedDirs(new Set())}>
+              <button className={`section-action ${noteView !== "folder" ? "on" : ""}`} title="View notes by folder, tag, type or project" onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenu({
+                  x: r.left, y: r.bottom + 4,
+                  items: NOTE_VIEWS.map((v) => ({ label: `${v.value === noteView ? "✓" : "\u2003"} ${v.label}`, onClick: () => setNoteView(v.value) })),
+                });
+              }}>
+                <Layers size={13} />
+              </button>
+              {/* Only this view's groups: folders keep their state while another view is shown. */}
+              <button className="section-action" title="Expand all" onClick={() => setClosedDirs((s) => new Set([...s].filter((d) => !allDirs.includes(d))))}>
                 <ChevronsUpDown size={13} />
               </button>
-              <button className="section-action" title="Collapse all folders" onClick={() => setClosedDirs(new Set(allDirs))}>
+              <button className="section-action" title="Collapse all" onClick={() => setClosedDirs((s) => new Set([...s, ...allDirs]))}>
                 <ChevronsDownUp size={13} />
               </button>
               <button className="section-action" title="Sort notes" onClick={(e) => {
@@ -2027,7 +2112,7 @@ export default function App() {
               </button>
             </>}>
             <NotesTree ref={treeRef} cursor={treeFocus ? treeCursor : null} onBlur={() => setTreeFocus(false)}
-              tree={tree} closed={closedDirs} onToggle={toggleDir} activePath={current?.kind === "note" ? current.path : undefined}
+              tree={tree} prefix={treePrefix} virtual={noteView !== "folder"} closed={closedDirs} onToggle={toggleDir} activePath={current?.kind === "note" ? current.path : undefined}
               onOpen={openFile} onNewIn={(dir) => setNaming({ kind: "note", initial: dir })} onFileMenu={fileMenu}
               onDirMenu={dirMenu} onDrop={(from, to) => { move(from, to ? `${to}/` : ""); }} />
           </Collapsible>
