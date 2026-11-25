@@ -66,6 +66,8 @@ export type FileEntry = {
   modified: number;
   /** The frontmatter `project:` and `workspace:` as written, and `started:` or `created:`. */
   project?: string | null; workspace?: string | null; created?: string | null;
+  /** What it was made for: a document's or a session's request or anchor id. */
+  origin?: string | null;
 };
 export type Anchor = { id: string; line: number };
 export type FileResult = { file: string | null; items: string[] };

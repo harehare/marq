@@ -30,6 +30,8 @@ pub struct FileEntry {
     pub workspace: Option<String>,
     /// When it was started or created, from `started:` or `created:`.
     pub created: Option<String>,
+    /// What it was made for, from `origin:`: a document's or a session's request or anchor id.
+    pub origin: Option<String>,
 }
 
 impl FileEntry {
@@ -98,6 +100,7 @@ fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scann
         project: fm_get(&text, "project").filter(|s| !s.is_empty()),
         workspace: fm_get(&text, "workspace").filter(|s| !s.is_empty()),
         created: fm_get(&text, "started").or_else(|| fm_get(&text, "created")).filter(|s| !s.is_empty()),
+        origin: fm_get(&text, "origin").filter(|s| !s.is_empty()),
     };
     let doc = entry.kind.as_deref() == Some("doc");
     Scanned {
@@ -176,6 +179,7 @@ fn other_files(vault: &Path) -> Vec<FileEntry> {
                 project: None,
                 workspace: None,
                 created: None,
+                origin: None,
             }
         })
         .collect()

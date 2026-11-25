@@ -63,6 +63,12 @@ Choose it under **Workspace** in the New task dialog. A request that uses a work
 
 Schedules (`workspace:` or `directories:`) and [crews](crews-and-boards.md#workspaces) take a workspace too.
 
+A session remembers the workspace its request or crew named, so a workspace is also a place to find its work again:
+
+- **Workspaces** in the sidebar lists them with how many sessions ran on each. The filter button on a row shows those sessions in **Recent**.
+- A workspace note's side panel lists its sessions, the requests that name it and the documents they produced.
+- **Recent** can be grouped by workspace, and the Search tab narrows by one (`workspace:name`, see [search filters](vault.md#search-filters)).
+
 ## Worktrees and review
 
 When the project is inside a git repository, each session gets its own worktree at `~/.marq/worktrees/<repo>/<short id>` (change the location under **Settings → Worktrees**, `[worktree] dir`; the same section sets whether New task starts with a worktree, `default`, and where it starts from, `base`) on a new branch `marq/<short id>`. Where it starts is up to `base:` in the note, set by **Start from…** in New task: `head` (the project's current checkout; the default for notes without `base:`), `latest` (the tip of the default branch, taken from `origin/HEAD`, else `main` or `master`, after a `git fetch origin`) or a branch name. Your own checkout is never switched or pulled, and a pull request goes to the branch the work started from. If the fetch fails (offline, no access) the local branch is used. New task remembers the last choice and starts on `latest`. Set `worktree: false` in the note to work in the project directory, or `branch:` to name the branch.

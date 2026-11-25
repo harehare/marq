@@ -21,6 +21,7 @@ import { TerminalView, PANE_EVENT, type PaneAction, type PaneRequest } from "./T
 import { BoardView } from "./BoardView";
 import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
+import { namesWorkspace } from "./workspaces";
 import { filterSessions, groupRecent, projectName, RECENT_GROUPS, RecentGroup } from "./recentSessions";
 import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
@@ -806,6 +807,8 @@ export default function App() {
   // A crew's task board is shown on its Tasks tab, not with the other boards.
   const boards = useMemo(() => files.filter((f) => f.kind === "board" && !f.rel.startsWith("crews/")), [files]);
   const [newBoard, setNewBoard] = useState(false);
+  // Workspaces with how many sessions ran on each.
+  const workspaces = useMemo(() => files.filter((f) => f.kind === "workspace").map((f) => ({ f, count: sessions.filter((s) => namesWorkspace(s.workspace, f)).length })), [files, sessions]);
   const [closedDirs, setClosedDirs] = useClosedDirs();
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
 
@@ -1754,6 +1757,7 @@ export default function App() {
             ["recent", "Recent", History, 0],
             ["boards", "Boards", Columns3, 0],
             ["crews", "Crews", Users, 0],
+            ...(workspaces.length ? [["workspaces", "Workspaces", FolderGit2, 0] as [string, string, LucideIcon, number]] : []),
             ["schedules", "Schedules", Timer, 0],
             ["notes", "Notes", FileText, 0],
           ] as [string, string, LucideIcon, number][]).map(([id, label, Icon, n]) => (
@@ -1962,6 +1966,22 @@ export default function App() {
               </div>
             )}
           </Collapsible>
+          {workspaces.length > 0 && (
+            <Collapsible title="Workspaces" panel="workspaces" icon={<FolderGit2 size={11} />} count={workspaces.length} defaultOpen={false}
+              action={<button className="section-action" title="New workspace" onClick={() => setNaming({ kind: "workspace", initial: "" })}><Plus size={13} /></button>}>
+              {workspaces.map(({ f, count }) => (
+                <a key={f.path} className={`inbox-row schedule-row ${current?.kind === "note" && current.path === f.path ? "on" : ""}`}
+                  onClick={() => openNote(f.path)} onContextMenu={(e) => fileMenu(e, f)}
+                  title={`${f.rel}${f.project ? `\n${f.project}` : ""}\nIts sessions, requests and documents are in the note's side panel`}>
+                  <FolderGit2 size={13} /> <span className="ellipsis">{fileLabel(f)}</span>
+                  <span className="spacer" />
+                  {count > 0 && <span className="count">{count}</span>}
+                  <button className="icon row-action" title="Show its sessions in Recent"
+                    onClick={(e) => { e.stopPropagation(); setRecentOpen(true); setRecentFilter(fileLabel(f)); if (railOn) setRailPanel("recent"); }}><ListFilter size={11} /></button>
+                </a>
+              ))}
+            </Collapsible>
+          )}
           <Collapsible title="Schedules" panel="schedules" icon={<Timer size={11} />} count={schedules.length} defaultOpen={false}
             action={<button className="section-action" title="New schedule" onClick={() => setNewSchedule(true)}><Plus size={13} /></button>}>
             {schedules.map((s) => (

@@ -20,6 +20,7 @@ import type { Excerpt } from "./SendToSessionDialog";
 import { EditorState } from "@codemirror/state";
 import { vim, Vim } from "@replit/codemirror-vim";
 import { NoteLinksPanel } from "./NoteLinks";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { wikiCompletion } from "./wikilinks";
 import { composing, FIND_EVENT } from "./keys";
 
@@ -144,6 +145,8 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   // For a document an agent wrote: the sessions that wrote or revised it, latest first.
   const [writers, setWriters] = useState<SessionInfo[]>([]);
+  // For a workspace note: every session, for the panel to pick those that ran on it. Null for other notes.
+  const [workspaceSessions, setWorkspaceSessions] = useState<SessionInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingJump, setPendingJump] = useState<number | null>(null);
   const ref = useRef<ReactCodeMirrorRef>(null);
@@ -223,6 +226,8 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
     const ids = fm.get("type") === "doc" ? (fm.get("sessions") ?? "").replace(/^\[|\]$/g, "").split(",").map((x) => x.trim()).filter(Boolean) : [];
     const by = [...new Set(ids)].reverse().flatMap((sid) => all.filter((x) => x.id === sid));
     setWriters((prev) => (JSON.stringify(prev) === JSON.stringify(by) ? prev : by));
+    const ofWorkspace = fm.get("type") === "workspace" ? all.filter((s) => s.workspace) : null;
+    setWorkspaceSessions((prev) => (JSON.stringify(prev) === JSON.stringify(ofWorkspace) ? prev : ofWorkspace));
   }, [vault, plain, setSessions, setWriters]);
 
   // Hidden tabs catch up when they are shown again, rather than on every change.
@@ -720,8 +725,9 @@ export function NoteEditor({ vault, path, active = true, jump, fresh, onOpenSess
                 <div className="muted small">{s.started.slice(0, 16).replace("T", " ")} · {s.status}</div>
               </a>
             ))}
-            <h4>Sessions</h4>
-            {sessions.length === 0 && (
+            {workspaceSessions && <WorkspacePanel path={path} sessions={workspaceSessions} onOpenSession={onOpenSession} onOpenFile={onOpenFile} />}
+            {!workspaceSessions && <h4>Sessions</h4>}
+            {!workspaceSessions && sessions.length === 0 && (
               <p className="muted small">Hover a heading in the preview and choose Ask to start one.</p>
             )}
             {sessions.map((s) => (
