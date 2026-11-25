@@ -129,6 +129,35 @@ Giving one filter twice (`type:request type:doc`) keeps either; different filter
 
 A session records the workspace its request named, as `workspace:` in the session note. Sessions from before that take it from their request.
 
+### Keys of your own
+
+To organize by something Marq does not know about, such as an area of the product, an epic or a customer, write it in the frontmatter and name the key in [`config.toml`](settings.md) (or **Settings → Organize**):
+
+```toml
+[organize]
+keys = ["area", "epic"]
+```
+
+```yaml
+type: request
+area: billing              # or a list: [billing, auth]
+epic: checkout
+```
+
+Each key then works like the built-in ones:
+
+- **Search**: `area:billing` narrows a search by part of the value, and the Search tab has a pull-down for each key.
+- **Notes**: the view button lists **By area** next to tag, type and project.
+- **Recent**: the group button lists **Group by area**, and **Group by tag**.
+
+**New task** has an **Organize** section with a field for tags and for each of your keys. It suggests the values the vault already uses, and starts with what the last task on the same project was filed under (tags start empty). What you enter is written to the request.
+
+A session is filed under what its request says: when it starts, it takes the request's `tags` and its values for your keys, and writes them into the session note. So a search for `area:billing` in sessions, or Recent grouped by area, finds the sessions of those requests. Sessions from before a key was added take it from their request the next time Marq starts.
+
+Agents can file things too. Each session is told the tags and the values of your keys that the vault already uses, and what it is filed under, and can call `set_tags` to add tags or set a key on itself and its request, reusing those words. `tag_note` does the same for another note, with your approval. Neither can set anything but `tags` and your keys.
+
+A key is a single word, and cannot be one of the built-in filters (`type`, `status`, `project`, `workspace`, `since`, `before`, `tag`).
+
 ## Knowledge notes
 
 Sessions write what they learn under their own `## Learnings`, so the same lesson ends up in many places and old ones never go away. Knowledge notes in `knowledge/` gather it by topic instead:

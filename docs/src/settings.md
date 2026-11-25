@@ -44,6 +44,9 @@ keep_days = 7                   # scratch memos not changed for this many days g
 [inbox]
 parallel = 1                    # scheduled runs and queued requests that go at once (1 to 8); the rest wait in the Inbox
 
+[organize]
+keys = ["area", "epic"]         # frontmatter keys of your own to search, filter and group by; see Vault → Keys of your own
+
 [sandbox]
 unattended = "on"               # on | strict: sandbox schedules that do not set one
 

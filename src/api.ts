@@ -42,6 +42,8 @@ export type TaskChecks = {
   workspace?: string;
   /** Directories beyond the project, when not from a workspace. */
   directories?: DirSpec[];
+  /** What the request is filed under: `tags` and the user's own keys, each with its value (several separated by commas). */
+  fields?: Record<string, string>;
   /** Where the worktree's branch starts: `head` (the project's checkout, the default), `latest` (the default branch, fetched) or a branch name. */
   base?: string;
 };
@@ -68,6 +70,8 @@ export type FileEntry = {
   project?: string | null; workspace?: string | null; created?: string | null;
   /** What it was made for: a document's or a session's request or anchor id. */
   origin?: string | null;
+  /** Its values for the frontmatter keys of the user's own (`[organize] keys`). */
+  fields?: Record<string, string[]>;
 };
 export type Anchor = { id: string; line: number };
 export type FileResult = { file: string | null; items: string[] };
@@ -85,6 +89,8 @@ export type SessionInfo = {
   dirs?: ExtraDir[];
   /** The workspace note its request named, relative to the vault. */
   workspace?: string | null;
+  /** What it is filed under, from its request: `tags` and the user's own keys. */
+  fields?: Record<string, string[]>;
   additions: number | null;
   deletions: number | null;
   /** `done` or `pr` once reviewed. */

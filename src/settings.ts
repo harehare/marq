@@ -15,7 +15,19 @@ export type Settings = {
   chat?: { send?: SendKey };
   tabs?: { pinned_layout?: "inline" | "row"; overflow?: "scroll" | "wrap" };
   terminal?: { font?: string; font_size?: number; ligatures?: boolean; cursor?: "block" | "bar" | "underline" };
+  /** Frontmatter keys of the user's own to search, filter and group by. */
+  organize?: { keys?: string[] };
 };
+
+/** Names the search filters already use; a key of the user's own cannot be one of them. */
+const RESERVED_KEYS = ["type", "kind", "status", "project", "workspace", "ws", "since", "after", "before", "tag", "tags"];
+
+/** `[organize] keys` as the app uses them: lowercase words, not a built-in filter, each once. */
+export function organizeKeys(s: Settings): string[] {
+  const keys = (s.organize?.keys ?? []).map((k) => String(k).trim().toLowerCase())
+    .filter((k) => /^[\p{L}\p{N}_-]+$/u.test(k) && !RESERVED_KEYS.includes(k));
+  return [...new Set(keys)];
+}
 
 /** Which key sends a message in a conversation; the others add a line. ⌘↵ sends in every mode. */
 export type SendKey = "mod-enter" | "enter" | "shift-enter";

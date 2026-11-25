@@ -6,7 +6,7 @@
 //! `marq_approval` and `marq_exit`. Logs from before the events had their own shape hold Agent SDK
 //! messages instead; `read_events` translates those.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -59,6 +59,18 @@ pub struct SessionMeta {
     /// The workspace note the session's request named, relative to the vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+    /// What the session is filed under, taken from its request when it started: `tags` and the
+    /// frontmatter keys of the user's own (`[organize] keys`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, Vec<String>>,
+}
+
+/// What a session started from `text` is filed under: the note's tags and its values for the
+/// user's own keys.
+pub fn fields_of(text: &str) -> BTreeMap<String, Vec<String>> {
+    let mut keys = vec!["tags".to_string()];
+    keys.extend(crate::config::organize_keys());
+    vault::fields_of(text, &keys)
 }
 
 impl SessionMeta {
@@ -194,7 +206,7 @@ fn claude_tool_kind(name: &str) -> &'static str {
     }
 }
 
-/// The first `marq_meta` line, with the latest `marq_worktree`, `marq_model`, `marq_effort`, `marq_mode` and `marq_title` lines applied.
+/// The first `marq_meta` line, with the latest `marq_worktree`, `marq_model`, `marq_effort`, `marq_mode`, `marq_title` and `marq_fields` lines applied.
 fn meta_of(events: &[Value]) -> Option<SessionMeta> {
     let mut meta: SessionMeta =
         events.first().filter(|e| e["type"] == "marq_meta").and_then(|e| serde_json::from_value(e.clone()).ok())?;
@@ -216,6 +228,17 @@ fn meta_of(events: &[Value]) -> Option<SessionMeta> {
     }
     if let Some(m) = events.iter().rev().find(|e| e["type"] == "marq_mode") {
         meta.permission_mode = m["mode"].as_str().map(str::to_string).filter(|e| !e.is_empty());
+    }
+    // What it was filed under since it started: each line sets the keys it names; no values takes one out.
+    for e in events.iter().filter(|e| e["type"] == "marq_fields") {
+        let Ok(changed) = serde_json::from_value::<BTreeMap<String, Vec<String>>>(e["fields"].clone()) else { continue };
+        for (k, vs) in changed {
+            if vs.is_empty() {
+                meta.fields.remove(&k);
+            } else {
+                meta.fields.insert(k, vs);
+            }
+        }
     }
     if let Some(t) = events.iter().rev().find_map(|e| (e["type"] == "marq_title").then(|| e["title"].as_str()).flatten()) {
         meta.title = t.to_string();
@@ -269,23 +292,27 @@ fn list_cache() -> &'static Mutex<HashMap<PathBuf, Cached>> {
     CACHE.get_or_init(Default::default)
 }
 
-/// The session's workspace: the one it recorded, else the one its origin note names now (sessions
-/// from before workspaces were recorded).
-pub fn workspace_of(vault: &Path, meta: &SessionMeta) -> Option<String> {
-    meta.workspace.clone().or_else(|| {
-        if meta.origin_path.is_empty() {
-            return None;
-        }
-        let text = std::fs::read_to_string(vault.join(&meta.origin_path)).ok()?;
-        let name = vault::fm_get(&text, "workspace").filter(|w| !w.trim().is_empty())?;
-        Some(crate::workspace::find(vault, &name).map_or(name, |w| w.rel))
-    })
+/// Fills in what a session did not record when it started, from what its origin note says now:
+/// its workspace and what it is filed under (sessions from before those were recorded).
+pub fn inherit(vault: &Path, meta: &mut SessionMeta) {
+    if (meta.workspace.is_some() && !meta.fields.is_empty()) || meta.origin_path.is_empty() {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(vault.join(&meta.origin_path)) else { return };
+    if meta.workspace.is_none()
+        && let Some(name) = vault::fm_get(&text, "workspace").filter(|w| !w.trim().is_empty())
+    {
+        meta.workspace = Some(crate::workspace::find(vault, &name).map_or(name, |w| w.rel));
+    }
+    if meta.fields.is_empty() {
+        meta.fields = fields_of(&text);
+    }
 }
 
 /// A list entry without worktree data.
 fn info_of(vault: &Path, events: &[Value]) -> Option<SessionInfo> {
     let mut meta = meta_of(events)?;
-    meta.workspace = workspace_of(vault, &meta);
+    inherit(vault, &mut meta);
     let (review, pr_url) = review_of(events);
     Some(SessionInfo {
         status: status_of(events),
@@ -436,6 +463,13 @@ pub fn find_origin(vault: &Path, meta: &SessionMeta) -> Option<PathBuf> {
     vault::list_files(vault).into_iter().map(|f| PathBuf::from(f.path)).find(|p| holds(p))
 }
 
+/// Files a session under other tags or values: `changed` is the keys to set, each to its values.
+/// Appended like a rename, so it is safe while the session runs.
+pub fn set_fields(vault: &Path, id: &str, changed: &BTreeMap<String, Vec<String>>) -> Result<()> {
+    append(&raw_path(vault, id), &serde_json::json!({"type": "marq_fields", "fields": changed}))?;
+    rerender(vault, id)
+}
+
 /// Renames a session. Appended like a worktree change, so it is safe while the session runs.
 pub fn set_title(vault: &Path, id: &str, title: &str) -> Result<()> {
     let title = title.trim();
@@ -553,7 +587,7 @@ pub fn append_learning(vault: &Path, id: &str, text: &str) -> Result<()> {
 pub fn rerender(vault: &Path, id: &str) -> Result<()> {
     let events = read_events(vault, id)?;
     let mut meta = meta_of(&events).ok_or_else(|| Error::SessionNotFound(id.to_string()))?;
-    meta.workspace = workspace_of(vault, &meta);
+    inherit(vault, &mut meta);
     let path = md_path(vault, &meta);
     let kept = std::fs::read_to_string(&path)
         .ok()
@@ -701,7 +735,7 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
     };
     let q = |s: &str| serde_json::to_string(s).unwrap();
     format!(
-        "---\nid: {}\ntype: session\ntitle: {}\norigin: {}\norigin_path: {}\ncwd: {}\nproject: {}\n{}branch: {}\nmodel: {}\nstatus: {}\nstarted: {}\nended: {}\ncost_usd: {:.4}\nfiles_changed: [{}]\ndocs: [{}]\n---\n{}\n\n## Transcript\n{}",
+        "---\nid: {}\ntype: session\ntitle: {}\norigin: {}\norigin_path: {}\ncwd: {}\nproject: {}\n{}{}branch: {}\nmodel: {}\nstatus: {}\nstarted: {}\nended: {}\ncost_usd: {:.4}\nfiles_changed: [{}]\ndocs: [{}]\n---\n{}\n\n## Transcript\n{}",
         meta.id,
         q(&meta.title),
         meta.origin,
@@ -709,6 +743,7 @@ pub fn render(meta: &SessionMeta, events: &[Value], kept: Option<&str>) -> Strin
         q(&meta.cwd),
         q(meta.project()),
         meta.workspace.as_ref().map(|w| format!("workspace: {}\n", q(w))).unwrap_or_default(),
+        meta.fields.iter().map(|(k, vs)| format!("{k}: [{}]\n", vs.iter().map(|v| q(v)).collect::<Vec<_>>().join(", "))).collect::<String>(),
         meta.worktree.as_ref().map(|w| w.branch.as_str()).unwrap_or(""),
         model,
         status,
@@ -772,6 +807,28 @@ mod tests {
         assert!(md.contains("````text\n1\tline ```one\n````"));
         assert!(!md.contains("\nx\n"));
         assert_eq!(md_path(Path::new("/v"), &meta()), Path::new("/v/sessions/2026-10-27-0000abcd.md"));
+    }
+
+    #[test]
+    fn a_session_is_filed_under_what_its_request_says() {
+        let mut m = meta();
+        m.workspace = Some("workspaces/w.md".into());
+        m.fields = BTreeMap::from([("area".to_string(), vec!["billing".to_string()]), ("tags".to_string(), vec!["a".to_string(), "b c".to_string()])]);
+        let md = render(&m, &[], None);
+        assert!(md.contains("workspace: \"workspaces/w.md\"\narea: [\"billing\"]\ntags: [\"a\", \"b c\"]\nbranch: "));
+        // Read back the way the vault scans it.
+        assert_eq!(vault::fm_list(&md, "tags"), ["a", "b c"]);
+        assert_eq!(vault::fields_of(&md, &["area".to_string()])["area"], ["billing"]);
+    }
+
+    #[test]
+    fn later_lines_refile_a_session() {
+        let mut m = serde_json::to_value(meta()).unwrap();
+        m["type"] = json!("marq_meta");
+        m["fields"] = json!({"tags": ["a"], "area": ["billing"]});
+        let events = vec![m, json!({"type": "marq_fields", "fields": {"tags": ["a", "b"], "area": []}})];
+        let meta = meta_of(&events).unwrap();
+        assert_eq!(meta.fields, BTreeMap::from([("tags".to_string(), vec!["a".to_string(), "b".to_string()])]));
     }
 
     #[test]

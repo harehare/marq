@@ -407,6 +407,7 @@ fn start_acceptance(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verif
         sandbox: meta.sandbox.clone(),
         verifies: Some(meta.id.clone()),
         workspace: meta.workspace.clone(),
+        fields: meta.fields.clone(),
         ..Default::default()
     };
     let check_id = check.id.clone();

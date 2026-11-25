@@ -32,6 +32,85 @@ pub struct FileEntry {
     pub created: Option<String>,
     /// What it was made for, from `origin:`: a document's or a session's request or anchor id.
     pub origin: Option<String>,
+    /// The frontmatter keys of the user's own (`[organize] keys`) the file sets, with their values.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fields: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// Sets a list-valued key to `values` as `key: ["a", "b"]`, or takes the key out when there are
+/// none. A list written as a block (`key:` with `- item` lines under it) is replaced whole.
+pub fn fm_set_list(text: &str, key: &str, values: &[String]) -> String {
+    let line = (!values.is_empty())
+        .then(|| format!("{key}: [{}]", values.iter().map(|v| serde_json::to_string(v).unwrap()).collect::<Vec<_>>().join(", ")));
+    let (Some(fm), body) = split_frontmatter(text) else {
+        return match line {
+            Some(l) => format!("---\n{l}\n---\n{text}"),
+            None => text.to_string(),
+        };
+    };
+    let (mut lines, mut in_block, mut placed) = (Vec::<String>::new(), false, false);
+    for l in fm.lines() {
+        if l.strip_prefix(key).is_some_and(|r| r.starts_with(':')) {
+            (in_block, placed) = (true, true);
+            lines.extend(line.clone());
+        } else if !(in_block && (l.starts_with([' ', '\t']) || l.starts_with("- "))) {
+            in_block = false;
+            lines.push(l.to_string());
+        }
+    }
+    if !placed {
+        lines.extend(line);
+    }
+    format!("---\n{}\n---\n{}", lines.join("\n"), body)
+}
+
+/// A change to what a note or session is filed under.
+#[derive(Debug, Default)]
+pub struct Refile {
+    /// Tags to add (a leading `#` is dropped) and to take away, ignoring case.
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+    /// The user's own keys to set, each to its values; none takes the key out.
+    pub fields: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// The keys `change` touches with their new values, given what is there now. Only `tags` and
+/// `keys` (the user's own) can be set; another key is an error that names them.
+pub fn refile(
+    current: &std::collections::BTreeMap<String, Vec<String>>, change: &Refile, keys: &[String],
+) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
+    let clean = |v: &str| v.trim().trim_start_matches('#').trim().to_string();
+    let mut out = std::collections::BTreeMap::new();
+    if !change.add_tags.is_empty() || !change.remove_tags.is_empty() {
+        let gone: Vec<String> = change.remove_tags.iter().map(|t| clean(t).to_lowercase()).collect();
+        let mut tags: Vec<String> = current.get("tags").cloned().unwrap_or_default();
+        tags.retain(|t| !gone.contains(&t.to_lowercase()));
+        for t in change.add_tags.iter().map(|t| clean(t)).filter(|t| !t.is_empty()) {
+            if !tags.iter().any(|x| x.eq_ignore_ascii_case(&t)) {
+                tags.push(t);
+            }
+        }
+        out.insert("tags".to_string(), tags);
+    }
+    for (k, vs) in &change.fields {
+        let k = k.trim().to_lowercase();
+        if !keys.contains(&k) {
+            let known = if keys.is_empty() { "none are set up; the user adds them under [organize] keys in config.toml".to_string() } else { keys.join(", ") };
+            return Err(Error::Other(format!("\"{k}\" is not one of the user's keys ({known}). Use tags for anything else.")));
+        }
+        out.insert(k, vs.iter().map(|v| clean(v)).filter(|v| !v.is_empty()).collect());
+    }
+    Ok(out)
+}
+
+/// `text` with each key of `changed` set to its values (see [`fm_set_list`]).
+pub fn apply_fields(text: &str, changed: &std::collections::BTreeMap<String, Vec<String>>) -> String {
+    changed.iter().fold(text.to_string(), |t, (k, vs)| fm_set_list(&t, k, vs))
+}
+
+/// The values a note gives each of `keys` in its frontmatter: a scalar, a list or a comma-separated string.
+pub fn fields_of(text: &str, keys: &[String]) -> std::collections::BTreeMap<String, Vec<String>> {
+    keys.iter().map(|k| (k.clone(), fm_list(text, k))).filter(|(_, v)| !v.is_empty()).collect()
 }
 
 impl FileEntry {
@@ -82,7 +161,7 @@ fn scan_cache() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, 
     CACHE.get_or_init(Default::default)
 }
 
-fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scanned {
+fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64), keys: &[String]) -> Scanned {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let entry = FileEntry {
         path: path.to_string_lossy().into_owned(),
@@ -101,6 +180,7 @@ fn scan(vault: &Path, path: &Path, stamp: (std::time::SystemTime, u64)) -> Scann
         workspace: fm_get(&text, "workspace").filter(|s| !s.is_empty()),
         created: fm_get(&text, "started").or_else(|| fm_get(&text, "created")).filter(|s| !s.is_empty()),
         origin: fm_get(&text, "origin").filter(|s| !s.is_empty()),
+        fields: fields_of(&text, keys),
     };
     let doc = entry.kind.as_deref() == Some("doc");
     Scanned {
@@ -131,10 +211,19 @@ fn each_scanned(vault: &Path, mut f: impl FnMut(&Scanned)) {
             Some((e.path().to_path_buf(), (m.modified().ok()?, m.len())))
         })
         .collect();
+    let keys = crate::config::organize_keys();
     let mut cache = scan_cache().lock().unwrap();
+    // Other keys to read: every file is scanned again.
+    static SCANNED_FOR: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut scanned_for = SCANNED_FOR.lock().unwrap();
+    if *scanned_for != keys {
+        cache.clear();
+        *scanned_for = keys.clone();
+    }
+    drop(scanned_for);
     for (path, stamp) in &found {
         if cache.get(path).is_none_or(|c| c.stamp != *stamp) {
-            let s = scan(vault, path, *stamp);
+            let s = scan(vault, path, *stamp, &keys);
             cache.insert(path.clone(), s);
         }
     }
@@ -180,6 +269,7 @@ fn other_files(vault: &Path) -> Vec<FileEntry> {
                 workspace: None,
                 created: None,
                 origin: None,
+                fields: Default::default(),
             }
         })
         .collect()
@@ -714,6 +804,7 @@ pub fn search(vault: &Path, query: &str, include_sessions: bool, max_files: usiz
             || !fl.matches_status(f.status.as_deref())
             || !fl.matches_project(f.project.as_deref())
             || !((fl.since.is_none() && fl.before.is_none()) || fl.matches_date(&f.date()))
+            || !fl.matches_fields(&f.fields)
             || !(fl.workspaces.is_empty() || fl.matches_workspace(&workspace_names(&files, f.workspace.as_deref(), Some(f))))
         {
             continue;
@@ -930,6 +1021,42 @@ mod tests {
         let (hits, _) = search(v, "tag:security", false, 10, 10);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].lines[0].1, "tags: [security]");
+    }
+
+    #[test]
+    fn refiles_notes() {
+        use std::collections::BTreeMap;
+        let keys = ["area".to_string()];
+        let current = BTreeMap::from([("tags".to_string(), vec!["Bug".to_string(), "ui".to_string()])]);
+        let change = Refile {
+            add_tags: vec!["#bug".into(), " auth ".into()],
+            remove_tags: vec!["UI".into()],
+            fields: BTreeMap::from([("Area".to_string(), vec!["billing".to_string(), "".to_string()])]),
+        };
+        let changed = refile(&current, &change, &keys).unwrap();
+        assert_eq!(changed["tags"], ["Bug", "auth"]);
+        assert_eq!(changed["area"], ["billing"]);
+        // Only tags and the user's keys.
+        let bad = Refile { fields: BTreeMap::from([("status".to_string(), vec!["done".to_string()])]), ..Default::default() };
+        assert!(refile(&current, &bad, &keys).unwrap_err().to_string().contains("area"));
+
+        // Written back: an inline list, in place of a block list, and other lines as they were.
+        let note = "---\ntitle: t\ntags:\n  - Bug\n  - ui\nstatus: todo\n---\nbody\n";
+        let text = apply_fields(note, &changed);
+        assert_eq!(text, "---\ntitle: t\ntags: [\"Bug\", \"auth\"]\nstatus: todo\narea: [\"billing\"]\n---\nbody\n");
+        // No values takes the key out; a note without frontmatter gets one.
+        assert_eq!(fm_set_list(&text, "area", &[]), "---\ntitle: t\ntags: [\"Bug\", \"auth\"]\nstatus: todo\n---\nbody\n");
+        assert_eq!(fm_set_list("body\n", "tags", &["a".to_string()]), "---\ntags: [\"a\"]\n---\nbody\n");
+        assert_eq!(fm_set_list("body\n", "tags", &[]), "body\n");
+    }
+
+    #[test]
+    fn reads_the_users_own_keys() {
+        let keys = ["area".to_string(), "epic".to_string(), "owner".to_string()];
+        let f = fields_of("---\narea: [billing, auth/oauth]\nepic: checkout\ntitle: t\n---\n", &keys);
+        assert_eq!(f["area"], ["billing", "auth/oauth"]);
+        assert_eq!(f["epic"], ["checkout"]);
+        assert!(!f.contains_key("owner") && !f.contains_key("title"));
     }
 
     #[test]

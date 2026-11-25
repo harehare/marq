@@ -21,7 +21,7 @@ import { BoardView } from "./BoardView";
 import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
 import { namesWorkspace } from "./workspaces";
-import { filterSessions, groupRecent, projectName, RECENT_GROUPS, RecentGroup } from "./recentSessions";
+import { filterSessions, groupRecent, projectName, recentGroups, RecentGroup } from "./recentSessions";
 import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
 import { TabStrip } from "./TabStrip";
@@ -38,7 +38,7 @@ import { SettingsDialog } from "./SettingsDialog";
 import { ContextMenu, MenuItem, MenuState } from "./ContextMenu";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { PALETTES, useTheme } from "./theme";
-import { Settings, getSettings, setSettings, useSettings } from "./settings";
+import { Settings, getSettings, organizeKeys, setSettings, useSettings } from "./settings";
 import { notify, summary } from "./notify";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
@@ -180,13 +180,17 @@ function buildTree(files: FileEntry[], dirs: string[], sort: NoteSort): Tree {
 }
 
 /** How the Notes list is divided: by folder as on disk, or by what the frontmatter says, without moving a file. */
-type NoteView = "folder" | "tag" | "type" | "project";
-const NOTE_VIEWS: { value: NoteView; label: string; none: string }[] = [
-  { value: "folder", label: "By folder", none: "" },
-  { value: "tag", label: "By tag", none: "Untagged" },
-  { value: "type", label: "By type", none: "note" },
-  { value: "project", label: "By project", none: "No project" },
-];
+type NoteView = string;
+/** The views: `folder`, `tag`, `type`, `project`, and `field:<key>` for each of the user's own keys. `none` names the group of notes without the property. */
+function noteViews(keys: string[]): { value: NoteView; label: string; none: string }[] {
+  return [
+    { value: "folder", label: "By folder", none: "" },
+    { value: "tag", label: "By tag", none: "Untagged" },
+    { value: "type", label: "By type", none: "note" },
+    { value: "project", label: "By project", none: "No project" },
+    ...keys.map((k) => ({ value: `field:${k}`, label: `By ${k}`, none: `No ${k}` })),
+  ];
+}
 const VIEW_KEY = "marq.noteView";
 
 /** Where a view's groups are kept apart from folders of the same name, among the collapsed paths. */
@@ -194,11 +198,11 @@ const viewPrefix = (view: NoteView) => (view === "folder" ? "" : `@${view}:`);
 
 /**
  * Notes under a group each instead of their folder: one per tag (a note with several is under each),
- * per type or per project. Session logs are left out (Recent lists sessions), and so are plain text
+ * per type, per project or per value of one of the user's own keys. Session logs are left out (Recent lists sessions), and so are plain text
  * files where they could only land in the group for notes without the property. That group is last.
  */
-function buildGroupTree(files: FileEntry[], view: Exclude<NoteView, "folder">, sort: NoteSort): Tree {
-  const none = NOTE_VIEWS.find((v) => v.value === view)!.none;
+function buildGroupTree(files: FileEntry[], view: NoteView, none: string, sort: NoteSort): Tree {
+  const key = view.startsWith("field:") ? view.slice(6) : "";
   const root: Tree = { dirs: new Map(), files: [] };
   const add = (label: string, f: FileEntry) => {
     if (!root.dirs.has(label)) root.dirs.set(label, { dirs: new Map(), files: [] });
@@ -208,6 +212,7 @@ function buildGroupTree(files: FileEntry[], view: Exclude<NoteView, "folder">, s
     if (f.rel.startsWith("sessions/") || (f.kind === "file" && view !== "type")) continue;
     const labels = view === "tag" ? f.tags
       : view === "type" ? [f.kind ?? none]
+      : key ? f.fields?.[key] ?? []
       : f.project ? [f.project.split("/").filter(Boolean).slice(-2).join("/")] : [];
     for (const l of labels.length ? labels : [none]) add(l, f);
   }
@@ -834,14 +839,17 @@ export default function App() {
   // Requests already queued show as their event, not twice.
   const waitingFiles = useMemo(() => inboxFiles.filter((f) => !openEvents.some((e) => e.kind === "request" && e.source === f.path)), [inboxFiles, openEvents]);
   const inboxCount = openEvents.length + waitingFiles.length;
-  const [noteView, setNoteViewState] = useState<NoteView>(() => {
+  const ownKeys = organizeKeys(settingsNow);
+  const views = noteViews(ownKeys);
+  const [noteViewState, setNoteViewState] = useState<NoteView>(() => {
     try {
-      const v = localStorage.getItem(VIEW_KEY);
-      return NOTE_VIEWS.some((x) => x.value === v) ? (v as NoteView) : "folder";
+      return localStorage.getItem(VIEW_KEY) ?? "folder";
     } catch {
       return "folder";
     }
   });
+  // A view of a key that is no longer in the settings falls back to folders.
+  const noteView = views.some((v) => v.value === noteViewState) ? noteViewState : "folder";
   const setNoteView = (v: NoteView) => {
     setNoteViewState(v);
     try {
@@ -849,7 +857,8 @@ export default function App() {
     } catch { /* not remembered */ }
   };
   const treePrefix = viewPrefix(noteView);
-  const tree = useMemo(() => (noteView === "folder" ? buildTree(files, dirs, noteSort) : buildGroupTree(files, noteView, noteSort)), [files, dirs, noteSort, noteView]);
+  const viewNone = views.find((v) => v.value === noteView)?.none ?? "";
+  const tree = useMemo(() => (noteView === "folder" ? buildTree(files, dirs, noteSort) : buildGroupTree(files, noteView, viewNone, noteSort)), [files, dirs, noteSort, noteView, viewNone]);
   // Newest first: their names are the time they were made.
   // Untitled notes are named by what they say, so their tabs follow as the text changes.
   useEffect(() => {
@@ -962,14 +971,15 @@ export default function App() {
   const [recentOpen, setRecentOpen] = useSectionOpen("Recent");
   // Recent can be narrowed by typing and divided by date, project or workspace.
   const [recentFilter, setRecentFilter] = useState<string | null>(null);
-  const [recentGroup, setRecentGroupState] = useState<RecentGroup>(() => {
+  const groupChoices = recentGroups(ownKeys);
+  const [recentGroupState, setRecentGroupState] = useState<RecentGroup>(() => {
     try {
-      const v = localStorage.getItem("marq.recent.group");
-      return RECENT_GROUPS.some((g) => g.value === v) ? (v as RecentGroup) : "none";
+      return localStorage.getItem("marq.recent.group") ?? "none";
     } catch {
       return "none";
     }
   });
+  const recentGroup = groupChoices.some((g) => g.value === recentGroupState) ? recentGroupState : "none";
   const setRecentGroup = (g: RecentGroup) => {
     setRecentGroupState(g);
     try {
@@ -2009,7 +2019,7 @@ export default function App() {
                 const r = e.currentTarget.getBoundingClientRect();
                 setMenu({
                   x: r.left, y: r.bottom + 4,
-                  items: NOTE_VIEWS.map((v) => ({ label: `${v.value === noteView ? "✓" : "\u2003"} ${v.label}`, onClick: () => setNoteView(v.value) })),
+                  items: views.map((v) => ({ label: `${v.value === noteView ? "✓" : "\u2003"} ${v.label}`, onClick: () => setNoteView(v.value) })),
                 });
               }}>
                 <Layers size={13} />
@@ -2056,7 +2066,7 @@ export default function App() {
                   const r = e.currentTarget.getBoundingClientRect();
                   setMenu({
                     x: r.left, y: r.bottom + 4,
-                    items: RECENT_GROUPS.map((g) => ({ label: `${g.value === recentGroup ? "✓" : "\u2003"} ${g.label}`, onClick: () => { setRecentOpen(true); setRecentGroup(g.value); } })),
+                    items: groupChoices.map((g) => ({ label: `${g.value === recentGroup ? "✓" : "\u2003"} ${g.label}`, onClick: () => { setRecentOpen(true); setRecentGroup(g.value); } })),
                   });
                 }}>
                   <Layers size={13} />

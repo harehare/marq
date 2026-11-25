@@ -100,6 +100,16 @@ export function vaultServer(sessionId: string) {
         { id: z.string() }, async (a) => text(await rpc("cancel_followup", { ...a, session: sessionId }))),
       tool("append_learning", "Record a reusable learning (a gotcha, decision or fact worth remembering) in this session's notes.",
         { text: z.string() }, async (a) => text(await rpc("append_learning", { ...a, session: sessionId }))),
+      tool("set_tags",
+        "File this session, and the request it started from, under tags and the user's own keys, so they are found by them later. " +
+          "tags are added to those it has; remove takes tags away. fields sets one of the user's keys (listed in your instructions, e.g. area) to a value or a list of values; an empty list clears it. " +
+          "Reuse tags and values already in use in the vault.",
+        { tags: z.array(z.string()).optional(), remove: z.array(z.string()).optional(), fields: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional() },
+        async (a) => text(await rpc("set_tags", { ...a, session: sessionId }))),
+      tool("tag_note",
+        "File another note in the vault (by path, title or id) under tags and the user's own keys, like set_tags does for this session. The user approves it.",
+        { note: z.string(), tags: z.array(z.string()).optional(), remove: z.array(z.string()).optional(), fields: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional() },
+        async (a) => text(await rpc("tag_note", { ...a, session: sessionId }))),
       tool("list_notes", "List folders and notes in the user's vault (path, title, type, status). folder narrows it to one folder.",
         { folder: z.string().optional() }, async (a) => text(await rpc("list_notes", { ...a, session: sessionId }))),
       tool("create_folder", "Create a folder in the vault (parents too). path is relative to the vault.",
@@ -129,8 +139,8 @@ export function vaultServer(sessionId: string) {
 
 // Pre-approved: they only read the vault and sessions, or write Marq's own files in the vault.
 // send_to_session is left out so each send goes through the approval card.
-// move_note and trash_note change the user's notes, so they ask too.
-export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "list_comments", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
+// move_note, trash_note and tag_note change the user's notes, so they ask too.
+export const VAULT_TOOLS = ["search_notes", "query_notes", "read_note", "list_comments", "note_links", "list_learnings", "write_knowledge", "write_doc", "append_learning", "set_tags", "set_progress", "set_followup", "list_followups", "cancel_followup", "list_sessions", "search_sessions", "read_session",
   "list_notes", "create_folder",
   "list_boards", "read_board", "search_cards", "board_add_card", "board_update_card", "board_add_list", "create_board", "write_spec", "spec_to_board"]
   .map((t) => `mcp__marq__${t}`);

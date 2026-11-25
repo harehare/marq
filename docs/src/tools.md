@@ -12,6 +12,8 @@ Marq exposes the vault to agents as an MCP server. The tools run in the sidecar 
 | `list_notes(folder?)` | no | Folders and notes with title, type and status |
 | `write_doc(title, content, folder?, path?)` | no | Save a document for you in the vault (`docs/` by default); `path` revises an earlier `type: doc` note |
 | `append_learning(text)` | no | Append to the current session's `## Learnings` |
+| `set_tags(tags?, remove?, fields?)` | no | File the current session and its request under tags and [keys of your own](vault.md#keys-of-your-own): `tags` are added, `remove` takes tags away, `fields` sets a key to a value or a list (an empty list clears it) |
+| `tag_note(note, tags?, remove?, fields?)` | yes | File another note the same way |
 | `create_folder(path)` | no | Create a folder |
 | `move_note(from, to)` | yes | Move or rename a note or folder, rewriting relative links |
 | `trash_note(path)` | yes | Move a note or folder to the Trash |

@@ -373,6 +373,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         phase,
         dirs,
         workspace: ws.workspace,
+        fields: session::fields_of(&text),
     };
     progress(&app, "Starting the session…");
     runner.start(app.clone(), v, meta, prompt, Turn::New)?;
@@ -498,9 +499,31 @@ struct NewTask {
     /// Directories beyond the project, when not taken from a workspace.
     #[serde(default)]
     directories: Vec<workspace::DirSpec>,
+    /// What the request is filed under: `tags` and the user's own keys (`[organize] keys`), each
+    /// with its value, or several separated by commas.
+    #[serde(default)]
+    fields: std::collections::BTreeMap<String, String>,
     /// Other frontmatter keys, e.g. inherited from a spec.
     #[serde(skip)]
     extra: Vec<(String, String)>,
+}
+
+/// The frontmatter lines for what a request is filed under. Only `tags` and the user's own keys
+/// are written, each as a list, so nothing else can be set through them.
+fn render_fields(fields: &std::collections::BTreeMap<String, String>, keys: &[String]) -> String {
+    fields
+        .iter()
+        .filter(|(k, _)| *k == "tags" || keys.contains(k))
+        .filter_map(|(k, v)| {
+            let values: Vec<String> = v
+                .split([',', '、', '\n'])
+                .map(|x| x.trim().trim_start_matches('#'))
+                .filter(|x| !x.is_empty())
+                .map(|x| serde_json::to_string(x).unwrap())
+                .collect();
+            (!values.is_empty()).then(|| format!("{k}: [{}]\n", values.join(", ")))
+        })
+        .collect()
 }
 
 fn yes() -> bool {
@@ -565,7 +588,7 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let NewTask {
         title, prompt, project, permission_mode, model, effort, agent, carry_changes, base, worktree, verify, verify_retry, verify_retries,
-        sandbox, phases, playbook, acceptance, extra, workspace: ws, directories, ..
+        sandbox, phases, playbook, acceptance, extra, workspace: ws, directories, fields, ..
     } = task;
     let v = Path::new(vault);
     let playbook = playbook.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
@@ -625,6 +648,7 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
         mode.push_str(&format!("phases: [{}]\n", phases.join(", ")));
     }
     mode.push_str(&workspace::render_dirs(&directories));
+    mode.push_str(&render_fields(&fields, &config::organize_keys()));
     let acceptance = acceptance.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("\n## Acceptance\n\n{a}\n")).unwrap_or_default();
     let content = format!(
         "---\nid: {}\ntype: request\ntitle: {}\ncreated: {now}\nupdated: {now}\nstatus: todo\nproject: {project}\n{mode}sessions: []\n---\n## Request\n\n{}\n{acceptance}",
@@ -1924,6 +1948,23 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod field_tests {
+    #[test]
+    fn a_request_is_filed_under_tags_and_the_users_keys_only() {
+        let fields = [("area", "billing, auth/oauth"), ("tags", "#bug、ui"), ("status", "done"), ("epic", " ")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let text = super::render_fields(&fields, &["area".to_string(), "epic".to_string()]);
+        assert_eq!(text, "area: [\"billing\", \"auth/oauth\"]\ntags: [\"bug\", \"ui\"]\n");
+        // A session reads them back from the request.
+        let note = format!("---\ntype: request\n{text}---\n");
+        assert_eq!(crate::vault::fm_list(&note, "tags"), ["bug", "ui"]);
+        assert_eq!(crate::vault::fields_of(&note, &["area".to_string()])["area"], ["billing", "auth/oauth"]);
+    }
 }
 
 #[cfg(test)]

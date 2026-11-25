@@ -58,6 +58,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 # default = true                  # New task starts with "Work in a new worktree" on; false starts it off
 # base = "latest"                 # head | latest: where New task's "Start from…" begins; unset remembers the last choice
 
+[organize]
+# keys = ["area", "epic"]         # frontmatter keys of your own to search, filter and group by; sessions take them from their request
+
 [sandbox]
 # unattended = "on"               # on | strict: Claude Code's sandbox for schedules that do not set one
 
@@ -86,6 +89,43 @@ pub fn read() -> Result<Value> {
     let Ok(text) = std::fs::read_to_string(path()) else { return Ok(Value::Object(Default::default())) };
     let table: toml::Table = text.parse().map_err(|e| Error::Other(format!("{}: {e}", path().display())))?;
     serde_json::to_value(table).map_err(|e| Error::Other(e.to_string()))
+}
+
+/// Names the search filters already use, so a key of the user's own cannot shadow them.
+const RESERVED_KEYS: &[&str] = &["type", "kind", "status", "project", "workspace", "ws", "since", "after", "before", "tag", "tags"];
+
+/// The usable keys among `names`: lowercase words, not a built-in filter, each once.
+fn clean_keys(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for n in names {
+        let n = n.trim().to_lowercase();
+        let word = !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-');
+        if word && !RESERVED_KEYS.contains(&n.as_str()) && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// `[organize] keys`: frontmatter keys of the user's own that notes and sessions are searched,
+/// filtered and grouped by. Read again only when the file changes.
+pub fn organize_keys() -> Vec<String> {
+    type Cached = (Option<std::time::SystemTime>, Vec<String>);
+    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
+    let stamp = std::fs::metadata(path()).and_then(|m| m.modified()).ok();
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, keys)) = cache.as_ref()
+        && *at == stamp
+    {
+        return keys.clone();
+    }
+    let keys = read()
+        .ok()
+        .and_then(|v| v["organize"]["keys"].as_array().cloned())
+        .map(|a| clean_keys(a.into_iter().filter_map(|k| k.as_str().map(str::to_string))))
+        .unwrap_or_default();
+    *cache = Some((stamp, keys.clone()));
+    keys
 }
 
 /// The config file, created from the template when missing.

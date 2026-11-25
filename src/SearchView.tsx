@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, Loader2, MessageSquare, Search } from "lucide-react";
 import { api, FileEntry, SearchHit, SessionHit, SessionInfo } from "./api";
 import { composing } from "./keys";
+import { organizeKeys, useSettings } from "./settings";
 
 /** Marks every search word in `text`. */
 function highlight(text: string, words: string[]) {
@@ -12,18 +13,23 @@ function highlight(text: string, words: string[]) {
 
 type Scope = "notes" | "sessions";
 
-/** `key:value` parts of a query that narrow it instead of being searched for; a value may be quoted. */
-const FILTER = /(^|\s)(type|kind|status|project|workspace|ws|since|after|before|tag):("[^"]*"|\S+)/g;
+const BUILT_IN = ["type", "kind", "status", "project", "workspace", "ws", "since", "after", "before", "tag"];
+
+/**
+ * Matches the `key:value` parts of a query that narrow it instead of being searched for; a value may
+ * be quoted. `keys` are the user's own (`[organize] keys`), which are words.
+ */
+const filterRe = (keys: string[]) => new RegExp(`(^|\\s)(${[...BUILT_IN, ...keys].join("|")}):("[^"]*"|\\S+)`, "gu");
 
 /** The value of the first `key:` filter in `q`, without quotes. */
-function filterOf(q: string, key: string) {
-  for (const m of q.matchAll(FILTER)) if (m[2] === key) return m[3].replace(/^"|"$/g, "");
+function filterOf(q: string, key: string, re: RegExp) {
+  for (const m of q.matchAll(re)) if (m[2] === key) return m[3].replace(/^"|"$/g, "");
   return "";
 }
 
 /** `q` with its `key:` filters replaced by `key:value`, or dropped when `value` is empty. */
-function withFilter(q: string, key: string, value: string) {
-  const rest = q.replace(FILTER, (all, lead, k) => (k === key ? lead : all)).replace(/\s+/g, " ").trim();
+function withFilter(q: string, key: string, value: string, re: RegExp) {
+  const rest = q.replace(re, (all, lead, k) => (k === key ? lead : all)).replace(/\s+/g, " ").trim();
   if (!value) return rest;
   return `${rest} ${key}:${/\s/.test(value) ? `"${value}"` : value}`.trim();
 }
@@ -68,8 +74,10 @@ export function SearchView({ vault, initial, active, files, sessions, onOpen, on
   const [expanded, setExpanded] = useState<string[][]>([]);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const keys = organizeKeys(useSettings());
+  const re = useMemo(() => filterRe(keys), [keys.join(" ")]); // eslint-disable-line react-hooks/exhaustive-deps
   const words = [
-    ...q.replace(FILTER, " ").trim().split(/\s+/).filter((w) => w && !w.startsWith("#")),
+    ...q.replace(re, " ").trim().split(/\s+/).filter((w) => w && !w.startsWith("#")),
     ...expanded.flat(),
   ];
 
@@ -81,13 +89,16 @@ export function SearchView({ vault, initial, active, files, sessions, onOpen, on
       statuses: uniq(scope === "notes" ? notes.map((f) => f.status) : sessions.map((s) => s.status)),
       projects: uniq([...sessions.map((s) => s.worktree?.repo ?? s.cwd), ...(scope === "notes" ? notes.map((f) => f.project) : [])].map((p) => p && shortPath(p))),
       workspaces: uniq(files.filter((f) => f.kind === "workspace").map((f) => f.title ?? f.rel.split("/").pop()!.replace(/\.md$/, ""))),
+      // The user's own keys: the values notes (or sessions, from their requests) give them.
+      own: keys.map((k) => [k, uniq((scope === "notes" ? notes : sessions).flatMap((x) => x.fields?.[k] ?? []))] as const),
     };
-  }, [files, sessions, scope]);
+  }, [files, sessions, scope, keys.join(" ")]); // eslint-disable-line react-hooks/exhaustive-deps
   const filter = (key: string, label: string, opts: (string | string[])[]) =>
-    (opts.length > 0 || filterOf(q, key)) && (
-      <FilterSelect label={label} value={filterOf(q, key)} options={opts} onChange={(v) => setQ(withFilter(q, key, v))} />
+    (opts.length > 0 || filterOf(q, key, re)) && (
+      <FilterSelect key={key} label={label} value={filterOf(q, key, re)} options={opts} onChange={(v) => setQ(withFilter(q, key, v, re))} />
     );
-  const filtered = ["type", "status", "project", "workspace", "since", "before"].some((k) => filterOf(q, k));
+  const filterKeys = ["type", "status", "project", "workspace", "since", "before", ...keys];
+  const filtered = filterKeys.some((k) => filterOf(q, k, re));
 
   // Search as you type, after a short pause.
   useEffect(() => {
@@ -145,9 +156,10 @@ export function SearchView({ vault, initial, active, files, sessions, onOpen, on
           {filter("status", "Status", options.statuses)}
           {filter("project", "Project", options.projects)}
           {filter("workspace", "Workspace", options.workspaces)}
+          {options.own.map(([k, values]) => filter(k, k.replace(/^./, (c) => c.toUpperCase()), values))}
           {filter("since", "When", WHEN)}
           {filtered && (
-            <a className="muted small" onClick={() => setQ(["type", "status", "project", "workspace", "since", "before"].reduce((s, k) => withFilter(s, k, ""), q))}>Clear filters</a>
+            <a className="muted small" onClick={() => setQ(filterKeys.reduce((s, k) => withFilter(s, k, "", re), q))}>Clear filters</a>
           )}
         </div>
         {expanded.length > 0 && (

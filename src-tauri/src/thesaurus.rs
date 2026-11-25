@@ -185,6 +185,8 @@ pub struct Filters {
     pub since: Option<String>,
     /// `before:2026-11-01`: started or created before this date.
     pub before: Option<String>,
+    /// `area:billing`: a key of the user's own (`[organize] keys`) with part of its value.
+    pub fields: Vec<(String, String)>,
 }
 
 /// A path as filters compare it: `~` expanded, lowercased, without a trailing slash.
@@ -230,8 +232,16 @@ impl Filters {
         self.projects.iter().any(|p| project.contains(&norm_path(p)))
     }
 
-    /// Takes `part` if it is one of the filters (`type:request`). False leaves it a search word.
-    fn take(&mut self, part: &str) -> bool {
+    /// Whether a note's or session's own keys hold what the query asks of them.
+    pub fn matches_fields(&self, fields: &std::collections::BTreeMap<String, Vec<String>>) -> bool {
+        let holds = |key: &str, want: &str| fields.get(key).is_some_and(|vs| vs.iter().any(|v| v.to_lowercase().contains(want)));
+        // Every key asked for must hold one of the values asked of it.
+        self.fields.iter().all(|(key, _)| self.fields.iter().any(|(k, want)| k == key && holds(k, want)))
+    }
+
+    /// Takes `part` if it is one of the filters (`type:request`), or one of the user's `keys`.
+    /// False leaves it a search word.
+    fn take(&mut self, part: &str, keys: &[String]) -> bool {
         let Some((key, value)) = part.split_once(':') else { return false };
         let value = value.trim().to_lowercase();
         if value.is_empty() {
@@ -244,6 +254,7 @@ impl Filters {
             "workspace" | "ws" => self.workspaces.push(value),
             "since" | "after" => self.since = Some(date_of(&value)),
             "before" => self.before = Some(date_of(&value)),
+            k if keys.iter().any(|x| x == k) => self.fields.push((k.to_string(), value)),
             _ => return false,
         }
         true
@@ -283,6 +294,11 @@ fn parts_of(query: &str) -> Vec<String> {
 
 impl Query {
     pub fn parse(query: &str, th: &Thesaurus) -> Self {
+        Self::parse_keys(query, th, &crate::config::organize_keys())
+    }
+
+    /// [`Query::parse`] with the user's own filter keys given.
+    pub fn parse_keys(query: &str, th: &Thesaurus, keys: &[String]) -> Self {
         let owned = parts_of(query);
         let parts: Vec<&str> = owned.iter().map(String::as_str).collect();
         let mut q = Query::default();
@@ -292,7 +308,7 @@ impl Query {
             if let Some(tag) = p.strip_prefix("tag:").or_else(|| p.strip_prefix('#').filter(|t| !t.is_empty())) {
                 q.tags.push(th.expand(tag));
                 i += 1;
-            } else if q.filters.take(p) {
+            } else if q.filters.take(p, keys) {
                 i += 1;
             } else if let Some((n, term)) = th.term_at(&parts[i..]) {
                 q.words.push(th.expand(&term));
@@ -420,8 +436,16 @@ mod tests {
         assert_eq!(q.filters.since.as_ref().unwrap().len(), 10);
         assert_eq!(q.words, vec![vec!["type:".to_string()]]);
         assert!(Query::parse("", &th).is_empty() && !Query::parse("type:note", &th).is_empty());
+        // Keys of the user's own: one of the values asked of a key, for every key asked.
+        let keys = ["area".to_string(), "epic".to_string()];
+        let q = Query::parse_keys("area:billing area:auth epic:checkout other:x", &th, &keys);
+        assert_eq!(q.words, vec![vec!["other:x".to_string()]]);
+        let has = |pairs: &[(&str, &[&str])]| pairs.iter().map(|(k, vs)| (k.to_string(), vs.iter().map(|v| v.to_string()).collect())).collect();
+        assert!(q.filters.matches_fields(&has(&[("area", &["Auth/OAuth"]), ("epic", &["checkout"])])));
+        assert!(!q.filters.matches_fields(&has(&[("area", &["auth"])])));
+        assert!(!q.filters.matches_fields(&has(&[("area", &["search"]), ("epic", &["checkout"])])));
         // Without filters everything passes.
         let none = Filters::default();
-        assert!(none.matches_kind(None) && none.matches_status(None) && none.matches_project(None) && none.matches_workspace(&[]) && none.matches_date(""));
+        assert!(none.matches_kind(None) && none.matches_status(None) && none.matches_project(None) && none.matches_workspace(&[]) && none.matches_date("") && none.matches_fields(&Default::default()));
     }
 }

@@ -1977,6 +1977,8 @@ button.icon.danger { color: var(--err); }
 .field-label { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 4px; }
 .project-row { display: flex; align-items: center; gap: 8px; }
 .project-row input { flex: 1; font-family: var(--font-mono); font-size: 12px; }
+.field-row + .field-row { margin-top: 6px; }
+.field-row > .field-label { flex: none; width: 64px; overflow: hidden; text-overflow: ellipsis; }
 .dir-row .check { margin: 0; white-space: nowrap; font-size: 12px; }
 .task-side .project-row input { min-width: 0; text-overflow: ellipsis; }
 .task-side .dir-row { gap: 6px; padding-left: 22px; }

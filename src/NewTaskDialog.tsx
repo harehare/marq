@@ -1,4 +1,5 @@
-import { getSettings } from "./settings";
+import { getSettings, organizeKeys } from "./settings";
+import { useVaultFiles } from "./wikilinks";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
@@ -47,6 +48,8 @@ const WORKSPACE_KEY = "marq.lastWorkspace";
 const BASE_KEY = "marq.lastBase";
 /** The verify command is per project: `marq.verify:<project>`. */
 const VERIFY_KEY = "marq.verify:";
+/** What the last task on a project was filed under (the user's own keys, not its tags). */
+const FIELDS_KEY = "marq.fields:";
 
 export const SANDBOXES = [
   { value: "", label: "Off", hint: "Commands run with your permissions, as Claude Code's settings allow." },
@@ -169,6 +172,20 @@ export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCom
     }
   };
   useEffect(() => setVerify(stored(VERIFY_KEY + project, "")), [project]);
+  // What the request is filed under: tags, and the user's own keys, which start as the project's last task had them.
+  const ownKeys = organizeKeys(getSettings());
+  const files = useVaultFiles();
+  const [fields, setFields] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let last: Record<string, string> = {};
+    try {
+      last = JSON.parse(stored(FIELDS_KEY + project, "{}"));
+    } catch {}
+    setFields((f) => ({ ...Object.fromEntries(ownKeys.filter((k) => typeof last[k] === "string").map((k) => [k, last[k]])), ...(f.tags ? { tags: f.tags } : {}) }));
+  }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The values already in the vault, to pick from.
+  const known = (key: string) => [...new Set(files.flatMap((f) => (key === "tags" ? f.tags : f.fields?.[key] ?? [])))].sort();
+  const filed: Record<string, string> = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v));
   // With mq results from several files: one session for all of them, or one per file.
   const [perFile, setPerFile] = useState(!!context?.perFile);
   const [error, setError] = useState<string | null>(null);
@@ -231,6 +248,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCom
     playbook: book?.name,
     workspace: asChosen ? wsRel : undefined,
     directories: asChosen ? undefined : dirs.filter((d) => d.path.trim()),
+    fields: Object.keys(filed).length ? filed : undefined,
     base: !worktree || baseMode === "head" ? undefined : baseMode === "latest" ? "latest" : baseBranch.trim() || undefined,
   };
 
@@ -253,6 +271,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCom
         localStorage.setItem(SANDBOX_KEY, sandbox);
         localStorage.setItem(WORKSPACE_KEY, asChosen ? wsRel : "");
         localStorage.setItem(VERIFY_KEY + project, verify.trim());
+        localStorage.setItem(FIELDS_KEY + project, JSON.stringify(Object.fromEntries(Object.entries(filed).filter(([k]) => k !== "tags"))));
       } catch {}
       if (comparing) {
         const r = await api.newTaskCompare(
@@ -328,6 +347,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCom
     verify.trim() && `${verify.trim()}${fresh ? " (fresh retries)" : ""}`,
     acceptance.trim() && "acceptance",
   ].filter(Boolean).join(" · ") || "None";
+  const filedSummary = Object.entries(filed).map(([k, v]) => (k === "tags" ? v.split(/[,、]/).map((t) => `#${t.trim().replace(/^#/, "")}`).join(" ") : `${k}: ${v}`)).join(" · ") || "None";
   const sandboxSummary = SANDBOXES.find((m) => m.value === sandbox)?.label ?? "Off";
   const whereSummary = [asChosen ? chosen?.title : null, project.trim() || "the vault", dirs.length ? `+${dirs.length}` : null].filter(Boolean).join(" · ");
 
@@ -538,10 +558,25 @@ export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCom
               )}
             </Section>
 
+            <Section id="organize" title="Organize" summary={filedSummary}>
+              {["tags", ...ownKeys].map((k) => (
+                <div className="project-row field-row" key={k}
+                  title={k === "tags" ? "Tags for the request; its session is filed under them too" : `Written to the request as ${k}:, and taken over by its session. Several values: separate them with commas`}>
+                  <label className="field-label">{k}</label>
+                  <input value={fields[k] ?? ""} onChange={(e) => setFields({ ...fields, [k]: e.target.value })} list={`task-field-${k}`}
+                    placeholder={k === "tags" ? "e.g. bug, auth" : known(k)[0] ? `e.g. ${known(k)[0]}` : "a value"} spellCheck={false} />
+                  <datalist id={`task-field-${k}`}>{known(k).map((v) => <option key={v} value={v} />)}</datalist>
+                </div>
+              ))}
+              {ownKeys.length === 0 && (
+                <p className="muted small">Add keys of your own (area, epic…) under Settings → Organize to file tasks under them.</p>
+              )}
+            </Section>
+
             <Section id="checks" title="Checks" summary={checksSummary}>
               <div className="project-row"
                 title="A playbook runs the task in phases. Each phase is a new session on the same worktree and gets the earlier phases' replies. After each one the request waits in review; Start on it runs the next (or phase_gate: auto in the note). Playbooks are notes in playbooks/; also picked with / in the prompt.">
-                <select value={book?.name ?? ""} onChange={(e) => setPlaybook(e.target.value)}>
+                <select className="model-select" value={book?.name ?? ""} onChange={(e) => setPlaybook(e.target.value)}>
                   <option value="">No playbook</option>
                   {playbooks.map((b) => (
                     <option key={b.name} value={b.name}>{b.title}{b.phases.length ? `: ${b.phases.map((p) => p.name).join(" → ")}` : ""}</option>

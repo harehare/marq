@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, X } from "lucide-react";
+import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, Tags, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { api, type AgentInfo } from "./api";
 import { composing } from "./keys";
@@ -118,6 +118,13 @@ const SECTIONS: Section[] = [
     note: "Applies from the next time the Inbox is worked through (within 30 seconds).",
     fields: [
       { key: "inbox.parallel", label: "Run at once", kind: "number", placeholder: "1", desc: "Scheduled runs and queued requests that go at the same time (1 to 8). The rest wait their turn in the Inbox, oldest first" },
+    ],
+  },
+  {
+    id: "organize", title: "Organize", icon: Tags,
+    note: "Sessions take these from their request when they start. Earlier sessions pick them up after Marq restarts.",
+    fields: [
+      { key: "organize.keys", label: "Your own keys", kind: "list", placeholder: "area epic", desc: "Frontmatter keys to search, filter and group notes and sessions by (area: billing), separated by spaces" },
     ],
   },
   {

@@ -191,6 +191,40 @@ pub fn release_resources(app: &AppHandle, vault: &Path, id: &str) -> Vec<String>
     crate::resources::release(vault, id, &session_env(id, env.as_ref()), &progress)
 }
 
+/// What the agent is told about how the user files work: the tags and keys in use, and what this
+/// session is filed under, so it can file itself with `set_tags` using the same words.
+fn filing_prompt(vault: &Path, meta: &SessionMeta) -> String {
+    let keys = crate::config::organize_keys();
+    let files = vault::list_files(vault);
+    // The values in use, most used first, so the agent reuses them instead of coining new ones.
+    let in_use = |values: Vec<&String>| {
+        let mut count: std::collections::HashMap<&String, usize> = Default::default();
+        for v in values {
+            *count.entry(v).or_default() += 1;
+        }
+        let mut by: Vec<(&String, usize)> = count.into_iter().collect();
+        by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        by.into_iter().take(20).map(|(v, _)| v.as_str()).collect::<Vec<_>>().join(", ")
+    };
+    let mut lines = vec![format!("- tags: {}", in_use(files.iter().flat_map(|f| &f.tags).collect()))];
+    for k in &keys {
+        lines.push(format!("- {k}: {}", in_use(files.iter().flat_map(|f| f.fields.get(k).into_iter().flatten()).collect())));
+    }
+    let mut mine = meta.clone();
+    session::inherit(vault, &mut mine);
+    let filed = match mine.fields.iter().map(|(k, vs)| format!("{k}: {}", vs.join(", "))).collect::<Vec<_>>() {
+        f if f.is_empty() => "nothing yet".to_string(),
+        f => f.join("; "),
+    };
+    format!(
+        "\n\nThe user finds sessions and notes by what they are filed under. In use in this vault:\n{}\n\
+This session is filed under: {filed}. When the work clearly belongs under a tag or value it does not have yet, \
+file it with set_tags (it files the request too), reusing the words above rather than new ones. \
+tag_note files another note the same way; the user approves that.",
+        lines.join("\n")
+    )
+}
+
 /// The sidecar command that starts a session's process.
 fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Value {
     let mut system = SYSTEM_APPEND.to_string();
@@ -198,6 +232,7 @@ fn start_cmd(vault: &Path, meta: &SessionMeta, prompt: &str, resume: bool) -> Va
     system.push_str(&memory::system_prompt(vault, &meta.id));
     system.push_str(&knowledge::for_project(vault, meta.project()));
     system.push_str(&workspace::system_prompt(&meta.dirs, None));
+    system.push_str(&filing_prompt(vault, meta));
     system.push_str(ENV_NOTE);
     let environment = environment::load(vault, meta.project());
     if let Some(e) = &environment {
@@ -716,6 +751,59 @@ fn rpc(app: &AppHandle, vault: &Path, session: &str, method: &str, p: &Value) ->
             session::append_learning(vault, session, &s("text"))?;
             Ok(json!("recorded"))
         }
+        "set_tags" | "tag_note" => {
+            let list = |v: &Value| -> Vec<String> {
+                match v {
+                    Value::Array(a) => a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+                    Value::String(s) => s.split(',').map(str::to_string).collect(),
+                    _ => vec![],
+                }
+            };
+            let change = vault::Refile {
+                add_tags: list(&p["tags"]),
+                remove_tags: list(&p["remove"]),
+                fields: p["fields"].as_object().map(|o| o.iter().map(|(k, v)| (k.clone(), list(v))).collect()).unwrap_or_default(),
+            };
+            let keys = crate::config::organize_keys();
+            let mut all = vec!["tags".to_string()];
+            all.extend(keys.clone());
+            // Writes the changed keys into a note and says so.
+            let write = |path: &Path, changed: &std::collections::BTreeMap<String, Vec<String>>| -> Result<()> {
+                std::fs::write(path, vault::apply_fields(&std::fs::read_to_string(path)?, changed))?;
+                let _ = app.emit("vault://changed", json!({"path": path}));
+                Ok(())
+            };
+            if method == "tag_note" {
+                let name = s("note");
+                let path = vault::find_note(vault, &name).ok_or_else(|| Error::Other(format!("no note \"{name}\"")))?;
+                let rel = path.strip_prefix(vault).unwrap_or(&path).to_slash();
+                if rel.starts_with("sessions/") {
+                    return Err(Error::Other("session notes are filed with set_tags, from their own session".into()));
+                }
+                let current = vault::fields_of(&std::fs::read_to_string(&path)?, &all);
+                let changed = vault::refile(&current, &change, &keys)?;
+                write(&path, &changed)?;
+                let mut now = current;
+                now.extend(changed);
+                now.retain(|_, v| !v.is_empty());
+                return Ok(json!({"note": rel, "filed_under": now}));
+            }
+            let mut meta = session::meta(vault, session)?;
+            session::inherit(vault, &mut meta);
+            let changed = vault::refile(&meta.fields, &change, &keys)?;
+            session::set_fields(vault, session, &changed)?;
+            // Its request is filed the same way, so the two are found together.
+            let request = session::find_origin(vault, &meta)
+                .filter(|path| std::fs::read_to_string(path).is_ok_and(|t| vault::fm_get(&t, "id").as_deref() == Some(meta.origin.as_str())));
+            if let Some(path) = &request {
+                write(path, &changed)?;
+            }
+            let _ = app.emit("sessions://changed", session);
+            let mut now = meta.fields;
+            now.extend(changed);
+            now.retain(|_, v| !v.is_empty());
+            Ok(json!({"filed_under": now, "request": request.map(|p| p.strip_prefix(vault).unwrap_or(&p).to_slash())}))
+        }
         "list_notes" => Ok(json!(organize::outline(vault, p["folder"].as_str())?)),
         "create_folder" => Ok(json!({"created": organize::create_folder(vault, &s("path"))?})),
         "move_note" => {
@@ -795,7 +883,7 @@ fn search_sessions(vault: &Path, text: &str, project: Option<&str>, since: Optio
 /// with no words at all they list the sessions that pass, newest first.
 pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since: Option<&str>, limit: usize, exclude: &str) -> Vec<Value> {
     let fl = &q.filters;
-    if q.words.is_empty() && fl.is_empty() {
+    if q.is_empty() {
         return vec![];
     }
     let files = if fl.workspaces.is_empty() { vec![] } else { vault::list_files(vault) };
@@ -805,6 +893,7 @@ pub fn search_sessions_for(vault: &Path, q: &Query, project: Option<&str>, since
         .filter(|x| project.is_none_or(|p| x.meta.project().contains(p)))
         .filter(|x| since.is_none_or(|d| x.meta.started.as_str() >= d))
         .filter(|x| fl.matches_status(Some(&x.status)) && fl.matches_project(Some(x.meta.project())) && fl.matches_date(&x.meta.started))
+        .filter(|x| fl.matches_fields(&x.meta.fields) && q.matches_tags(x.meta.fields.get("tags").map_or(&[], Vec::as_slice)))
         .filter(|x| fl.workspaces.is_empty() || fl.matches_workspace(&vault::workspace_names(&files, x.meta.workspace.as_deref(), None)))
         .filter_map(|x| {
             let content = std::fs::read_to_string(&x.path).ok()?;
