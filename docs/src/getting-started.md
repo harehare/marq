@@ -41,7 +41,7 @@ To work on a repository instead, press ⌘N for **New task**. See [Sessions](ses
 | Notes | The folder tree. Create, rename, move and drag notes and folders; relative links are rewritten. Notes of a special kind have an icon: boards, crews, schedules, specs, workspaces, queries, knowledge, the glossary and `instructions.md` |
 | Needs you | Sessions waiting for an approval |
 | Needs review | Stopped sessions with changes in their worktree and no review state |
-| Running / Recent | Sessions. Crew members appear only under their crew |
+| Running / Recent | Sessions. Crew members appear only under their crew. Recent lists the newest 100; its filter button narrows every session by title, project, branch, workspace, status or date as you type, and its group button divides the list by date, project or workspace |
 | Crews | Teams of sessions. See [Crews and boards](crews-and-boards.md) |
 | Boards | Kanban boards stored as Markdown |
 | Query | A query tab with presets (todo requests, drafts, learnings, Bash commands). See [mq queries](mq.md) |

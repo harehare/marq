@@ -5,7 +5,7 @@ import {
   Inbox, BookA, ClipboardList, ListOrdered, Lightbulb, ScrollText, FilePlus2, Braces, ChevronRight, FileText, Folder, MessageSquare, X,
   ArrowLeftRight, Sparkles, Plus, ChevronsDownUp, ChevronsUpDown, GitBranch, Trash2, FolderOpen, CornerUpLeft, Square, ExternalLink, Pencil, FolderInput, FolderPlus, CircleCheck, CheckCheck, CircleDashed, CircleSlash, RotateCw, GitPullRequest, GitCompare,
   Users, Palette, Settings as SettingsIcon, Check, Monitor, Sun, Moon, SquareTerminal, Columns3, Search, Timer, Play, Pause, Pin, PinOff,
-  ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft, Server,
+  ArrowDownAZ, ArrowUpZA, ArrowDownUp, Clock, PanelLeftClose, PanelLeftOpen, PanelRightClose, Columns2, Rows2, StickyNote, NotebookPen, FolderGit2, History, Activity, PanelLeft, Server, ListFilter, Layers,
 } from "lucide-react";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -21,11 +21,12 @@ import { TerminalView, PANE_EVENT, type PaneAction, type PaneRequest } from "./T
 import { BoardView } from "./BoardView";
 import { QuickOpen } from "./QuickOpen";
 import { SearchView } from "./SearchView";
+import { filterSessions, groupRecent, projectName, RECENT_GROUPS, RecentGroup } from "./recentSessions";
 import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
 import { TabStrip } from "./TabStrip";
 import { TabErrorBoundary } from "./TabErrorBoundary";
-import { FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys } from "./keys";
+import { FIND_EVENT, Keymap, Mode, TREE_KEYS, eventKey, lookup, mergeKeys, composing } from "./keys";
 import { NewTaskDialog, lastProject } from "./NewTaskDialog";
 import { QueryContext, RUN_AGENT_EVENT } from "./queryContext";
 import { CompareView } from "./review/CompareView";
@@ -392,7 +393,7 @@ function groupSessions(sessions: SessionInfo[]) {
     items.forEach((s) => used.add(s.id));
     return { ...g, items };
   }).filter((g) => g.items.length);
-  return { active, groups, recent: sessions.filter((s) => !used.has(s.id) && !s.crew).slice(0, 100) };
+  return { active, groups, recent: sessions.filter((s) => !used.has(s.id) && !s.crew) };
 }
 
 /** `every 1h · 14:30`, `daily 09:00 · tomorrow`: how often and when next. */
@@ -890,7 +891,7 @@ export default function App() {
   const activeByProject = useMemo(() => {
     const by = new Map<string, SessionInfo[]>();
     for (const s of activeSessions) {
-      const name = (s.worktree?.repo ?? s.cwd).split("/").filter(Boolean).pop() ?? "~";
+      const name = projectName(s);
       by.set(name, [...(by.get(name) ?? []), s]);
     }
     return [...by.entries()];
@@ -898,6 +899,29 @@ export default function App() {
   const recentHeight = usePaneSize("recent", 180, 60, 600);
   const recentRef = useRef<HTMLDivElement>(null);
   const [recentOpen, setRecentOpen] = useSectionOpen("Recent");
+  // Recent can be narrowed by typing and divided by date, project or workspace.
+  const [recentFilter, setRecentFilter] = useState<string | null>(null);
+  const [recentGroup, setRecentGroupState] = useState<RecentGroup>(() => {
+    try {
+      const v = localStorage.getItem("marq.recent.group");
+      return RECENT_GROUPS.some((g) => g.value === v) ? (v as RecentGroup) : "none";
+    } catch {
+      return "none";
+    }
+  });
+  const setRecentGroup = (g: RecentGroup) => {
+    setRecentGroupState(g);
+    try {
+      localStorage.setItem("marq.recent.group", g);
+    } catch { /* not remembered */ }
+  };
+  // Unfiltered, only the newest are listed; a filter reaches every session.
+  const recentShown = useMemo(() => {
+    const q = recentFilter?.trim() ?? "";
+    const found = filterSessions(recent, q, files);
+    const shown = found.slice(0, q ? 300 : 100);
+    return { groups: groupRecent(shown, recentGroup, files), found: found.length, hidden: found.length - shown.length, filtered: !!q };
+  }, [recent, recentFilter, recentGroup, files]);
 
   // A session got a new title (named from its prompt, or renamed): its tab follows.
   useEffect(() => {
@@ -1994,11 +2018,40 @@ export default function App() {
               preview={(v) => recentRef.current && (recentRef.current.style.height = `${v}px`)} />}
             <a className="section-title" onClick={() => setRecentOpen(!recentOpen)}>
               <ChevronRight size={11} className={`chev ${recentOpen ? "open" : ""}`} /> Recent
-              <span className="count">{recent.length}</span>
+              <span className="count">{recentShown.filtered ? `${recentShown.found} / ${recent.length}` : recent.length}</span>
+              <span className="section-actions" onClick={(e) => e.stopPropagation()}>
+                <button className={`section-action ${recentFilter !== null ? "on" : ""}`} title="Filter by title, project, branch, workspace, status or date"
+                  onClick={() => { setRecentOpen(true); setRecentFilter(recentFilter === null ? "" : null); }}>
+                  <ListFilter size={13} />
+                </button>
+                <button className={`section-action ${recentGroup !== "none" ? "on" : ""}`} title="Group sessions" onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setMenu({
+                    x: r.left, y: r.bottom + 4,
+                    items: RECENT_GROUPS.map((g) => ({ label: `${g.value === recentGroup ? "✓" : "\u2003"} ${g.label}`, onClick: () => { setRecentOpen(true); setRecentGroup(g.value); } })),
+                  });
+                }}>
+                  <Layers size={13} />
+                </button>
+              </span>
             </a>
+            {recentOpen && recentFilter !== null && (
+              <input className="recent-filter" autoFocus value={recentFilter} placeholder="Filter sessions…"
+                onChange={(e) => setRecentFilter(e.target.value)}
+                onKeyDown={(e) => {
+                  if (composing(e)) return;
+                  if (e.key === "Escape") { e.stopPropagation(); setRecentFilter(null); }
+                  const first = recentShown.groups[0]?.items[0];
+                  if (e.key === "Enter" && first) openSession(first.id, first.title);
+                }} />
+            )}
             {recentOpen && (
               <div ref={recentRef} className="recent-list" style={{ height: recentHeight.size }}>
-                {recent.map((s) => (
+                {recentShown.found === 0 && <div className="muted small recent-note">No session matches.</div>}
+                {recentShown.groups.map((g) => (
+                  <div key={g.label} className="recent-group">
+                  {g.label && <div className="active-project" title={g.label}>{g.label} <span className="recent-group-count">{g.items.length}</span></div>}
+                  {g.items.map((s) => (
                   <a key={s.id} className={`recent-row ${current?.kind === "session" && current.id === s.id ? "on" : ""} ${unread.has(s.id) ? "unread" : ""}`}
                     onClick={() => openSession(s.id, s.title)} onContextMenu={(e) => sessionMenu(e, s)}
                     title={[s.title, s.worktree?.branch, s.started.slice(0, 16).replace("T", " ")].filter(Boolean).join("\n")}>
@@ -2008,7 +2061,15 @@ export default function App() {
                     {s.review === "done" && <CircleCheck size={11} className="muted" />}
                     <span className="recent-ago">{ago(s.started)}</span>
                   </a>
+                  ))}
+                  </div>
                 ))}
+                {recentShown.hidden > 0 && (
+                  <div className="muted small recent-note">
+                    +{recentShown.hidden} older. {recentShown.filtered ? "Narrow the filter to see them." : <a onClick={() => setRecentFilter("")}>Filter</a>}
+                    {!recentShown.filtered && " to find them."}
+                  </div>
+                )}
               </div>
             )}
           </div>
