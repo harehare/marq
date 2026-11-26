@@ -42,6 +42,12 @@ The check is taken from the note when the session starts, so editing the note du
 
 The criteria are not shown to the implementing agent, but they are not secret either: an agent that reads the request note can see them. Their purpose is to check the work against what you want, not against what the agent decided it means.
 
+### Adversarial review
+
+`review: on` in a request or environment note, or `[verify] review = "on"` in [config.toml](settings.md) (**Settings → Verify**), adds an independent review after the command and acceptance checks pass. It is off by default; a note's `review: on|off` wins over the config, and a request's over its environment note. With it off, checks behave as above.
+
+The review runs in a separate session in the same directory, read-only, that tries to break the change against the real code and reports each finding with a title, the command it ran, the output it printed and the output the intent requires.
+
 ### Fresh retries (a loop)
 
 `verify_retry: fresh` retries a failed check in a **new session** on the same request and worktree. That session gets the request again with only the last failure, not the whole conversation so far. This repeats until the check passes or the retries run out. Set a high `verify_retries` and a strict check to keep an agent working on a task with a clean context each time.

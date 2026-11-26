@@ -61,6 +61,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [organize]
 # keys = ["area", "epic"]         # frontmatter keys of your own to search, filter and group by; sessions take them from their request
 
+[verify]
+# review = "off"                  # on | off: after the checks pass, an independent read-only session tries to break the change; a request's review: overrides it
+
 [sandbox]
 # unattended = "on"               # on | strict: Claude Code's sandbox for schedules that do not set one
 

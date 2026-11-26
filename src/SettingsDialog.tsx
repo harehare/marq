@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, SquareTerminal, Tags, X } from "lucide-react";
+import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, ShieldCheck, SquareTerminal, Tags, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { api, type AgentInfo } from "./api";
 import { composing } from "./keys";
@@ -11,6 +11,8 @@ type Field = {
   kind: "text" | "number" | "select" | "bool" | "list";
   /** A bool that is off unless config.toml turns it on; the others are on unless turned off. */
   off?: boolean;
+  /** A bool stored as "on" / "off" in config.toml instead of true / false. */
+  onoff?: boolean;
   placeholder?: string;
   options?: { value: string; label: string }[];
   /** One line under the label saying what the setting does. */
@@ -121,6 +123,13 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    id: "verify", title: "Verify", icon: ShieldCheck,
+    note: "A request or environment note's review: on|off overrides this for that one.",
+    fields: [
+      { key: "verify.review", label: "Review changes with an independent adversarial session", kind: "bool", onoff: true, off: true, desc: "After the command and acceptance checks pass, a separate read-only session tries to break the change and reports what it can prove" },
+    ],
+  },
+  {
     id: "organize", title: "Organize", icon: Tags,
     note: "Sessions take these from their request when they start. Earlier sessions pick them up after Marq restarts.",
     fields: [
@@ -194,6 +203,7 @@ const defaultOf = (f: Field): string | boolean => (f.kind === "bool" ? !f.off : 
 function fromConfig(c: Record<string, unknown>, f: Field): string | boolean {
   const [section, name] = f.key.split(".");
   const v = (c[section] as Record<string, unknown> | undefined)?.[name];
+  if (f.kind === "bool" && f.onoff) return v === "on" || v === true;
   if (f.kind === "bool") return f.off ? v === true : v !== false;
   if (Array.isArray(v)) return v.join(" ");
   return v == null ? "" : String(v);
@@ -201,7 +211,7 @@ function fromConfig(c: Record<string, unknown>, f: Field): string | boolean {
 
 /** The form value as TOML-bound JSON; null removes the key so the default applies. */
 function toConfig(f: Field, v: string | boolean): unknown {
-  if (f.kind === "bool") return v;
+  if (f.kind === "bool") return f.onoff ? (v ? "on" : "off") : v;
   const s = String(v).trim();
   if (!s) return null;
   if (f.kind === "number") return Number(s);
