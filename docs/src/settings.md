@@ -47,6 +47,9 @@ parallel = 1                    # scheduled runs and queued requests that go at 
 [organize]
 keys = ["area", "epic"]         # frontmatter keys of your own to search, filter and group by; see Vault → Keys of your own
 
+[verify]
+review = "off"                  # on | off: an independent adversarial review after the checks pass (a request's review: overrides it)
+
 [sandbox]
 unattended = "on"               # on | strict: sandbox schedules that do not set one
 

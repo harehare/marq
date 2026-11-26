@@ -15,6 +15,8 @@ export type Settings = {
   chat?: { send?: SendKey };
   tabs?: { pinned_layout?: "inline" | "row"; overflow?: "scroll" | "wrap" };
   terminal?: { font?: string; font_size?: number; ligatures?: boolean; cursor?: "block" | "bar" | "underline" };
+  /** `review`: an independent adversarial review after the checks pass (default off). */
+  verify?: { review?: "on" | "off" };
   /** Frontmatter keys of the user's own to search, filter and group by. */
   organize?: { keys?: string[] };
 };
