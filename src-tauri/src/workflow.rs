@@ -512,6 +512,9 @@ fn verdict(app: &AppHandle, vault: &Path, check: &SessionMeta, target: &str, eve
     }
     let stage = if waiting.is_some_and(|e| e["stage"] == "review") { "review" } else { "acceptance" };
     let reply = session::last_result(events).unwrap_or("").trim().to_string();
+    if stage == "review" {
+        return review_done(app, vault, check, &meta, &target_events, &reply);
+    }
     let passed = parse_verdict(&reply);
     let v = meta.verify.clone().unwrap_or_default();
     let attempt = v.attempt + failures(&target_events) + 1;
@@ -524,17 +527,191 @@ fn verdict(app: &AppHandle, vault: &Path, check: &SessionMeta, target: &str, eve
                "attempt": attempt, "of": v.retries + 1, "at": vault::now()}),
     )?;
     if passed_bool {
-        // An acceptance pass moves on to the review when it is on; a review pass settles.
-        return if stage == "acceptance" { checks_passed(app, vault, &meta, &v) } else { settle(app, vault, &meta, "passed", None) };
+        // An acceptance pass moves on to the review when it is on.
+        return checks_passed(app, vault, &meta, &v);
     }
     let reasons: String = reply.lines().filter(|l| parse_verdict(l).is_none()).collect::<Vec<_>>().join("\n");
-    let feedback = match (passed, stage) {
-        (Some(_), "review") => format!("A separate adversarial review broke the change:\n\n{}", reasons.trim()),
-        (Some(_), _) => format!("A separate acceptance check found problems:\n\n{}", reasons.trim()),
-        (None, "review") => "The adversarial review gave no result; try to break the change again and prove what you find.".to_string(),
-        (None, _) => "The acceptance check gave no verdict; check the work against the task again.".to_string(),
+    let feedback = match passed {
+        Some(_) => format!("A separate acceptance check found problems:\n\n{}", reasons.trim()),
+        None => "The acceptance check gave no verdict; check the work against the task again.".to_string(),
     };
     retry(app, vault, &meta, &v, attempt, &feedback)
+}
+
+/// A finding the adversarial review proved: the command it ran, what it printed, and what the intent requires.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Finding {
+    title: String,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    output: String,
+    #[serde(default)]
+    expected: String,
+}
+
+/// What the review reported: its findings (the fenced `json` array), the notes on dropped ones
+/// (the reply outside that block, without the `VERDICT:` line) and its verdict.
+#[derive(Debug, PartialEq)]
+struct Review {
+    findings: Vec<Finding>,
+    dropped: String,
+    verdict: Option<bool>,
+}
+
+/// Parses a review reply. None when it holds no readable findings block, which is no result.
+fn parse_review(reply: &str) -> Option<Review> {
+    let mut findings = None;
+    let mut rest: Vec<&str> = Vec::new();
+    let mut lines = reply.lines();
+    while let Some(line) = lines.next() {
+        let fence = line.trim_start();
+        if findings.is_none() && fence.starts_with("```") && fence[3..].trim().eq_ignore_ascii_case("json") {
+            let mut body = String::new();
+            for l in lines.by_ref() {
+                if l.trim_start().starts_with("```") {
+                    break;
+                }
+                body.push_str(l);
+                body.push('\n');
+            }
+            findings = serde_json::from_str::<Vec<Finding>>(&body).ok();
+            if findings.is_none() {
+                return None;
+            }
+        } else if parse_verdict(line).is_none() {
+            rest.push(line);
+        }
+    }
+    Some(Review { findings: findings?, dropped: rest.join("\n").trim().to_string(), verdict: parse_verdict(reply) })
+}
+
+/// Findings with the same command and title are one: the reviewer was asked to merge them,
+/// this keeps a repeated entry from being counted twice. Returns the unique ones and how many were merged.
+fn merge_findings(findings: Vec<Finding>) -> (Vec<Finding>, usize) {
+    let total = findings.len();
+    let mut out: Vec<Finding> = Vec::new();
+    for f in findings {
+        let same = |g: &Finding| g.command.trim() == f.command.trim() && g.title.trim().eq_ignore_ascii_case(f.title.trim());
+        if !out.iter().any(same) {
+            out.push(f);
+        }
+    }
+    let merged = total - out.len();
+    (out, merged)
+}
+
+/// The report note's body: Intent, Verified findings and Dropped.
+fn review_report(intent: &str, findings: &[Finding], merged: usize, dropped: &str) -> String {
+    let mut out = format!("## Intent\n\n{}\n\n## Verified findings\n\n", intent.trim());
+    if findings.is_empty() {
+        out.push_str("No findings.\n");
+    }
+    for (i, f) in findings.iter().enumerate() {
+        out.push_str(&format!(
+            "### {}. {}\n\nCommand:\n\n```sh\n{}\n```\n\nOutput:\n\n```text\n{}\n```\n\nRequired by the intent:\n\n{}\n\n",
+            i + 1,
+            f.title.trim(),
+            f.command.trim(),
+            f.output.trim(),
+            f.expected.trim()
+        ));
+    }
+    out.push_str("## Dropped\n\n");
+    out.push_str(&format!("Verified: {}. Merged as the same cause: {merged}.\n", findings.len()));
+    if !dropped.is_empty() {
+        out.push_str(&format!("\n{dropped}\n"));
+    }
+    out
+}
+
+/// What goes back to the implementing session for each verified finding.
+fn findings_feedback(findings: &[Finding]) -> String {
+    let list: Vec<String> = findings
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            format!(
+                "{}. {}\nCommand: `{}`\nOutput:\n```text\n{}\n```\nRequired by the intent: {}",
+                i + 1,
+                f.title.trim(),
+                f.command.trim(),
+                f.output.trim(),
+                f.expected.trim()
+            )
+        })
+        .collect();
+    format!("A separate adversarial review broke the change. Each finding was proven by a command:\n\n{}", list.join("\n\n"))
+}
+
+/// The adversarial review finished: saves its report under `reviews/`, logs the stage, and settles
+/// the checked session or sends the verified findings back. A reply without a readable result
+/// is a failed attempt, not a pass.
+fn review_done(app: &AppHandle, vault: &Path, check: &SessionMeta, meta: &SessionMeta, target_events: &[Value], reply: &str) -> Result<()> {
+    let v = meta.verify.clone().unwrap_or_default();
+    let attempt = v.attempt + failures(target_events) + 1;
+    let parsed = parse_review(reply);
+    let (kept, merged) = parsed.as_ref().map(|r| merge_findings(r.findings.clone())).unwrap_or_default();
+    // Proven findings fail the review whatever the verdict line says; a FAIL with none listed has nothing to send back.
+    let readable = parsed.as_ref().is_some_and(|r| !(kept.is_empty() && r.verdict != Some(true)));
+    let passed = readable && kept.is_empty();
+
+    let report = if readable {
+        let intent = session::find_origin(vault, meta).and_then(|p| std::fs::read_to_string(p).ok()).map(|n| task_text(&n)).unwrap_or_default();
+        let dropped = parsed.as_ref().map(|r| r.dropped.as_str()).unwrap_or_default();
+        write_review(vault, check, meta, &review_report(&intent, &kept, merged, dropped), kept.len(), passed)
+            .map_err(|e| eprintln!("review report: {e}"))
+            .ok()
+    } else {
+        None
+    };
+    log(
+        app,
+        vault,
+        &meta.id,
+        json!({"type": "marq_verify", "stage": "review", "passed": passed, "session": check.id, "findings": kept.len(),
+               "report": report, "output": reply, "attempt": attempt, "of": v.retries + 1, "at": vault::now()}),
+    )?;
+    if let (Some(rel), Some(path)) = (&report, session::find_origin(vault, meta)) {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if vault::fm_get(&text, "type").as_deref() == Some("request") {
+                std::fs::write(&path, vault::fm_set(&text, "review_report", &format!("\"[[{}]]\"", rel.trim_end_matches(".md"))))?;
+                let _ = app.emit("vault://changed", json!({"path": path}));
+            }
+        }
+    }
+    if passed {
+        return settle(app, vault, meta, "passed", None);
+    }
+    let feedback = if !kept.is_empty() {
+        findings_feedback(&kept)
+    } else if parsed.is_some() {
+        "The adversarial review failed the change but listed no proven finding; try to break the change again and prove what you find.".to_string()
+    } else {
+        "The adversarial review gave no readable result; try to break the change again and prove what you find.".to_string()
+    };
+    retry(app, vault, meta, &v, attempt, &feedback)
+}
+
+/// Writes `reviews/<review session id>.md`, a `type: review` note linked to the checked session and request.
+fn write_review(vault: &Path, check: &SessionMeta, meta: &SessionMeta, body: &str, findings: usize, passed: bool) -> Result<String> {
+    let rel = format!("reviews/{}.md", check.id);
+    std::fs::create_dir_all(vault.join("reviews"))?;
+    let request = session::find_origin(vault, meta)
+        .and_then(|p| p.strip_prefix(vault).ok().map(|r| r.to_slash()))
+        .map(|r| format!("request: {}\n", serde_json::to_string(&r).unwrap()))
+        .unwrap_or_default();
+    let now = vault::now();
+    let text = format!(
+        "---\nid: {}\ntype: review\ntitle: {}\nsession: {}\nreview_session: {}\n{request}verdict: {}\nfindings: {findings}\ncreated: {now}\n---\n{body}",
+        vault::new_id(),
+        serde_json::to_string(&format!("{} · review", meta.title)).unwrap(),
+        meta.id,
+        check.id,
+        if passed { "pass" } else { "fail" },
+    );
+    std::fs::write(vault.join(&rel), text)?;
+    Ok(rel)
 }
 
 /// The session's work is over for now: records the outcome on the request, moves a phased request on,
@@ -1042,6 +1219,33 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         assert_eq!(parse_verdict("- x fails\n**VERDICT: FAIL**\n"), Some(false));
         assert_eq!(parse_verdict("VERDICT: FAIL\nthen fixed\nverdict: pass"), Some(true));
         assert_eq!(parse_verdict("no verdict"), None);
+    }
+
+    #[test]
+    fn parses_a_review() {
+        let reply = "Found one.\n\n```json\n[{\"title\":\"crash\",\"command\":\"make t\",\"output\":\"boom\",\"expected\":\"ok\"}]\n```\n\nDropped: slow, did not reproduce.\nVERDICT: FAIL";
+        let r = parse_review(reply).unwrap();
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].command, "make t");
+        assert!(r.dropped.contains("did not reproduce") && !r.dropped.contains("VERDICT"));
+        assert_eq!(r.verdict, Some(false));
+        let none = parse_review("Nothing.\n```json\n[]\n```\nVERDICT: PASS").unwrap();
+        assert!(none.findings.is_empty() && none.verdict == Some(true));
+        assert!(parse_review("VERDICT: PASS").is_none(), "no findings block is no result");
+        assert!(parse_review("```json\n{oops\n```\nVERDICT: PASS").is_none());
+    }
+
+    #[test]
+    fn merges_repeated_findings_and_writes_the_report() {
+        let f = |t: &str, c: &str| Finding { title: t.into(), command: c.into(), output: "boom".into(), expected: "ok".into() };
+        let (kept, merged) = merge_findings(vec![f("Crash", "make t"), f("crash", " make t "), f("Other", "make u")]);
+        assert_eq!((kept.len(), merged), (2, 1));
+        let report = review_report("do x", &kept, merged, "dropped one");
+        for h in ["## Intent", "## Verified findings", "## Dropped", "```sh\nmake t\n```", "dropped one", "Merged as the same cause: 1"] {
+            assert!(report.contains(h), "{h}");
+        }
+        assert!(review_report("x", &[], 0, "").contains("No findings."));
+        assert!(findings_feedback(&kept).contains("Command: `make u`"));
     }
 
     #[test]
