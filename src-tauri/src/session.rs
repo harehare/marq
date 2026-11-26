@@ -91,8 +91,33 @@ pub struct SessionInfo {
     /// `done` or `pr` once reviewed, from the latest `marq_review` line.
     pub review: Option<String>,
     pub pr_url: Option<String>,
+    /// `pass`, `fail`, `running` or `none`, from the `marq_verify` lines (see `verification_of`).
+    pub verification: String,
     /// How full the context was at the end of the latest turn, 0 to 1, when the agent reports it.
     pub context: Option<f64>,
+}
+
+/// The state of a session's checks: `running` while a command, acceptance or review stage has
+/// started and not reported, else `pass` or `fail` by the latest verdict, `none` if no check ran.
+pub fn verification_of(events: &[Value]) -> &'static str {
+    let mut open: Vec<&str> = vec![];
+    let mut verdict = None;
+    for e in events.iter().filter(|e| e["type"] == "marq_verify") {
+        let Some(stage) = e["stage"].as_str().filter(|s| *s != "handoff") else { continue };
+        if e["status"] == "running" {
+            open.retain(|s| *s != stage);
+            open.push(stage);
+        } else if let Some(p) = e["passed"].as_bool() {
+            open.retain(|s| *s != stage);
+            verdict = Some(p);
+        }
+    }
+    match (open.is_empty(), verdict) {
+        (false, _) => "running",
+        (_, Some(true)) => "pass",
+        (_, Some(false)) => "fail",
+        _ => "none",
+    }
 }
 
 /// The latest review state of a session: `open`, `done` or `pr`, and the PR URL if one was made.
@@ -321,6 +346,7 @@ fn info_of(vault: &Path, events: &[Value]) -> Option<SessionInfo> {
         deletions: None,
         review,
         pr_url,
+        verification: verification_of(events).into(),
         context: events.iter().rev().find(|e| e["type"] == "turn_end").and_then(|e| e["context"].as_f64()),
         meta,
     })
@@ -849,8 +875,33 @@ mod tests {
             deletions: None,
             review: None,
             pr_url: None,
+            verification: "none".into(),
             context: None,
         }
+    }
+
+    #[test]
+    fn verification_follows_the_latest_check() {
+        let ev = |stage: &str, status: Option<&str>, passed: Option<bool>| {
+            let mut e = json!({"type": "marq_verify", "stage": stage});
+            if let Some(s) = status {
+                e["status"] = s.into();
+            }
+            if let Some(p) = passed {
+                e["passed"] = p.into();
+            }
+            e
+        };
+        assert_eq!(verification_of(&[]), "none");
+        assert_eq!(verification_of(&[ev("handoff", None, None)]), "none");
+        let started = ev("command", Some("running"), None);
+        assert_eq!(verification_of(std::slice::from_ref(&started)), "running");
+        let passed = ev("command", None, Some(true));
+        assert_eq!(verification_of(&[started.clone(), passed.clone()]), "pass");
+        // A later stage still running, or failing, outranks an earlier pass.
+        let acc = ev("acceptance", Some("running"), None);
+        assert_eq!(verification_of(&[passed.clone(), acc.clone()]), "running");
+        assert_eq!(verification_of(&[passed, acc, ev("acceptance", None, Some(false))]), "fail");
     }
 
     #[test]

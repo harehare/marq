@@ -10,6 +10,7 @@ import {
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { LucideIcon } from "lucide-react";
+import { VerifyBadge } from "./VerifyBadge";
 import { api, FileEntry, InboxEvent, Schedule, SessionInfo } from "./api";
 import { ScheduleDialog } from "./AutomationDialogs";
 import { setVaultFiles } from "./wikilinks";
@@ -1948,6 +1949,7 @@ export default function App() {
                       ) : (
                         <span className="ellipsis">{s.started.slice(5, 16).replace("T", " ")}</span>
                       )}
+                      {!s.verifies && <VerifyBadge state={s.verification} />}
                       {s.review === "pr" && <span className="row-badge pr" title={s.pr_url ?? ""}><GitPullRequest size={10} /> PR</span>}
                       {s.review === "done" && <span className="row-badge done"><CircleCheck size={10} /> done</span>}
                       {!s.review && s.additions !== null && (s.additions! + s.deletions!) > 0 && (
