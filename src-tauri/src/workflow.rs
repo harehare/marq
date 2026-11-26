@@ -10,6 +10,7 @@
 //! verify_retry: fresh         # retry in a new session on the same worktree instead of the same one
 //! verify_timeout: 10m
 //! verify_model: opus          # the acceptance check's model
+//! review: on                  # an independent adversarial review after the checks (default: `[verify] review` in config.toml, off)
 //! playbook: bug-fix           # a note in playbooks/ whose sections are the phases and what each is told
 //! phases: [research, plan, implement]   # or the phases themselves
 //! phase_gate: auto            # start the next phase on its own (default: wait for the user)
@@ -132,6 +133,30 @@ pub struct Verify {
     /// Failed checks in earlier sessions of the same run (fresh retries).
     #[serde(default)]
     pub attempt: u32,
+    /// `review: on|off` of the request or environment note; None leaves it to `[verify] review` in config.toml.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<bool>,
+}
+
+impl Verify {
+    /// Whether the independent adversarial review runs: the note's `review:` wins over the config.
+    pub fn review_enabled(&self) -> bool {
+        self.review.unwrap_or_else(review_default)
+    }
+}
+
+/// `[verify] review = "on"` in config.toml; off by default.
+pub fn review_default() -> bool {
+    crate::config::read().ok().is_some_and(|c| review_flag(c["verify"]["review"].as_str()) == Some(true))
+}
+
+/// `on`/`off` (and the usual spellings); None for anything else.
+fn review_flag(v: Option<&str>) -> Option<bool> {
+    match v.map(|s| s.trim().to_lowercase()).as_deref() {
+        Some("on" | "true" | "yes") => Some(true),
+        Some("off" | "false" | "no") => Some(false),
+        _ => None,
+    }
 }
 
 const DEFAULT_RETRIES: u32 = 2;
@@ -179,6 +204,7 @@ pub fn verify_with(text: &str, default: Option<&Verify>) -> Option<Verify> {
         timeout_secs: get("verify_timeout").and_then(|v| parse_secs(&v)).unwrap_or(d.timeout_secs),
         model: get("verify_model").or(d.model),
         attempt: 0,
+        review: get("review").and_then(|v| review_flag(Some(&v))).or(d.review),
     })
 }
 
@@ -921,6 +947,23 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         let v = verify_with("---\nverify: off\n---\n## Acceptance\n\n- works\n", Some(&d)).unwrap();
         assert_eq!((v.command, v.acceptance.as_deref()), (None, Some("- works")));
         assert_eq!(verify_of("---\nverify: off\n---\nx\n"), None);
+    }
+
+    #[test]
+    fn reads_the_review_switch() {
+        let on = |t: &str, d: Option<&Verify>| verify_with(t, d).unwrap().review;
+        assert_eq!(on("---\nverify: make\n---\nx\n", None), None);
+        assert_eq!(on("---\nverify: make\nreview: on\n---\nx\n", None), Some(true));
+        assert_eq!(on("---\nverify: make\nreview: off\n---\nx\n", None), Some(false));
+        assert_eq!(on("---\nverify: make\nreview: maybe\n---\nx\n", None), None);
+        // The environment's value is the default; the request's wins.
+        let d = verify_of("---\nverify: make\nreview: on\n---\n").unwrap();
+        assert_eq!(on("---\ntype: request\n---\nx\n", Some(&d)), Some(true));
+        assert_eq!(on("---\nreview: off\n---\nx\n", Some(&d)), Some(false));
+        // An explicit value beats the config; flags parse.
+        assert!(Verify { review: Some(true), ..Default::default() }.review_enabled());
+        assert!(!Verify { review: Some(false), ..Default::default() }.review_enabled());
+        assert_eq!((review_flag(Some(" ON ")), review_flag(Some("off")), review_flag(None)), (Some(true), Some(false), None));
     }
 
     #[test]
