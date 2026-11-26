@@ -35,7 +35,7 @@ export type Card = { id: string; title: string; done: boolean; owner: string | n
 export type Board = { lists: { name: string; cards: Card[] }[] };
 /** How a request's work is checked and run; see docs/workflows.md. */
 export type TaskChecks = {
-  verify?: string; verifyRetry?: "fresh"; verifyRetries?: number; sandbox?: string; phases?: string[]; acceptance?: string;
+  verify?: string; verifyRetry?: "fresh"; verifyRetries?: number; review?: "on" | "off"; sandbox?: string; phases?: string[]; acceptance?: string;
   /** A playbook's name: its sections are the phases and what each is told. */
   playbook?: string;
   /** A workspace note, for its directories (and project when none is given). */

@@ -22,6 +22,8 @@ type Props = {
   /** A task run on several models; the session ids to compare. */
   onStartedCompare: (ids: string[], title: string) => void;
   initialPrompt?: string;
+  /** The `review:` chosen for the card the task comes from. */
+  initialReview?: "on" | "off";
   /** mq results to give the agent along with the prompt, in one session or one per file. */
   context?: QueryContext;
 };
@@ -76,7 +78,7 @@ function stored(key: string, fallback: string) {
 }
 
 /** Starts a task. It is saved as a request note first, so the task stays in the knowledge base. */
-export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCompare, initialPrompt = "", context }: Props) {
+export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCompare, initialPrompt = "", initialReview, context }: Props) {
   const [prompt, setPrompt] = useState(initialPrompt || context?.prompt || "");
   const pastes = usePastes();
   // The latest few, shown under an empty box; ↑ / ↓ in the box walks through all of them.
@@ -244,6 +246,7 @@ export function NewTaskDialog({ vault, onClose, onStarted, onSaved, onStartedCom
     verify: verify.trim() || undefined,
     verifyRetry: verify.trim() && fresh ? "fresh" : undefined,
     acceptance: acceptance.trim() || undefined,
+    review: initialReview,
     sandbox: anyOther ? undefined : sandbox || undefined,
     playbook: book?.name,
     workspace: asChosen ? wsRel : undefined,
