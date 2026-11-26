@@ -103,6 +103,10 @@ export type SessionInfo = {
   pr_url: string | null;
   /** The state of its checks, from the `marq_verify` lines. */
   verification?: Verification;
+  /** The latest adversarial review's report note, relative to the vault. */
+  review_report?: string | null;
+  /** The board card it was started from, as `<board path>#<card id>`. */
+  card?: string | null;
   /** Set on a check or review session: the session it checks. */
   verifies?: string | null;
   /** How full the context was at the end of the latest turn, 0 to 1, when the agent reports it. */

@@ -63,6 +63,18 @@ pub struct SessionMeta {
     /// frontmatter keys of the user's own (`[organize] keys`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, Vec<String>>,
+    /// The board card the session was started from, as `<board path>#<card id>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+}
+
+/// The board card a request's prompt names (`(Card T7 on the board boards/x.md, list Todo. ...`),
+/// as `<board path>#<card id>`.
+pub fn card_of(text: &str) -> Option<String> {
+    let rest = &text[text.rfind("(Card ")? + 6..];
+    let (id, rest) = rest.split_once(" on the board ")?;
+    let (board, _) = rest.split_once(", list ")?;
+    (!id.is_empty() && !id.contains(char::is_whitespace) && !board.contains('\n')).then(|| format!("{board}#{id}"))
 }
 
 /// What a session started from `text` is filed under: the note's tags and its values for the
@@ -93,6 +105,8 @@ pub struct SessionInfo {
     pub pr_url: Option<String>,
     /// `pass`, `fail`, `running` or `none`, from the `marq_verify` lines (see `verification_of`).
     pub verification: String,
+    /// The latest adversarial review report note, relative to the vault.
+    pub review_report: Option<String>,
     /// How full the context was at the end of the latest turn, 0 to 1, when the agent reports it.
     pub context: Option<f64>,
 }
@@ -118,6 +132,15 @@ pub fn verification_of(events: &[Value]) -> &'static str {
         (_, Some(false)) => "fail",
         _ => "none",
     }
+}
+
+/// The report note of the latest adversarial review of a session, from the `marq_verify` lines.
+pub fn review_report_of(events: &[Value]) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .filter(|e| e["type"] == "marq_verify" && e["stage"] == "review")
+        .find_map(|e| e["report"].as_str().map(str::to_string))
 }
 
 /// The latest review state of a session: `open`, `done` or `pr`, and the PR URL if one was made.
@@ -347,6 +370,7 @@ fn info_of(vault: &Path, events: &[Value]) -> Option<SessionInfo> {
         review,
         pr_url,
         verification: verification_of(events).into(),
+        review_report: review_report_of(events),
         context: events.iter().rev().find(|e| e["type"] == "turn_end").and_then(|e| e["context"].as_f64()),
         meta,
     })
@@ -876,8 +900,19 @@ mod tests {
             review: None,
             pr_url: None,
             verification: "none".into(),
+            review_report: None,
             context: None,
         }
+    }
+
+    #[test]
+    fn card_and_report_are_read_from_the_prompt_and_events() {
+        let t = "T\n\n(Card T7 on the board boards/a b.md, list Todo. Keep it up to date.)";
+        assert_eq!(card_of(t).as_deref(), Some("boards/a b.md#T7"));
+        assert_eq!(card_of("no card here"), None);
+        let ev = json!({"type": "marq_verify", "stage": "review", "passed": false, "report": "reviews/x.md"});
+        assert_eq!(review_report_of(&[json!({"type": "marq_verify", "stage": "review", "status": "running"}), ev]).as_deref(), Some("reviews/x.md"));
+        assert_eq!(review_report_of(&[]), None);
     }
 
     #[test]

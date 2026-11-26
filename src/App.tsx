@@ -2164,7 +2164,7 @@ export default function App() {
                   if (cur?.kind !== "terminal" || cur.named || cur.title === title) return prev;
                   return prev.map((x) => (x === cur ? { ...x, title } : x));
                 })} />}
-              {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles}
+              {t.kind === "board" && <BoardView vault={vault} path={t.path} files={files} recent={recentFiles} sessions={sessions}
                 onOpenMarkdown={() => openNote(t.path)} onOpenFile={openFile} onCreateNote={(rel) => create(rel)}
                 onStartTask={(prompt, after, review) => { taskAfter.current = after ?? null; setTaskReview(review); setTaskPrompt(prompt); setShowNewTask(true); }} />}
               {t.kind === "search" && <SearchView key={t.nonce} vault={vault} initial={t.initial} active={t.key === active} files={files} sessions={sessions}
