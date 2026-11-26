@@ -308,7 +308,7 @@ pub const GARDENING_PROMPT: &str = "Merge what earlier sessions learned into kno
 /// The prompt of the hardening schedule: failures turned into rules, checks and playbooks.
 pub const HARDENING_PROMPT: &str = "Turn what keeps going wrong in this vault's sessions into rules, so it stops happening.
 
-1. Look at recent sessions with search_sessions and read_session: failed checks (marq_verify with passed false, or `verified: failed` on a request), approvals that were denied, errors, and learnings that say a mistake was made. Ignore one-off slips.
+1. Look at recent sessions with search_sessions and read_session: failed checks (marq_verify with passed false, including `stage: \"review\"` and the `reviews/` notes they link, or `verified: failed` on a request), approvals that were denied, errors, and learnings that say a mistake was made. Ignore one-off slips.
 2. Group them by cause. Keep only the causes that happened more than once, or that cost a lot.
 3. For each, choose the smallest guard that stops it, and say which:
    - a command that must not run, or must be asked about: an `ask` or `deny` entry in the project's environment note;
