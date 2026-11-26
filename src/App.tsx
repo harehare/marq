@@ -2120,11 +2120,11 @@ export default function App() {
         {/* With no tabs, the bar has nothing to hold (unless it carries the show-sidebar button), so it is left out. */}
         {tabs.length === 0 && !showSidebar ? null : pinnedRow ? (
           <>
-            {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
+            {pinned.length > 0 && <TabStrip className="pinned-row" lead={showSidebar} trail={unpinned.length === 0 ? splitControls : undefined} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
               {pinned.map(tabEl)}
             </TabStrip>}
             {/* Nothing to show (no unpinned tabs, no sidebar button, no split controls): leave the row out. */}
-            {(unpinned.length > 0 || (pinned.length === 0 && showSidebar) || splitControls) && (
+            {(unpinned.length > 0 || (pinned.length === 0 && (showSidebar || splitControls))) && (
               <TabStrip lead={pinned.length === 0 && showSidebar} trail={splitControls} wrap={wrapTabs} active={active} onShowHidden={hiddenTabsMenu} onBlankDoubleClick={() => void createUntitled(false)}>
                 {unpinned.map(tabEl)}
               </TabStrip>
