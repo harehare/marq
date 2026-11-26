@@ -576,9 +576,7 @@ fn parse_review(reply: &str) -> Option<Review> {
                 body.push('\n');
             }
             findings = serde_json::from_str::<Vec<Finding>>(&body).ok();
-            if findings.is_none() {
-                return None;
-            }
+            findings.as_ref()?;
         } else if parse_verdict(line).is_none() {
             rest.push(line);
         }
@@ -673,11 +671,10 @@ fn review_done(app: &AppHandle, vault: &Path, check: &SessionMeta, meta: &Sessio
                "report": report, "output": reply, "attempt": attempt, "of": v.retries + 1, "at": vault::now()}),
     )?;
     if let (Some(rel), Some(path)) = (&report, session::find_origin(vault, meta)) {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if vault::fm_get(&text, "type").as_deref() == Some("request") {
-                std::fs::write(&path, vault::fm_set(&text, "review_report", &format!("\"[[{}]]\"", rel.trim_end_matches(".md"))))?;
-                let _ = app.emit("vault://changed", json!({"path": path}));
-            }
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        if vault::fm_get(&text, "type").as_deref() == Some("request") {
+            std::fs::write(&path, vault::fm_set(&text, "review_report", &format!("\"[[{}]]\"", rel.trim_end_matches(".md"))))?;
+            let _ = app.emit("vault://changed", json!({"path": path}));
         }
     }
     if passed {
