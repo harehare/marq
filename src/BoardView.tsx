@@ -24,7 +24,7 @@ type Props = {
   /** Creates a note at a vault-relative path and opens it; resolves to its path. */
   onCreateNote: (rel: string) => Promise<string>;
   /** Starts a session from a card, with a prompt naming the card. `after` runs once the task has started. */
-  onStartTask: (prompt: string, after?: () => void) => void;
+  onStartTask: (prompt: string, after?: () => void, review?: "on" | "off") => void;
 };
 
 /** A card's links to notes, with their index among its nested items. */
@@ -54,6 +54,13 @@ function LabelChip({ name, on, onClick, onRemove }: { name: string; on?: boolean
 }
 
 /** A select drawn like the app's controls instead of the platform's. */
+const REVIEW_NOTE = /^review:\s*(on|off)\s*$/i;
+/** The card's choice for the independent adversarial review; undefined follows the config. */
+const reviewOf = (c: Card): "on" | "off" | undefined => {
+  const m = c.notes.map((n) => REVIEW_NOTE.exec(n)).find(Boolean);
+  return m ? (m[1].toLowerCase() as "on" | "off") : undefined;
+};
+
 function Select({ value, onChange, children, className = "" }: { value: string; onChange: (v: string) => void; children: React.ReactNode; className?: string }) {
   return (
     <span className={`board-select ${className}`}>
@@ -129,6 +136,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
     onStartTask(
       cardPrompt(c, list),
       target && target.toLowerCase() !== list.toLowerCase() ? () => update(c.id, { list: target }) : undefined,
+      reviewOf(c),
     );
   };
   // Queues the card in the inbox so it waits for its turn instead of starting now: it becomes a request
@@ -141,7 +149,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
     }
     try {
       const rel = await api.saveTask(vault, {
-        title: c.title, prompt: cardPrompt(c, list), project, permissionMode: mode, carryChanges: false, worktree, autoTitle: false,
+        title: c.title, prompt: cardPrompt(c, list), project, permissionMode: mode, carryChanges: false, worktree, autoTitle: false, review: reviewOf(c),
       });
       await api.inboxQueueRequest(`${vault}/${rel}`, c.title);
       setError(null);
@@ -149,6 +157,12 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
       setError(String(e));
     }
   };
+  // The choice lives on the card as a `review: on|off` note; Default has none.
+  const setReview = (c: Card, v: string) => run((async () => {
+    const i = c.notes.findIndex((n) => REVIEW_NOTE.test(n));
+    if (i >= 0) await api.boardUpdate(vault, path, c.id, { remove_note: i });
+    if (v) await api.boardUpdate(vault, path, c.id, { note: `review: ${v}` });
+  })());
   const link = (c: Card, title: string, file: string) => update(c.id, { note: linkTo(path, title, file) });
   const openLink = (href: string) => {
     const file = resolveLink(path, href);
@@ -341,6 +355,7 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
       {openCard && (
         <CardDialog card={openCard.c} list={openCard.list} lists={board.lists.map((l) => l.name)} labels={allLabels}
           onUpdate={(ch) => update(openCard.c.id, ch)} onStart={() => { start(openCard.c, openCard.list); setOpen(null); }}
+          onReview={(v) => setReview(openCard.c, v)}
           onQueue={() => { void queueCard(openCard.c, openCard.list); setOpen(null); }}
           onOpenLink={openLink} onLinkNote={() => setLinking(openCard.c)} onNewNote={() => setCreating(openCard.c)}
           onRemove={() => { setOpen(null); run(api.boardRemove(vault, path, openCard.c.id)); }}
@@ -416,13 +431,15 @@ function ListHeader({ name, count, shown, first, last, onRename, onMove, onRemov
   );
 }
 
-function CardDialog({ card, list, lists, labels, onUpdate, onStart, onQueue, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
+function CardDialog({ card, list, lists, labels, onUpdate, onStart, onQueue, onReview, onOpenLink, onLinkNote, onNewNote, onRemove, onClose }: {
   card: Card; list: string; lists: string[];
   /** Every label on the board, offered when adding one. */
   labels: string[];
   onUpdate: (c: Parameters<typeof api.boardUpdate>[3]) => void; onStart?: () => void;
   /** Puts the card in the inbox to start when there is room. */
   onQueue?: () => void;
+  /** `""` for Default, else `on` or `off`. */
+  onReview: (v: string) => void;
   onOpenLink: (href: string) => void; onLinkNote: () => void; onNewNote: () => void; onRemove: () => void; onClose: () => void;
 }) {
   const [title, setTitle] = useState(card.title);
@@ -449,7 +466,7 @@ function CardDialog({ card, list, lists, labels, onUpdate, onStart, onQueue, onO
   const saveTitle = () => title.trim() && title !== card.title && onUpdate({ title });
   const blurOnEsc = (e: React.KeyboardEvent<HTMLElement>) => e.key === "Escape" && e.currentTarget.blur();
   const links = linksOf(card);
-  const texts = card.notes.map((n, i) => ({ n, i })).filter(({ n }) => !noteLink(n));
+  const texts = card.notes.map((n, i) => ({ n, i })).filter(({ n }) => !noteLink(n) && !REVIEW_NOTE.test(n));
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal board-dialog">
@@ -543,6 +560,12 @@ function CardDialog({ card, list, lists, labels, onUpdate, onStart, onQueue, onO
                 <ListTodo size={13} /> Queue
               </button>
             )}
+            <label className="field-label">Verify</label>
+            <Select value={reviewOf(card) ?? ""} onChange={onReview}>
+              <option value="">Default</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </Select>
             <button onClick={onLinkNote}><Link2 size={13} /> Link a note</button>
             <button onClick={onNewNote}><FilePlus2 size={13} /> New note</button>
             <button className="danger" onClick={onRemove}><Trash2 size={13} /> Delete</button>

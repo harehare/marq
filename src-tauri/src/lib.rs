@@ -481,6 +481,9 @@ struct NewTask {
     verify_retry: Option<String>,
     #[serde(default)]
     verify_retries: Option<u32>,
+    /// `on` or `off` (`review:`): the adversarial review; empty leaves it to the config.
+    #[serde(default)]
+    review: Option<String>,
     /// `on` or `strict`.
     #[serde(default)]
     sandbox: Option<String>,
@@ -588,7 +591,7 @@ fn retitle_request(path: &Path, title: &str) -> Result<()> {
 fn write_request(vault: &str, task: NewTask) -> Result<String> {
     let NewTask {
         title, prompt, project, permission_mode, model, effort, agent, carry_changes, base, worktree, verify, verify_retry, verify_retries,
-        sandbox, phases, playbook, acceptance, extra, workspace: ws, directories, fields, ..
+        review, sandbox, phases, playbook, acceptance, extra, workspace: ws, directories, fields, ..
     } = task;
     let v = Path::new(vault);
     let playbook = playbook.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
@@ -632,6 +635,7 @@ fn write_request(vault: &str, task: NewTask) -> Result<String> {
     set("verify", verify);
     set("verify_retry", verify_retry);
     set("verify_retries", verify_retries.map(|n| n.to_string()));
+    set("review", review.filter(|r| matches!(r.as_str(), "on" | "off")));
     set("sandbox", workflow::normalize_sandbox(sandbox.as_deref()));
     set("workspace", ws);
     set("playbook", book.as_ref().map(|b| b.name.clone()));
