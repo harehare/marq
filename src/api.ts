@@ -78,6 +78,8 @@ export type FileResult = { file: string | null; items: string[] };
 /** A session working on the same thing as another, and why (`same branch`, `same origin`, `active in the same repository`). */
 export type RelatedSession = { id: string; title: string; status: string; branch: string | null; reasons: string[] };
 
+export type Verification = "pass" | "fail" | "running" | "none";
+
 export type SessionInfo = {
   id: string;
   title: string;
@@ -99,6 +101,10 @@ export type SessionInfo = {
   /** `done` or `pr` once reviewed. */
   review: string | null;
   pr_url: string | null;
+  /** The state of its checks, from the `marq_verify` lines. */
+  verification?: Verification;
+  /** Set on a check or review session: the session it checks. */
+  verifies?: string | null;
   /** How full the context was at the end of the latest turn, 0 to 1, when the agent reports it. */
   context?: number | null;
   /** A Claude alias or `ollama:<name>`; empty for the default. */

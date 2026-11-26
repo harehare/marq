@@ -8,6 +8,7 @@ import {
   Forward, MessageSquareReply, MessagesSquare, ExternalLink, MessageCircleQuestion,
 } from "lucide-react";
 import { api, Approval, SessionEvent, RelatedSession, SessionInfo, Worktree } from "./api";
+import { VerifyBadge } from "./VerifyBadge";
 import { Md } from "./markdown/Md";
 import { stepsOf } from "./progress";
 import { splitNext, type NextAction } from "./nextActions";
@@ -707,6 +708,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           )}
           <div className="session-meta">
             <span className={`pill status-${status}`}>{status}</span>
+            {info && !info.verifies && <VerifyBadge state={info.verification} />}
             {worktree ? (
               <CopyMeta value={worktree.branch} alt={worktree.path} icon={<GitBranch size={12} />}
                 title={`${worktree.branch}\n${worktree.path}\nClick to copy the branch, ⌥-click to copy the path`} />
