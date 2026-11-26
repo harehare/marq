@@ -76,7 +76,7 @@ When the project is inside a git repository, each session gets its own worktree 
 - The **Changes** panel diffs against the base commit, so it covers commits made in the worktree, uncommitted edits and untracked files.
 - From the panel you can commit everything, push (`git push -u origin <branch>`), push and create a pull request with `gh` (the message's first line is the title, the rest the body), rename the branch, open a terminal tab in the worktree, open it in Finder or VS Code, and remove the worktree. Removing keeps the branch.
 - **Review comments**: click + on a diff line (shift-click for a range) to comment. **Send review** sends all comments to the session as one message; **Edit first** puts it in the message box instead. A file's diff, or the whole diff, can also be put into the message box (cut at 600 lines per file).
-- **Mark as done** moves a session out of **Needs review** and removes its worktrees (the branches stay). A worktree with uncommitted or untracked files is kept, and so are those of a session that is still running. A created PR shows a badge in the sidebar.
+- **Mark as done** moves a session out of **Needs review** and removes its worktrees (the branches stay). A worktree with uncommitted or untracked files is kept, and so are those of a session that is still running. A created PR shows a badge in the sidebar. Session rows and the session header also show a verification badge (`PASS`, `FAIL`, a spinner while checking, or `Unverified`); with a review, a **Review report** button opens its note.
 
 ## Running side by side
 
@@ -132,7 +132,7 @@ Because the file lives in the repository, a new teammate and every agent start f
 
 ### A check for every request
 
-`verify:` in an environment note is the check that every request on the project runs after each turn, as in [Workflows](workflows.md#checks). It takes the same `verify_retries`, `verify_retry`, `verify_timeout` and `verify_model` as a request. A request's own `verify:` replaces it, and `verify: off` skips the command for that request (its `## Acceptance` still runs). Like `setup:`, a repository's `verify:` only runs once you trust the file.
+`verify:` in an environment note is the check that every request on the project runs after each turn, as in [Workflows](workflows.md#checks). It takes the same `verify_retries`, `verify_retry`, `verify_timeout` and `verify_model` as a request. A request's own `verify:` replaces it, and `verify: off` skips the command for that request (its `## Acceptance` still runs). `review: on|off` sets [adversarial review](workflows.md#adversarial-review) for every request on the project. Like `setup:`, a repository's `verify:` only runs once you trust the file.
 
 ```yaml
 verify: pnpm check

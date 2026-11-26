@@ -46,7 +46,11 @@ The criteria are not shown to the implementing agent, but they are not secret ei
 
 `review: on` in a request or environment note, or `[verify] review = "on"` in [config.toml](settings.md) (**Settings → Verify**), adds an independent review after the command and acceptance checks pass. It is off by default; a note's `review: on|off` wins over the config, and a request's over its environment note. With it off, checks behave as above.
 
-The review runs in a separate session in the same directory, read-only, that tries to break the change against the real code and reports each finding with a title, the command it ran, the output it printed and the output the intent requires.
+The review runs in a separate session in the same directory, read-only, that tries to break the change against the real code and reports each finding with a title, the command it ran, the output it printed and the output the intent requires. Findings that do not reproduce, or share a root cause with another, are dropped or merged, and the counts are reported.
+
+The report is saved as a note in `reviews/` (`type: review`) with Intent, Verified findings and Dropped sections, and linked from the checked session and the card. Verified findings go back to the implementing agent like a failed acceptance check and count as a failed attempt (`verify_retries`, `verify_retry`). A review with no readable result also counts as a failed attempt, not a pass. With no findings, the request settles as `verified: passed`. The review runs under the same sandbox as the session it checks.
+
+Sessions and board cards show a badge: `PASS`, `FAIL`, a spinner while a check runs, or `Unverified` when no check has run. A card's dialog has a **Verify** select (Default, On, Off) that writes `review:` into the request when the card is queued or started.
 
 ### Fresh retries (a loop)
 
