@@ -342,7 +342,17 @@ fn turn_ended(app: &AppHandle, vault: &Path, id: &str) -> Result<()> {
     }
     match &v.acceptance {
         Some(criteria) => start_acceptance(app, vault, &meta, &v, criteria),
-        None => settle(app, vault, &meta, "passed", None),
+        None => checks_passed(app, vault, &meta, &v),
+    }
+}
+
+/// The command and acceptance checks passed: an adversarial review follows when it is on,
+/// otherwise the session settles as passed.
+fn checks_passed(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verify) -> Result<()> {
+    if v.review_enabled() {
+        start_review(app, vault, meta, v)
+    } else {
+        settle(app, vault, meta, "passed", None)
     }
 }
 
@@ -443,16 +453,64 @@ fn start_acceptance(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verif
     Ok(())
 }
 
-/// The acceptance check finished: pass settles the checked session, fail sends the reasons back.
+/// The adversary's brief: break the change, and prove every finding with a run.
+fn review_prompt(task: &str, branch: &str) -> String {
+    format!(
+        "You are an adversary reviewing another agent's work. Your job is to break it, not to praise it. Its work is in \
+         the current directory{branch}.\n\nThe task it was given (the intent):\n\n<task>\n{task}\n</task>\n\n\
+         Read the changes (git diff against the base) and try to make them fail against the real code: run the tests and \
+         the program, feed it edge cases, bad input and the paths the change did not think of. Do not change any files; \
+         write scratch work only to a temporary directory.\n\n\
+         Report only a finding you have proven: the exact command you ran, the output it printed, and the output the \
+         intent requires. Run each command a second time and drop the finding if it does not reproduce. Leave out style, \
+         naming and speculative risks; findings with the same root cause are one finding. \"No findings\" is a valid \
+         result.\n\nGive the findings as one fenced `json` block holding an array of objects with the keys `title`, \
+         `command`, `output` and `expected` (`[]` when there are none), and add a short note for each dropped finding \
+         saying why. End your reply with one line: `{VERDICT_PASS}` when no proven finding remains, otherwise \
+         `{VERDICT_FAIL}`."
+    )
+}
+
+/// Starts a separate read-only session that tries to break the change.
+fn start_review(app: &AppHandle, vault: &Path, meta: &SessionMeta, v: &Verify) -> Result<()> {
+    let note = session::find_origin(vault, meta).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let branch = meta.worktree.as_ref().map(|w| format!(" (branch {})", w.branch)).unwrap_or_default();
+    let prompt = review_prompt(&task_text(&note), &branch);
+    let review = SessionMeta {
+        id: vault::new_id(),
+        title: format!("{} · review", meta.title),
+        origin: meta.origin.clone(),
+        origin_path: meta.origin_path.clone(),
+        cwd: meta.cwd.clone(),
+        started: vault::now(),
+        permission_mode: meta.permission_mode.clone(),
+        model: v.model.clone().or_else(|| meta.model.clone()),
+        agent: meta.agent.clone(),
+        effort: meta.effort.clone(),
+        sandbox: meta.sandbox.clone(),
+        verifies: Some(meta.id.clone()),
+        workspace: meta.workspace.clone(),
+        fields: meta.fields.clone(),
+        ..Default::default()
+    };
+    let review_id = review.id.clone();
+    log(app, vault, &meta.id, json!({"type": "marq_verify", "stage": "review", "status": "running", "session": review_id, "at": vault::now()}))?;
+    app.state::<Runner>().start(app.clone(), vault.to_path_buf(), review, prompt, Turn::New)?;
+    let _ = app.emit("sessions://changed", &review_id);
+    Ok(())
+}
+
+/// A check session finished (acceptance or review): pass settles the checked session, fail sends the reasons back.
 fn verdict(app: &AppHandle, vault: &Path, check: &SessionMeta, target: &str, events: &[Value]) -> Result<()> {
     let meta = session::meta(vault, target)?;
     let target_events = session::read_events(vault, target)?;
     // Only the check the target is waiting for counts: a later turn of this session (a follow-up
     // from the user) does not send the work back again.
-    let waiting = target_events.iter().rev().find(|e| e["type"] == "marq_verify" && e["stage"] == "acceptance");
+    let waiting = target_events.iter().rev().find(|e| e["type"] == "marq_verify" && matches!(e["stage"].as_str(), Some("acceptance" | "review")));
     if !waiting.is_some_and(|e| e["status"] == "running" && e["session"] == check.id.as_str()) {
         return Ok(());
     }
+    let stage = if waiting.is_some_and(|e| e["stage"] == "review") { "review" } else { "acceptance" };
     let reply = session::last_result(events).unwrap_or("").trim().to_string();
     let passed = parse_verdict(&reply);
     let v = meta.verify.clone().unwrap_or_default();
@@ -462,16 +520,19 @@ fn verdict(app: &AppHandle, vault: &Path, check: &SessionMeta, target: &str, eve
         app,
         vault,
         target,
-        json!({"type": "marq_verify", "stage": "acceptance", "passed": passed_bool, "session": check.id, "output": reply,
+        json!({"type": "marq_verify", "stage": stage, "passed": passed_bool, "session": check.id, "output": reply,
                "attempt": attempt, "of": v.retries + 1, "at": vault::now()}),
     )?;
     if passed_bool {
-        return settle(app, vault, &meta, "passed", None);
+        // An acceptance pass moves on to the review when it is on; a review pass settles.
+        return if stage == "acceptance" { checks_passed(app, vault, &meta, &v) } else { settle(app, vault, &meta, "passed", None) };
     }
     let reasons: String = reply.lines().filter(|l| parse_verdict(l).is_none()).collect::<Vec<_>>().join("\n");
-    let feedback = match passed {
-        Some(_) => format!("A separate acceptance check found problems:\n\n{}", reasons.trim()),
-        None => "The acceptance check gave no verdict; check the work against the task again.".to_string(),
+    let feedback = match (passed, stage) {
+        (Some(_), "review") => format!("A separate adversarial review broke the change:\n\n{}", reasons.trim()),
+        (Some(_), _) => format!("A separate acceptance check found problems:\n\n{}", reasons.trim()),
+        (None, "review") => "The adversarial review gave no result; try to break the change again and prove what you find.".to_string(),
+        (None, _) => "The acceptance check gave no verdict; check the work against the task again.".to_string(),
     };
     retry(app, vault, &meta, &v, attempt, &feedback)
 }
@@ -981,6 +1042,14 @@ phases: [research, plan, implement]\n---\n## Request\n\nAdd hover types.\n\n```m
         assert_eq!(parse_verdict("- x fails\n**VERDICT: FAIL**\n"), Some(false));
         assert_eq!(parse_verdict("VERDICT: FAIL\nthen fixed\nverdict: pass"), Some(true));
         assert_eq!(parse_verdict("no verdict"), None);
+    }
+
+    #[test]
+    fn review_prompt_asks_for_proof() {
+        let p = review_prompt("do x", " (branch b)");
+        assert!(p.contains("do x") && p.contains("(branch b)"));
+        assert!(p.contains("`command`") && p.contains(VERDICT_PASS) && p.contains(VERDICT_FAIL));
+        assert!(p.contains("Do not change any files"));
     }
 
     #[test]
