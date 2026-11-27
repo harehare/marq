@@ -6,7 +6,8 @@ import {
   Trash2, User, X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, Board, Card, FileEntry } from "./api";
+import { api, Board, Card, FileEntry, SessionInfo } from "./api";
+import { VerifyBadge } from "./VerifyBadge";
 import { composing } from "./keys";
 import { linkTo, noteLink, resolveLink } from "./links";
 import { NameDialog } from "./NameDialog";
@@ -19,6 +20,8 @@ type Props = {
   /** Notes a card can link to. */
   files: FileEntry[];
   recent: string[];
+  /** Sessions, for each card's check status. */
+  sessions: SessionInfo[];
   onOpenMarkdown: () => void;
   onOpenFile: (path: string) => void;
   /** Creates a note at a vault-relative path and opens it; resolves to its path. */
@@ -75,7 +78,7 @@ function Avatar({ name }: { name: string }) {
 }
 
 /** A kanban board stored as Markdown. */
-export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFile, onCreateNote, onStartTask }: Props) {
+export function BoardView({ vault, path, files, recent, sessions, onOpenMarkdown, onOpenFile, onCreateNote, onStartTask }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"kanban" | "list">("kanban");
@@ -116,6 +119,11 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
   const listOp = (op: string, name: string, to?: string) => run(api.boardList(vault, path, op, name, to));
 
   const vaultRel = (p: string) => (p.startsWith(`${vault}/`) ? p.slice(vault.length + 1) : p);
+  /** The latest session started from the card (not a check session). */
+  const cardSession = (c: Card) => {
+    const key = `${vaultRel(path)}#${c.id}`;
+    return sessions.filter((s) => s.card === key && !s.verifies).sort((a, b) => b.started.localeCompare(a.started))[0];
+  };
   /** The card as a task prompt: its notes, and where it lives so the agent keeps it up to date. */
   const cardPrompt = (c: Card, list: string) => {
     const notes = c.notes.map((n) => {
@@ -326,6 +334,20 @@ export function BoardView({ vault, path, files, recent, onOpenMarkdown, onOpenFi
                     </button>
                     <span className="board-card-title">{c.title}</span>
                   </div>
+                  {(() => {
+                    const s = cardSession(c);
+                    return s && (
+                      <div className="board-card-links">
+                        <VerifyBadge state={s.verification} />
+                        {s.review_report && (
+                          <button className="note-chip" title={s.review_report} draggable={false}
+                            onClick={(e) => { e.stopPropagation(); onOpenFile(`${vault}/${s.review_report}`); }}>
+                            <FileText size={11} /> <span className="ellipsis">Review report</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {linksOf(c).length > 0 && (
                     <div className="board-card-links">
                       {linksOf(c).map((k) => (

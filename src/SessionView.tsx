@@ -709,6 +709,9 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
           <div className="session-meta">
             <span className={`pill status-${status}`}>{status}</span>
             {info && !info.verifies && <VerifyBadge state={info.verification} />}
+            {info?.review_report && (
+              <button className="pill" title={info.review_report} onClick={() => onOpenOrigin(`${vault}/${info.review_report}`, 0)}>Review report</button>
+            )}
             {worktree ? (
               <CopyMeta value={worktree.branch} alt={worktree.path} icon={<GitBranch size={12} />}
                 title={`${worktree.branch}\n${worktree.path}\nClick to copy the branch, ⌥-click to copy the path`} />

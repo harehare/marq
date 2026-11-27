@@ -374,6 +374,7 @@ fn start_from_note(app: AppHandle, vault: &str, path: &str, line: usize, opts: R
         dirs,
         workspace: ws.workspace,
         fields: session::fields_of(&text),
+        card: session::card_of(&text),
     };
     progress(&app, "Starting the session…");
     runner.start(app.clone(), v, meta, prompt, Turn::New)?;
