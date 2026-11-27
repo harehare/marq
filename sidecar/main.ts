@@ -146,8 +146,11 @@ function commands(c: Extract<Command, { op: "commands" }>) {
 
 /** A short title for a task, from a small model in one turn with no tools. */
 function title(c: Extract<Command, { op: "title" }>) {
-  const prompt = `Write a short title for this task: at most 40 characters, in the same language as the task, ` +
-    `naming what is to be done. Reply with the title only.\n\n<task>\n${c.text.slice(0, 4000)}\n</task>`;
+  // The task comes first and the instruction last, so a small model answers the instruction instead of repeating it.
+  const prompt = `<task>\n${c.text.slice(0, 4000)}\n</task>\n\n` +
+    `Name the task above with a title of at most 40 characters, in the language the task is written in, ` +
+    `saying what is to be done (for example "ログイン画面のバグを修正" or "Add dark mode to settings"). ` +
+    `Do not describe these rules or the format. Reply with the title only.`;
   return backendFor(c.agent).title({ prompt, model: c.model, executable: c.executable });
 }
 

@@ -453,7 +453,13 @@ fn clean_title(s: &str) -> Option<String> {
     let t = line.trim_start_matches(['#', '*', '-', ' ']).trim_end_matches('*');
     let t = t.trim_matches(['"', '\'', '「', '」', '`', '*', ' ']);
     let t: String = t.chars().take(60).collect();
-    (!t.is_empty()).then_some(t)
+    (!t.is_empty() && !echoes_instruction(&t)).then_some(t)
+}
+
+/// A reply that repeats the naming instructions or is an API error, not a title; the caller keeps its fallback.
+fn echoes_instruction(t: &str) -> bool {
+    let l = t.to_lowercase();
+    ["≤", "chars", "task language", "title in ", "reply with the title", "api error"].iter().any(|m| l.contains(m))
 }
 
 fn spawn(app: AppHandle) -> Result<mpsc::UnboundedSender<String>> {
@@ -1053,6 +1059,8 @@ mod tests {
         assert_eq!(super::clean_title("\n「hover に型を表示」\n").as_deref(), Some("hover に型を表示"));
         assert_eq!(super::clean_title("# **Fix login**").as_deref(), Some("Fix login"));
         assert_eq!(super::clean_title("  "), None);
+        assert_eq!(super::clean_title("Title in Japanese (task language), ≤40 chars, naming the act"), None);
+        assert_eq!(super::clean_title("API Error: 404 model not found"), None);
     }
 
     #[test]
