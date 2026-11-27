@@ -299,3 +299,5 @@ They clean up after themselves:
 ## Documents from agents
 
 Reports, plans, designs, investigations and how-tos that an agent writes for you are collected in the vault instead of being left in the working directory. A new document goes to `docs/<date>-<slug>.md` with `type: doc`, `sessions: [<session id>]` and `origin: <request or anchor id>`. An agent can revise only `type: doc` notes, so your hand-written notes are never overwritten. The session view shows each document as a card that opens it.
+
+A `mermaid` code block in a document, or in any other note, is drawn as a diagram in the preview, in the colors of the current theme. While the source does not parse, the preview shows the error under the last diagram that did.

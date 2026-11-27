@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { Sparkles, Pencil, Anchor as AnchorIcon, Bot, Check, MessageSquarePlus, MessageSquareText, X } from "lucide-react";
 import { SessionInfo } from "../api";
 import { MqBlock } from "./MqBlock";
+import { Mermaid } from "./Mermaid";
 import { resolveLink } from "../links";
 import { api } from "../api";
 import { remarkWikilinks, resolveWiki, useVaultFiles, WIKI_SCHEME } from "../wikilinks";
@@ -138,6 +139,13 @@ function Pre({ node, children }: any) {
       <div data-line={line}>
         <MqBlock vault={vault} notePath={path} noteText={text} line={line} onPinned={onPinned}
           query={textOf(code).replace(/\n$/, "")} meta={fenceMeta(code?.data?.meta)} />
+      </div>
+    );
+  }
+  if (lang === "mermaid") {
+    return (
+      <div data-line={line}>
+        <Mermaid code={textOf(code).replace(/\n$/, "")} />
       </div>
     );
   }
