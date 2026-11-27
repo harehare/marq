@@ -267,8 +267,8 @@ export const claude: AgentBackend = {
           settingSources: [],
           persistSession: false,
           pathToClaudeCodeExecutable: c.executable,
-          // Ollama tasks are named by their own model.
-          ...backend(c.model?.startsWith("ollama:") ? c.model : "haiku"),
+          // The model comes from `[title] models`; Haiku when it names none.
+          ...backend(c.model || "haiku"),
         },
       }),
       "title",

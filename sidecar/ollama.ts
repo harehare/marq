@@ -18,3 +18,18 @@ export async function ollamaModels(): Promise<string[]> {
     throw new Error(`Ollama is not reachable at ${ollamaUrl()}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
+
+/** One reply from a pulled model without going through an agent, for short jobs such as a title. `model` is a bare name (no `ollama:`); the first pulled one when missing. */
+export async function ollamaGenerate(prompt: string, model?: string | null): Promise<string> {
+  const name = model || (await ollamaModels())[0]?.slice("ollama:".length);
+  if (!name) throw new Error("Ollama has no model pulled");
+  const res = await fetch(`${ollamaUrl()}/api/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    // `think: false` keeps reasoning models from spending the short answer on thinking.
+    body: JSON.stringify({ model: name, prompt, stream: false, think: false, options: { temperature: 0.2, num_predict: 80 } }),
+    signal: AbortSignal.timeout(55_000),
+  });
+  if (!res.ok) throw new Error(`Ollama answered ${res.status}`);
+  return (((await res.json()) as { response?: string }).response ?? "").trim();
+}

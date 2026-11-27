@@ -401,20 +401,41 @@ impl Runner {
 }
 
 impl Runner {
-    /// A short task title from a small model (or the task's Ollama model). Times out after 15s (Ollama: 60s).
+    /// A short task title: the models in `[title] models` are tried in order (default: Claude's Haiku, then Ollama)
+    /// until one answers with a usable title. When none does, the title comes from the task's first heading or line.
+    /// `model` is the task's own model, which an `ollama` entry uses when it is an Ollama model.
     pub async fn title(&self, app: &AppHandle, text: &str, model: Option<&str>) -> Result<String> {
+        let started = std::time::Instant::now();
+        for via in title_plan(&crate::config::title_models(), model) {
+            if started.elapsed() > TITLE_BUDGET {
+                break;
+            }
+            match self.title_via(app, text, &via).await {
+                Ok(t) => return Ok(t),
+                Err(e) => eprintln!("marq: could not name the task with {}: {e}", via.label()),
+            }
+        }
+        fallback_title(text).ok_or_else(|| Error::Other("no title".into()))
+    }
+
+    /// One try at a title with `via`.
+    async fn title_via(&self, app: &AppHandle, text: &str, via: &TitleVia) -> Result<String> {
         let req_id = vault::new_id();
         let (tx, rx) = oneshot::channel();
         self.replies.lock().unwrap().insert(req_id.clone(), tx);
-        self.send(app, json!({"op": "title", "reqId": req_id, "text": text, "model": model, "executable": executable(None)}))?;
-        let secs = if model.is_some_and(|m| m.starts_with("ollama:")) { 60 } else { 15 };
+        let executable = if via.agent == "ollama" { String::new() } else { executable(Some(&via.agent)) };
+        self.send(
+            app,
+            json!({"op": "title", "reqId": req_id, "text": text, "agent": via.agent, "model": via.model, "executable": executable}),
+        )?;
+        let secs = if via.agent == "ollama" { 60 } else { 15 };
         let reply = tokio::time::timeout(std::time::Duration::from_secs(secs), rx).await;
         self.replies.lock().unwrap().remove(&req_id);
         let value = reply
             .map_err(|_| Error::Other("naming the task took too long".into()))?
             .map_err(|_| Error::Other("the sidecar exited".into()))?
             .map_err(Error::Other)?;
-        clean_title(value.as_str().unwrap_or("")).ok_or_else(|| Error::Other("no title".into()))
+        clean_title(value.as_str().unwrap_or("")).ok_or_else(|| Error::Other("no usable title".into()))
     }
 
     /// The models `agent` (None: Claude) offers, as the sidecar lists them: value, label, efforts.
@@ -445,6 +466,71 @@ impl Runner {
             .map_err(|_| Error::Other("the sidecar exited".into()))?
             .map_err(Error::Other)
     }
+}
+
+/// How long naming a task may take in all, over every model tried.
+const TITLE_BUDGET: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// One way to name a task: an agent, and a model for it (the agent's own default when None).
+#[derive(Debug, Clone, PartialEq)]
+struct TitleVia {
+    agent: String,
+    model: Option<String>,
+}
+
+impl TitleVia {
+    fn label(&self) -> String {
+        match &self.model {
+            Some(m) => format!("{}:{m}", self.agent),
+            None => self.agent.clone(),
+        }
+    }
+}
+
+/// `agent` or `agent:model` from `[title] models`; the model may itself hold colons (`ollama:qwen3:4b`).
+fn parse_title_via(entry: &str) -> Option<TitleVia> {
+    let (agent, model) = match entry.trim().split_once(':') {
+        Some((a, m)) => (a.trim(), Some(m.trim().to_string()).filter(|m| !m.is_empty())),
+        None => (entry.trim(), None),
+    };
+    (!agent.is_empty()).then(|| TitleVia { agent: agent.to_string(), model })
+}
+
+/// The models to try, in order. `configured` is `[title] models`; unset, it is Claude's Haiku then Ollama,
+/// with Ollama first when the task itself runs on an Ollama model (Claude may not be signed in there).
+/// An `ollama` entry without a model takes the task's Ollama model, else the first one pulled.
+fn title_plan(configured: &[String], task_model: Option<&str>) -> Vec<TitleVia> {
+    let task_ollama = task_model.and_then(|m| m.strip_prefix("ollama:")).filter(|m| !m.is_empty()).map(str::to_string);
+    let mut plan: Vec<TitleVia> = configured.iter().filter_map(|e| parse_title_via(e)).collect();
+    if plan.is_empty() {
+        plan = vec![
+            TitleVia { agent: "claude".into(), model: Some("haiku".into()) },
+            TitleVia { agent: "ollama".into(), model: None },
+        ];
+        if task_ollama.is_some() {
+            plan.reverse();
+        }
+    }
+    for via in &mut plan {
+        if via.agent == "ollama" && via.model.is_none() {
+            via.model = task_ollama.clone();
+        }
+    }
+    plan
+}
+
+/// A title from the task text itself: its first heading, else its first line, past any frontmatter.
+fn fallback_title(text: &str) -> Option<String> {
+    let mut lines = text.lines().map(str::trim);
+    let body: Vec<&str> = if text.trim_start().starts_with("---") {
+        lines.next();
+        lines.by_ref().skip_while(|l| !l.starts_with("---")).skip(1).collect()
+    } else {
+        lines.collect()
+    };
+    let line = body.iter().find(|l| l.starts_with('#')).or_else(|| body.iter().find(|l| !l.is_empty()))?;
+    let t = clean_title(line)?;
+    Some(if t.chars().count() > 40 { t.chars().take(40).collect::<String>() + "…" } else { t })
 }
 
 /// The first line of a model's reply, without quotes or Markdown, at most 60 characters.
@@ -1061,6 +1147,42 @@ mod tests {
         assert_eq!(super::clean_title("  "), None);
         assert_eq!(super::clean_title("Title in Japanese (task language), ≤40 chars, naming the act"), None);
         assert_eq!(super::clean_title("API Error: 404 model not found"), None);
+    }
+
+    fn via(a: &str, m: Option<&str>) -> super::TitleVia {
+        super::TitleVia { agent: a.into(), model: m.map(str::to_string) }
+    }
+
+    #[test]
+    fn title_models_split_at_the_first_colon() {
+        assert_eq!(super::parse_title_via("claude:haiku"), Some(via("claude", Some("haiku"))));
+        assert_eq!(super::parse_title_via("ollama:qwen3:4b"), Some(via("ollama", Some("qwen3:4b"))));
+        assert_eq!(super::parse_title_via(" codex "), Some(via("codex", None)));
+        assert_eq!(super::parse_title_via("codex:"), Some(via("codex", None)));
+        assert_eq!(super::parse_title_via(" "), None);
+    }
+
+    #[test]
+    fn title_plan_is_haiku_then_ollama_by_default() {
+        assert_eq!(super::title_plan(&[], Some("opus")), vec![via("claude", Some("haiku")), via("ollama", None)]);
+        // On an Ollama model the local one goes first, and is the task's own.
+        assert_eq!(super::title_plan(&[], Some("ollama:gemma3")), vec![via("ollama", Some("gemma3")), via("claude", Some("haiku"))]);
+    }
+
+    #[test]
+    fn title_plan_follows_the_settings() {
+        let set = ["codex:gpt-6-luna".to_string(), "".to_string(), "ollama".to_string()];
+        assert_eq!(super::title_plan(&set, Some("ollama:gemma3")), vec![via("codex", Some("gpt-6-luna")), via("ollama", Some("gemma3"))]);
+        assert_eq!(super::title_plan(&set, None), vec![via("codex", Some("gpt-6-luna")), via("ollama", None)]);
+    }
+
+    #[test]
+    fn fallback_title_is_the_heading_or_first_line() {
+        assert_eq!(super::fallback_title("\nFix the login bug\nmore").as_deref(), Some("Fix the login bug"));
+        assert_eq!(super::fallback_title("intro\n## Plan the release\n").as_deref(), Some("Plan the release"));
+        assert_eq!(super::fallback_title("---\ntype: request\n---\n\n# ログインを直す\n").as_deref(), Some("ログインを直す"));
+        assert_eq!(super::fallback_title(&"a".repeat(80)).map(|t| t.chars().count()), Some(41));
+        assert_eq!(super::fallback_title("  \n "), None);
     }
 
     #[test]

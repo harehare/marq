@@ -61,6 +61,9 @@ const TEMPLATE: &str = r#"# Marq settings. Changes apply when the window regains
 [organize]
 # keys = ["area", "epic"]         # frontmatter keys of your own to search, filter and group by; sessions take them from their request
 
+[title]
+# models = ["claude:haiku", "ollama"]   # models that name a new task, tried in order: agent or agent:model (e.g. "codex:gpt-6-luna", "ollama:qwen3:4b"); if none answers, the task's first line is used
+
 [verify]
 # review = "off"                  # on | off: after the checks pass, an independent read-only session tries to break the change; a request's review: overrides it
 
@@ -129,6 +132,15 @@ pub fn organize_keys() -> Vec<String> {
         .unwrap_or_default();
     *cache = Some((stamp, keys.clone()));
     keys
+}
+
+/// `[title] models`: the agents and models that name a task, tried in order; empty when unset.
+pub fn title_models() -> Vec<String> {
+    read()
+        .ok()
+        .and_then(|v| v["title"]["models"].as_array().cloned())
+        .map(|a| a.into_iter().filter_map(|k| k.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
 }
 
 /// The config file, created from the template when missing.

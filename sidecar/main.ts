@@ -7,7 +7,7 @@ import type { AgentBackend, AgentSession, ApprovalDecision, ApprovalRequest, Ses
 import { acp } from "./acp.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
-import { ollamaModels } from "./ollama.ts";
+import { ollamaGenerate, ollamaModels } from "./ollama.ts";
 import { emit, log, message, rpcResult, type Command } from "./protocol.ts";
 
 const BACKENDS: Record<string, AgentBackend> = { claude, codex };
@@ -151,6 +151,8 @@ function title(c: Extract<Command, { op: "title" }>) {
     `Name the task above with a title of at most 40 characters, in the language the task is written in, ` +
     `saying what is to be done (for example "ログイン画面のバグを修正" or "Add dark mode to settings"). ` +
     `Do not describe these rules or the format. Reply with the title only.`;
+  // Ollama is asked directly, so naming a task needs no agent installed.
+  if (c.agent === "ollama") return ollamaGenerate(prompt, c.model);
   return backendFor(c.agent).title({ prompt, model: c.model, executable: c.executable });
 }
 

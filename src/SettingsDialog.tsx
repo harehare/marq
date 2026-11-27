@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, ShieldCheck, SquareTerminal, Tags, X } from "lucide-react";
+import { GitBranch, Bell, Bot, Inbox, MessageSquare, Cpu, FileCog, Plus, Trash2, Palette, PanelTop, PenLine, RotateCcw, Settings as SettingsIcon, ShieldCheck, SquareTerminal, Tags, Type, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { api, type AgentInfo } from "./api";
 import { composing } from "./keys";
@@ -134,6 +134,13 @@ const SECTIONS: Section[] = [
     note: "Sessions take these from their request when they start. Earlier sessions pick them up after Marq restarts.",
     fields: [
       { key: "organize.keys", label: "Your own keys", kind: "list", placeholder: "area epic", desc: "Frontmatter keys to search, filter and group notes and sessions by (area: billing), separated by spaces" },
+    ],
+  },
+  {
+    id: "title", title: "Task titles", icon: Type,
+    note: "Applies the next time a task is named. If none of them answers, the task's first heading or line is the title.",
+    fields: [
+      { key: "title.models", label: "Models that name a task", kind: "list", placeholder: "claude:haiku ollama", desc: "Tried in order, separated by spaces: an agent or agent:model (codex:gpt-6-luna, ollama:qwen3:4b). Unset: Claude's Haiku, then Ollama" },
     ],
   },
   {
