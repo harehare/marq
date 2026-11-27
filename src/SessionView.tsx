@@ -420,12 +420,15 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
   const [info, setInfo] = useState<SessionInfo | null>(null);
   // The other sessions, for sending this one's message to one of them.
   const [others, setOthers] = useState<SessionInfo[]>([]);
-  // Sessions on the same branch, from the same note or at work in the same repository.
+  // Sessions on the same branch or from the same note: the ones whose work can collide with this one's.
+  // A session that is only at work in the same repository is left out, or the row would rarely be empty.
   const [related, setRelated] = useState<RelatedSession[]>([]);
   const loadInfo = () => api.listSessions(vault).then((l) => {
     setInfo(l.find((x) => x.id === sessionId) ?? null);
     setOthers(l.filter((x) => x.id !== sessionId));
-    api.relatedSessions(vault, sessionId).then(setRelated).catch(() => setRelated([]));
+    api.relatedSessions(vault, sessionId)
+      .then((r) => setRelated(r.filter((x) => x.reasons.some((why) => why === "same branch" || why === "same origin"))))
+      .catch(() => setRelated([]));
   });
   const setReview = async (state: "done" | "open") => {
     try {
@@ -639,10 +642,11 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
 
   // Where the message goes instead of this session, picked with `@`, `/send` or `/tell`. One message only.
   const [target, setTarget] = useState<{ id: string; title: string; reply: boolean } | null>(null);
-  // Sessions at work first, then those on the same project, each newest first.
+  // Related sessions first, then those at work, then those on the same project, each newest first.
   const targets = useMemo(() => {
     const project = info?.worktree?.repo ?? info?.cwd;
-    const rank = (s: SessionInfo) => (s.status === "running" || s.status === "waiting" ? 0 : (s.worktree?.repo ?? s.cwd) === project ? 1 : 2);
+    const near = new Set(related.map((r) => r.id));
+    const rank = (s: SessionInfo) => (near.has(s.id) ? 0 : s.status === "running" || s.status === "waiting" ? 1 : (s.worktree?.repo ?? s.cwd) === project ? 2 : 3);
     return others
       .map((s, i) => ({ s, i }))
       .sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i)
@@ -650,7 +654,7 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
         id: s.id, title: s.title, status: s.status,
         detail: [s.status, s.worktree?.branch ?? (s.worktree?.repo ?? s.cwd).split("/").filter(Boolean).pop(), s.started.slice(0, 10)].filter(Boolean).join(" · "),
       }));
-  }, [others, info]);
+  }, [others, info, related]);
 
   const send = async () => {
     const text = pastes.expand(input);
@@ -795,8 +799,8 @@ export function SessionView({ vault, sessionId, onOpenOrigin, onOpenSession, onS
             <div className="composer-related small">
               <span className="muted">Related</span>
               {related.slice(0, 4).map((r) => (
-                <button key={r.id} className="related-chip" title={`${r.reasons.join(", ")}. Send your next message to it.`}
-                  onClick={() => { setTarget({ id: r.id, title: r.title, reply: true }); composerRef.current?.focus(); }}>
+                <button key={r.id} className="related-chip" title={`${r.reasons.join(", ")}. Open that session.`}
+                  onClick={() => onOpenSession(r.id, r.title)}>
                   <span className={`dot status-${r.status}`} />
                   <span className="ellipsis">{r.title}</span>
                   <span className="muted ellipsis">{r.reasons[0]}</span>
